@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EgorBot — Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+        h1 { color: #58a6ff; margin-bottom: 8px; }
+        .subtitle { color: #8b949e; margin-bottom: 24px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #21262d; }
+        th { color: #8b949e; font-weight: 600; font-size: 0.85em; text-transform: uppercase; }
+        tr:hover { background: #161b22; }
+        a { color: #58a6ff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .badge { padding: 3px 8px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
+        .badge-running { background: #1f6feb33; color: #58a6ff; }
+        .badge-completed { background: #23863533; color: #3fb950; }
+        .badge-failed { background: #da363433; color: #f85149; }
+        .badge-pending { background: #30363d; color: #8b949e; }
+        .badge-timedout { background: #9e6a0333; color: #d29922; }
+        .empty { text-align: center; padding: 40px; color: #8b949e; }
+        .refresh { color: #8b949e; font-size: 0.85em; margin-top: 12px; }
+    </style>
+</head>
+<body>
+    <h1>🤖 EgorBot Dashboard</h1>
+    <p class="subtitle">Benchmark jobs for dotnet/runtime</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Requester</th>
+                <th>PR / Commits</th>
+                <th>Status</th>
+                <th>Sub-jobs</th>
+                <th>Created</th>
+                <th>Duration</th>
+            </tr>
+        </thead>
+        <tbody id="jobs"></tbody>
+    </table>
+    <div id="empty" class="empty" style="display:none;">No jobs yet.</div>
+    <p class="refresh">Auto-refreshes every 5 seconds</p>
+
+    <script>
+        function statusBadge(s) {
+            const cls = { Running: 'running', Completed: 'completed', Failed: 'failed', Pending: 'pending', TimedOut: 'timedout' };
+            return `<span class="badge badge-${cls[s] || 'pending'}">${s}</span>`;
+        }
+        function timeAgo(d) {
+            if (!d) return '—';
+            const s = Math.floor((Date.now() - new Date(d + 'Z').getTime()) / 1000);
+            if (s < 60) return s + 's ago';
+            if (s < 3600) return Math.floor(s / 60) + 'm ago';
+            return Math.floor(s / 3600) + 'h ago';
+        }
+        function duration(start, end) {
+            if (!start) return '—';
+            const ms = (end ? new Date(end + 'Z') : new Date()) - new Date(start + 'Z');
+            const m = Math.floor(ms / 60000);
+            if (m < 1) return '<1m';
+            if (m < 60) return m + 'm';
+            return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+        }
+        async function refresh() {
+            try {
+                const res = await fetch('/api/jobs');
+                const jobs = await res.json();
+                const tbody = document.getElementById('jobs');
+                document.getElementById('empty').style.display = jobs.length ? 'none' : 'block';
+                tbody.innerHTML = jobs.map(j => `<tr>
+                    <td><a href="/job.html?id=${j.id}">${j.id.substring(0, 8)}…</a></td>
+                    <td>${j.requester}</td>
+                    <td>${j.prNumber ? '#' + j.prNumber : (j.commits || '—')}</td>
+                    <td>${statusBadge(j.status)}</td>
+                    <td>${j.completedSubJobs}/${j.subJobCount}</td>
+                    <td>${timeAgo(j.createdAt)}</td>
+                    <td>${duration(j.createdAt, j.completedAt)}</td>
+                </tr>`).join('');
+            } catch (e) { console.error('Failed to fetch jobs', e); }
+        }
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+</html>
