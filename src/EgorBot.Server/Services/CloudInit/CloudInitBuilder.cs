@@ -9,19 +9,18 @@ namespace EgorBot.Server.Services.CloudInit;
 /// </summary>
 public sealed class CloudInitBuilder(IConfiguration config)
 {
-    private static readonly string DefaultCsprojUrl =
-        "https://gist.githubusercontent.com/EgorBo/c3378873ad204ebf522a07138f621128/raw";
-
     /// <summary>
     /// Build the cloud-init script for a given job.
     /// </summary>
     public string Build(BenchmarkJob job)
     {
         var agentUrl = config["EgorBot:AgentScriptUrl"]
-            ?? "https://gist.github.com/EgorBo/fe51dc1df0db756f2dce44e0ee7d3294/raw";
-        var serviceBaseUrl = config["EgorBot:ServiceBaseUrl"] ?? "http://localhost:5000";
+            ?? throw new InvalidOperationException("EgorBot:AgentScriptUrl configuration is required");
+        var serviceBaseUrl = config["EgorBot:ServiceBaseUrl"]
+                             ?? throw new InvalidOperationException("EgorBot:ServiceBaseUrl configuration is required");
         var callbackUrl = $"{serviceBaseUrl.TrimEnd('/')}/api/internal";
-        var csprojUrl = config["EgorBot:DefaultCsprojUrl"] ?? DefaultCsprojUrl;
+        var csprojUrl = config["EgorBot:DefaultCsprojUrl"] 
+                        ?? throw new InvalidOperationException("EgorBot:DefaultCsprojUrl configuration is required");
 
         return Platform.IsWindows(job.Platform)
             ? BuildWindowsScript(job, agentUrl, callbackUrl, csprojUrl)
