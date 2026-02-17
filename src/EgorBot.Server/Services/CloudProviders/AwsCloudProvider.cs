@@ -93,7 +93,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
 
             var instanceType = ResolveInstanceType(request.Platform, request.Cores);
             var imageId = ResolveAmi(request.Platform);
-            var diskSize = Math.Clamp(request.DiskSizeGb, 8, 100);
+            var diskSize = Math.Max(request.DiskSizeGb, 100); // AMI snapshot requires >= 100 GB
 
             logger.LogInformation(
                 "[{JobId}] Creating EC2 instance: type={Type}, ami={Ami}, disk={Disk}GB, sg={SG}, subnet={Subnet}",
