@@ -7,6 +7,9 @@
 *.rsuser
 *.suo
 *.user
+
+# Local secrets (never commit)
+appsettings.Local.json
 *.userosscache
 *.sln.docstates
 
@@ -383,6 +386,9 @@ FodyWeavers.xsd
 !.vscode/launch.json
 !.vscode/extensions.json
 *.code-workspace
+
+# ignore .dotnet folder
+.dotnet/
 
 # Local History for Visual Studio Code
 .history/

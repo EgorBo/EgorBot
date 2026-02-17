@@ -1,0 +1,30 @@
+### EgorBot v2 — Manual API Testing
+### Use with VS Code REST Client or Visual Studio .http file support
+
+@baseUrl = http://localhost:5000
+
+### Health check
+GET {{baseUrl}}/health
+
+### Start a job (local_x64, custom benchmark)
+POST {{baseUrl}}/api/jobs
+Content-Type: application/json
+
+{
+    "platforms": ["aws_arm"],
+    "commitsAndPrs": "PR_124445;main",
+    "benchmarkCode": "using System;\nusing BenchmarkDotNet.Attributes;\n\npublic class Benchmarks\n{\n    string _data = \"https://github.com/dotnet/runtime/pulls\";\n\n    [Benchmark]\n    public bool StartsWith() =>\n        _data.StartsWith(\"HTTPS://github.com/dotnet/runtime\",\n            StringComparison.OrdinalIgnoreCase);\n}",
+    "useProfiler": false
+}
+
+### Get job status (replace {jobId} with actual ID)
+GET {{baseUrl}}/api/jobs/00000000-0000-0000-0000-000000000000/status
+
+### Get job result (replace {jobId} with actual ID)
+GET {{baseUrl}}/api/jobs/00000000-0000-0000-0000-000000000000/result
+
+### Get job logs (replace {jobId} with actual ID)
+GET {{baseUrl}}/api/jobs/00000000-0000-0000-0000-000000000000/logs
+
+### List all jobs
+GET {{baseUrl}}/api/jobs?page=1&pageSize=20
