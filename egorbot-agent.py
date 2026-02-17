@@ -11,6 +11,7 @@ import io
 import json
 import os
 import platform
+import re as re_mod
 import shutil
 import subprocess
 import sys
@@ -533,10 +534,38 @@ def install_dependencies():
         marker.touch()
 
     elif TARGET_OS == "windows":
-        # On Windows, git and python are expected to be pre-installed.
-        # Verify git is available (required for cloning runtime).
+        # Try to find git: check PATH, then common install locations, then download portable git
         if not shutil.which("git"):
-            post_log("WARNING: git not found on PATH — runtime clone will fail")
+            post_log("git not found on PATH, searching common locations...")
+            git_found = False
+            for candidate in [
+                r"C:\Program Files\Git\cmd",
+                r"C:\Program Files (x86)\Git\cmd",
+                r"C:\Git\cmd",
+                r"C:\git\cmd",
+            ]:
+                if os.path.isfile(os.path.join(candidate, "git.exe")):
+                    os.environ["PATH"] = candidate + os.pathsep + os.environ.get("PATH", "")
+                    post_log(f"Found git at {candidate}")
+                    git_found = True
+                    break
+
+            if not git_found:
+                # Download MinGit (portable) — ~50 MB
+                post_log("Downloading MinGit (portable)...")
+                mingit_url = "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/MinGit-2.47.1.2-64-bit.zip"
+                mingit_zip = WORK_DIR / "mingit.zip"
+                mingit_dir = WORK_DIR / "mingit"
+                try:
+                    download(mingit_url, mingit_zip)
+                    import zipfile as zf
+                    with zf.ZipFile(mingit_zip, "r") as z:
+                        z.extractall(mingit_dir)
+                    git_cmd_dir = str(mingit_dir / "cmd")
+                    os.environ["PATH"] = git_cmd_dir + os.pathsep + os.environ.get("PATH", "")
+                    post_log(f"MinGit installed to {mingit_dir}")
+                except Exception as e:
+                    post_log(f"WARNING: Failed to download MinGit: {e} — runtime clone will fail")
         marker.touch()
 
     else:
@@ -583,6 +612,24 @@ def install_dotnet_sdks():
     os.environ["NUGET_HTTP_CACHE_PATH"]    = os.path.join(dotnet_root, "NUGET_HTTP_CACHE_PATH")
     os.environ["NUGET_SCRATCH"]            = os.path.join(dotnet_root, "NUGET_SCRATCH")
     os.environ["DOTNET_NUGET_SIGNATURE_VERIFICATION"] = "false"
+
+    # Create nuget.config with dotnet CI feeds (needed on Helix / isolated machines)
+    nuget_config = WORK_DIR / "nuget.config"
+    if not nuget_config.exists():
+        nuget_config.write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<configuration>\n'
+            '  <packageSources>\n'
+            '    <clear />\n'
+            '    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />\n'
+            '    <add key="dotnet-public" value="https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json" />\n'
+            '    <add key="dotnet-libraries" value="https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-libraries/nuget/v3/index.json" />\n'
+            '    <add key="dotnet11" value="https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet11/nuget/v3/index.json" />\n'
+            '  </packageSources>\n'
+            '</configuration>\n',
+            encoding="utf-8",
+        )
+        post_log("Created nuget.config with dotnet CI feeds")
 
 
 ########################################################################################
@@ -660,6 +707,15 @@ def _build_custom_benchmarks(bench_args: List[str]):
             shutil.copy2(CFG.bench_csproj_file, csproj)
         else:
             download("https://gist.github.com/EgorBo/c3378873ad204ebf522a07138f621128/raw", csproj)
+
+        # Fix multi-targeting: only build for the requested TFM
+        csproj_text = csproj.read_text(encoding="utf-8")
+        csproj_text = re_mod.sub(
+            r'<TargetFrameworks>[^<]+</TargetFrameworks>',
+            f'<TargetFramework>{CFG.bench_tfm}</TargetFramework>',
+            csproj_text,
+        )
+        csproj.write_text(csproj_text, encoding="utf-8")
 
         if CFG.bench_add_entrypoint:
             (DIR_BENCHAPP / "Entrypoint.cs").write_text(
