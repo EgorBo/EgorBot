@@ -14,7 +14,7 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
     /// </summary>
     public string ProcessArtifactsZip(Stream zipStream, string commitsAndPrs)
     {
-        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
 
         var reportEntries = archive.Entries
             .Where(e => e.Name.EndsWith("-report-github.md", StringComparison.OrdinalIgnoreCase))

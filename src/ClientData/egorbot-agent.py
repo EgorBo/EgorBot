@@ -1075,11 +1075,13 @@ def run_perf_profiling():
         post_log(f"[PERF] Too many benchmarks ({len(benchmarks)} > 5) for profiling, skipping")
         return
 
-    # Gather core_root paths
+    # Gather core_root paths — if none exist, profile the published app directly via dotnet
     corerun_paths = sorted(globmod.glob(str(CORE_ROOTS_DIR / "*" / make_exe("corerun"))))
     if not corerun_paths:
-        post_log("[PERF] No core_roots found, skipping profiling")
-        return
+        # No core_roots: single "default" entry that will use dotnet directly
+        run_entries = [("default", None)]
+    else:
+        run_entries = [(Path(p).parent.name, p) for p in corerun_paths]
 
     perf_record_args = CFG.perf_record_args or "-e cpu-clock"
     high_freq = int(CFG.perf_record_freq) if CFG.perf_record_freq else 1999
@@ -1088,9 +1090,7 @@ def run_perf_profiling():
     perf_out_dir = ARTIFACTS_DIR / "perf"
     perf_out_dir.mkdir(parents=True, exist_ok=True)
 
-    for corerun_path in corerun_paths:
-        corerun = Path(corerun_path)
-        label = corerun.parent.name  # e.g. "PR_12345", "main", commit hash
+    for label, corerun_path in run_entries:
 
         for bdnline in benchmarks:
             bdnline_escaped = re_mod.sub(r'[^a-zA-Z0-9]', '_', bdnline)
@@ -1116,14 +1116,29 @@ def run_perf_profiling():
             }
 
             bdn_artifacts = bench_dir / "bdn_scratch"
-            bench_cmd = [
-                str(corerun), str(bench_dll),
-                "--filter", bdnline, "-i",
-                "--noForcedGCs", "--noOverheadEvaluation", "--disableLogFile",
-                "--maxWarmupCount", "8",
-                "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
-                "-a", str(bdn_artifacts),
-            ]
+
+            if corerun_path:
+                # Use corerun from core_root
+                bench_cmd = [
+                    str(corerun_path), str(bench_dll),
+                    "--filter", bdnline, "-i",
+                    "--noForcedGCs", "--noOverheadEvaluation", "--disableLogFile",
+                    "--maxWarmupCount", "8",
+                    "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
+                    "-a", str(bdn_artifacts),
+                ]
+                target_process = "corerun"
+            else:
+                # No core_root — run the published app directly via dotnet
+                bench_cmd = [
+                    "dotnet", str(bench_dll),
+                    "--filter", bdnline, "-i",
+                    "--noForcedGCs", "--noOverheadEvaluation", "--disableLogFile",
+                    "--maxWarmupCount", "8",
+                    "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
+                    "-a", str(bdn_artifacts),
+                ]
+                target_process = "dotnet"
 
             proc = subprocess.Popen(
                 bench_cmd, env=perf_env, cwd=DIR_BENCHAPP,
@@ -1168,8 +1183,7 @@ def run_perf_profiling():
                 proc.wait(timeout=10)
             except Exception:
                 pass
-            kill_process_by_name("corerun")
-            kill_process_by_name("dotnet")
+            kill_process_by_name(target_process)
             time.sleep(2)
 
             # Symbolize with perf inject (JIT support)
