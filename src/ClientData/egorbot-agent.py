@@ -646,10 +646,6 @@ def install_dependencies():
         marker.touch()
 
     elif TARGET_OS == "osx":
-        # Homebrew is typically available on Helix macOS machines
-        if shutil.which("brew"):
-            for pkg in ["cmake", "ninja", "icu4c", "pkg-config"]:
-                run(f"brew install {pkg}", check=False)
         marker.touch()
 
     elif TARGET_OS == "windows":
@@ -909,12 +905,7 @@ def build_core_roots():
 
         # Install deps via runtime's own script (most deps come from here)
         if TARGET_OS != "windows":
-            is_helix = os.environ.get("HELIX_WORKITEM_PAYLOAD") is not None
-            if is_helix:
-                # On Helix, install-dependencies.sh may fail without root — best effort
-                run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
-            else:
-                run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir)
+            run("sudo eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
 
         # Make it more resilient to warnings in case if we build old commits
         dbp = runtime_dir / "Directory.Build.props"
