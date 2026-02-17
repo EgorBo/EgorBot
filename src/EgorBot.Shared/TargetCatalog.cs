@@ -49,11 +49,16 @@ public static class TargetCatalog
         ["aws_graviton4"]     = new("aws_graviton4",     "AWS",   "arm64", "linux", false, null, "c8g", null, "Graviton4 (Neoverse-V2)"),
 
         // Helix — managed infrastructure, VmSizeTemplate stores the Helix queue ID
-        ["helix_osx_arm64"]   = new("helix_osx_arm64",   "Helix", "arm64", "osx",   false, "OSX.15.Arm64.Open",           null, null, "Apple Silicon (macOS 15)"),
-        ["helix_osx_x64"]     = new("helix_osx_x64",     "Helix", "x64",   "osx",   false, "OSX.15.Amd64.Open",           null, null, "Intel Mac (macOS 15)"),
-        ["helix_linux_x64"]   = new("helix_linux_x64",   "Helix", "x64",   "linux", false, "Ubuntu.2204.Amd64.Open",      null, null, "Ubuntu 22.04 x64"),
-        ["helix_linux_arm64"] = new("helix_linux_arm64",  "Helix", "arm64", "linux", false, "Ubuntu.2204.Arm64.Open",      null, null, "Ubuntu 22.04 ARM64"),
-        ["helix_windows_x64"] = new("helix_windows_x64", "Helix", "x64",   "windows", true, "Windows.11.Amd64.Open",      null, null, "Windows 11 x64"),
+        // macOS
+        ["helix_osx_arm64"]     = new("helix_osx_arm64",     "Helix", "arm64", "osx",     false, "OSX.15.Arm64.Open",           null, null, "Apple Silicon (macOS 15)"),
+        ["helix_osx_x64"]       = new("helix_osx_x64",       "Helix", "x64",   "osx",     false, "OSX.15.Amd64.Open",           null, null, "Intel Mac (macOS 15)"),
+        // Linux
+        ["helix_linux_x64"]     = new("helix_linux_x64",     "Helix", "x64",   "linux",   false, "azurelinux.3.amd64.open",     null, null, "Azure Linux 3 x64"),
+        ["helix_linux_arm64"]   = new("helix_linux_arm64",    "Helix", "arm64", "linux",   false, "(Ubuntu.2404.Arm64.Open)Ubuntu.2204.Armarch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-helix-arm64v8", null, null, "Ubuntu 24.04 ARM64 (container)"),
+        ["helix_linux_arm32"]   = new("helix_linux_arm32",    "Helix", "arm32", "linux",   false, "(Debian.12.Arm32.Open)Ubuntu.2204.ArmArch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:debian-12-helix-arm32v7",       null, null, "Debian 12 ARM32 (container)"),
+        // Windows
+        ["helix_windows_x64"]   = new("helix_windows_x64",   "Helix", "x64",   "windows", true,  "Windows.10.Amd64.Open",       null, null, "Windows 10 x64"),
+        ["helix_windows_arm64"] = new("helix_windows_arm64",  "Helix", "arm64", "windows", true,  "Windows.11.Arm64.Open",       null, null, "Windows 11 ARM64"),
 
         // Local (testing) — supports any OS
         ["local"]             = new("local",             "Local", DetectLocalArch(), DetectLocalOs(), true,  null, null, null, "Local machine"),
@@ -102,9 +107,12 @@ public static class TargetCatalog
         ["macos"]       = "helix_osx_arm64",
         ["macos_arm64"] = "helix_osx_arm64",
         ["macos_x64"]   = "helix_osx_x64",
-        ["helix_arm64"] = "helix_osx_arm64",
+        ["helix_arm64"] = "helix_linux_arm64",
+        ["helix_arm"]   = "helix_linux_arm64",
         ["helix_x64"]   = "helix_linux_x64",
-        ["helix_arm"]   = "helix_osx_arm64",
+        ["helix_arm32"] = "helix_linux_arm32",
+        ["helix_win_x64"]   = "helix_windows_x64",
+        ["helix_win_arm64"] = "helix_windows_arm64",
     };
 
     // ── OS prefixes ─────────────────────────────────────────────────────
