@@ -486,6 +486,12 @@ def setup_environment(cfg: Config):
     if TARGET_OS != "windows" and not os.environ.get("HOME"):
         os.environ["HOME"] = str(Path.home()) if Path.home() != Path("/") else "/root"
 
+    # Ensure Homebrew is on PATH for macOS (Helix machines may not have it in PATH)
+    if TARGET_OS == "osx":
+        for brew_dir in ("/opt/homebrew/bin", "/usr/local/bin"):
+            if os.path.isfile(os.path.join(brew_dir, "brew")) and brew_dir not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = brew_dir + os.pathsep + os.environ.get("PATH", "")
+
     ARTIFACTS_DIR  = WORK_DIR / "artifacts"
     DIR_BENCHAPP   = WORK_DIR / "benchapp"
     CORE_ROOTS_DIR = WORK_DIR / "core_roots"
