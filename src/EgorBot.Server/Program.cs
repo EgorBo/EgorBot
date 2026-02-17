@@ -21,6 +21,7 @@ if (builder.Configuration.GetValue<bool>("EgorBot:AllowLocalTarget"))
     builder.Services.AddSingleton<ICloudProvider, LocalRunnerProvider>();
 builder.Services.AddSingleton<ICloudProvider, AzureCloudProvider>();
 builder.Services.AddSingleton<ICloudProvider, AwsCloudProvider>();
+builder.Services.AddSingleton<ICloudProvider, HelixCloudProvider>();
 builder.Services.AddSingleton<CloudProviderFactory>();
 
 // ── Services ─────────────────────────────────────────────────────────────────

@@ -48,6 +48,13 @@ public static class TargetCatalog
         ["aws_graviton3"]     = new("aws_graviton3",     "AWS",   "arm64", "linux", false, null, "c7g", null, "Graviton3 (Neoverse-V1)"),
         ["aws_graviton4"]     = new("aws_graviton4",     "AWS",   "arm64", "linux", false, null, "c8g", null, "Graviton4 (Neoverse-V2)"),
 
+        // Helix — managed infrastructure, VmSizeTemplate stores the Helix queue ID
+        ["helix_osx_arm64"]   = new("helix_osx_arm64",   "Helix", "arm64", "osx",   false, "OSX.15.Arm64.Open",           null, null, "Apple Silicon (macOS 15)"),
+        ["helix_osx_x64"]     = new("helix_osx_x64",     "Helix", "x64",   "osx",   false, "OSX.15.Amd64.Open",           null, null, "Intel Mac (macOS 15)"),
+        ["helix_linux_x64"]   = new("helix_linux_x64",   "Helix", "x64",   "linux", false, "Ubuntu.2204.Amd64.Open",      null, null, "Ubuntu 22.04 x64"),
+        ["helix_linux_arm64"] = new("helix_linux_arm64",  "Helix", "arm64", "linux", false, "Ubuntu.2204.Arm64.Open",      null, null, "Ubuntu 22.04 ARM64"),
+        ["helix_windows_x64"] = new("helix_windows_x64", "Helix", "x64",   "windows", true, "Windows.11.Amd64.Open",      null, null, "Windows 11 x64"),
+
         // Local (testing) — supports any OS
         ["local"]             = new("local",             "Local", DetectLocalArch(), DetectLocalOs(), true,  null, null, null, "Local machine"),
     };
@@ -86,6 +93,16 @@ public static class TargetCatalog
         // Local shortcuts
         ["local_x64"]   = "local",
         ["local_arm64"] = "local",
+        // Helix shortcuts
+        ["osx"]         = "helix_osx_arm64",
+        ["osx_arm64"]   = "helix_osx_arm64",
+        ["osx_x64"]     = "helix_osx_x64",
+        ["macos"]       = "helix_osx_arm64",
+        ["macos_arm64"] = "helix_osx_arm64",
+        ["macos_x64"]   = "helix_osx_x64",
+        ["helix_arm64"] = "helix_osx_arm64",
+        ["helix_x64"]   = "helix_linux_x64",
+        ["helix_arm"]   = "helix_osx_arm64",
     };
 
     // ── OS prefixes ─────────────────────────────────────────────────────

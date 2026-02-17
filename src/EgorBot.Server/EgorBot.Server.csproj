@@ -16,6 +16,7 @@
     <PackageReference Include="Azure.ResourceManager.Compute" Version="1.6.0" />
     <PackageReference Include="Azure.ResourceManager.Network" Version="1.8.0" />
     <PackageReference Include="Azure.ResourceManager.Resources" Version="1.8.0" />
+    <PackageReference Include="Microsoft.DotNet.Helix.JobSender" Version="10.0.0-beta.25072.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0-*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0-*">
       <PrivateAssets>all</PrivateAssets>

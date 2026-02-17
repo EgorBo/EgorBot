@@ -93,33 +93,46 @@ public static class Platform
     /// </summary>
     private static (string Os, string TargetName) Parse(string platform)
     {
-        string os;
+        string? explicitOs = null;
         string rest;
 
         if (platform.StartsWith("windows_", StringComparison.OrdinalIgnoreCase))
         {
-            os = "windows";
+            explicitOs = "windows";
             rest = platform[8..];
         }
         else if (platform.StartsWith("linux_", StringComparison.OrdinalIgnoreCase))
         {
-            os = "linux";
+            explicitOs = "linux";
             rest = platform[6..];
+        }
+        else if (platform.StartsWith("osx_", StringComparison.OrdinalIgnoreCase) ||
+                 platform.StartsWith("macos_", StringComparison.OrdinalIgnoreCase))
+        {
+            explicitOs = "osx";
+            rest = platform[(platform.IndexOf('_') + 1)..];
         }
         else
         {
-            os = "linux"; // default; overridden below for "local"
             rest = platform;
         }
 
         // Resolve alias
         rest = TargetCatalog.ResolveAlias(rest);
 
-        // Special-case "local": use detected OS
-        if (rest.Equals("local", StringComparison.OrdinalIgnoreCase) && os == "linux")
+        // Use the target's default OS when no explicit prefix was given
+        string os;
+        if (explicitOs is not null)
         {
-            if (TargetCatalog.TryGetTarget("local", out var localTarget))
-                os = localTarget!.DefaultOs;
+            os = explicitOs;
+        }
+        else if (TargetCatalog.TryGetTarget(rest, out var target))
+        {
+            os = target!.DefaultOs;
+        }
+        else
+        {
+            os = "linux"; // fallback for unknown targets
         }
 
         return (os, rest);
