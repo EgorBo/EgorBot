@@ -106,11 +106,10 @@ public static class Platform
             explicitOs = "linux";
             rest = platform[6..];
         }
-        else if (platform.StartsWith("osx_", StringComparison.OrdinalIgnoreCase) ||
-                 platform.StartsWith("macos_", StringComparison.OrdinalIgnoreCase))
+        else if (platform.StartsWith("osx_", StringComparison.OrdinalIgnoreCase))
         {
             explicitOs = "osx";
-            rest = platform[(platform.IndexOf('_') + 1)..];
+            rest = platform[4..];
         }
         else
         {

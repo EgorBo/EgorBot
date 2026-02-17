@@ -68,45 +68,59 @@ public static class TargetCatalog
 
     private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Short-hand → canonical target name
-        ["arm"]       = "azure_cobalt100",
-        ["arm64"]     = "azure_cobalt100",
-        ["cobalt"]    = "azure_cobalt100",
-        ["cobalt100"] = "azure_cobalt100",
-        ["ampere"]    = "azure_ampere",
-        ["intel"]     = "azure_cascadelake",
+        // Short-hand → canonical target name (default to AWS linux)
+        ["arm"]       = "aws_graviton4",
+        ["arm64"]     = "aws_graviton4",
+        ["intel"]     = "aws_sapphirelake",
+        ["x64"]       = "aws_sapphirelake",
+        ["amd"]       = "aws_genoa",
+
+        // CPU-specific shortcuts
+        ["cobalt"]      = "azure_cobalt100",
+        ["cobalt100"]   = "azure_cobalt100",
+        ["ampere"]      = "azure_ampere",
         ["cascadelake"] = "azure_cascadelake",
-        ["x64"]       = "azure_genoa",
-        ["amd"]       = "azure_genoa",
-        ["genoa"]     = "azure_genoa",
-        ["genoasmt1"] = "azure_genoasmt1",
-        ["milano"]    = "azure_milano",
-        ["graviton2"] = "aws_graviton2",
-        ["graviton3"] = "aws_graviton3",
-        ["graviton4"] = "aws_graviton4",
+        ["genoa"]       = "azure_genoa",
+        ["milano"]      = "azure_milano",
+        ["graviton2"]   = "aws_graviton2",
+        ["graviton3"]   = "aws_graviton3",
+        ["graviton4"]   = "aws_graviton4",
         ["sapphirelake"] = "aws_sapphirelake",
-        ["icelake"]   = "aws_icelake",
-        ["turin"]     = "aws_turin",
+        ["icelake"]     = "aws_icelake",
+        ["turin"]       = "aws_turin",
+
         // Cloud-vendor shortcuts
+
+        // AWS shortcuts
         ["aws_arm"]   = "aws_graviton4",
         ["aws_arm64"] = "aws_graviton4",
         ["aws_x64"]   = "aws_sapphirelake",
         ["aws_amd"]   = "aws_genoa",
         ["aws_intel"] = "aws_sapphirelake",
+
+        // Azure shortcuts
         ["azure_arm"] = "azure_cobalt100",
         ["azure_x64"] = "azure_genoa",
         ["azure_intel"] = "azure_cascadelake",
         ["azure_amd"] = "azure_genoa",
+
         // Local shortcuts
         ["local_x64"]   = "local",
         ["local_arm64"] = "local",
-        // Helix shortcuts
+
+        // OSX shortcuts (Helix)
         ["osx"]         = "helix_osx_arm64",
         ["osx_arm64"]   = "helix_osx_arm64",
         ["osx_x64"]     = "helix_osx_x64",
-        ["macos"]       = "helix_osx_arm64",
-        ["macos_arm64"] = "helix_osx_arm64",
-        ["macos_x64"]   = "helix_osx_x64",
+
+        // Windows shortcuts (Helix)
+        ["windows_x64"]   = "helix_windows_x64",
+        ["windows_arm64"] = "helix_windows_arm64",
+        ["windows_arm"]   = "helix_windows_arm64",
+        ["windows_intel"] = "helix_windows_x64",
+        ["windows_amd"]   = "helix_windows_x64",
+
+        // Helix shortcuts
         ["helix_arm64"] = "helix_linux_arm64",
         ["helix_arm"]   = "helix_linux_arm64",
         ["helix_x64"]   = "helix_linux_x64",
@@ -119,8 +133,7 @@ public static class TargetCatalog
 
     private static readonly HashSet<string> OsPrefixes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "linux", "windows", "ubuntu2404", "ubuntu2204", "ubuntu",
-        "debian12", "debian", "macos",
+        "linux", "windows", "osx",
     };
 
     // ── Public API ───────────────────────────────────────────────────────
