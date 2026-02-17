@@ -50,11 +50,18 @@ public sealed class TelegramNotificationService : INotificationService
     {
         if (!IsEnabled) return;
 
+        var sourceHint = !string.IsNullOrEmpty(job.SourceUrl)
+            ? $"\nSource: {job.SourceUrl}"
+            : "";
+        var requestedByHint = !string.IsNullOrEmpty(job.RequestedBy)
+            ? $"\nRequested by: @{job.RequestedBy}"
+            : "";
+
         var msg = $"""
-            🚀 *Job started*
+            \U0001F680 *Job started*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
-            Commits: `{job.CommitsAndPrs}`
+            Commits: `{job.CommitsAndPrs}`{requestedByHint}{sourceHint}
             """;
         await SendMessageAsync(msg);
     }
@@ -66,13 +73,16 @@ public sealed class TelegramNotificationService : INotificationService
         var sshLine = ipAddress is not null
             ? $"\nSSH: `ssh ubuntu@{ipAddress}`"
             : "";
+        var sourceHint = !string.IsNullOrEmpty(job.SourceUrl)
+            ? $"\nSource: {job.SourceUrl}"
+            : "";
 
         var msg = $"""
-            🖥 *VM provisioned*
+            \U0001F5A5 *VM provisioned*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
             Provider: {providerName}
-            IP: `{ipAddress ?? "N/A"}`{sshLine}
+            IP: `{ipAddress ?? "N/A"}`{sshLine}{sourceHint}
             """;
         await SendMessageAsync(msg);
     }
@@ -81,19 +91,15 @@ public sealed class TelegramNotificationService : INotificationService
     {
         if (!IsEnabled) return;
 
-        var resultPreview = job.ResultMarkdown?.Length > 500
-            ? job.ResultMarkdown[..500] + "…"
-            : job.ResultMarkdown ?? "(no results)";
+        var sourceHint = !string.IsNullOrEmpty(job.SourceUrl)
+            ? $"\nSource: {job.SourceUrl}"
+            : "";
 
         var msg = $"""
-            ✅ *Job completed*
+            \u2705 *Job completed*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
-            Commits: `{job.CommitsAndPrs}`
-
-            ```
-            {resultPreview}
-            ```
+            Commits: `{job.CommitsAndPrs}`{sourceHint}
             """;
         await SendMessageAsync(msg);
     }
@@ -105,12 +111,15 @@ public sealed class TelegramNotificationService : INotificationService
         var instanceHint = !string.IsNullOrEmpty(job.CloudProviderInstanceId)
             ? $"\nInstance: `{job.CloudProviderInstanceId}`"
             : "";
+        var sourceHint = !string.IsNullOrEmpty(job.SourceUrl)
+            ? $"\nSource: {job.SourceUrl}"
+            : "";
 
         var msg = $"""
-            ❌ *Job failed*
+            \u274C *Job failed*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
-            Commits: `{job.CommitsAndPrs}`{instanceHint}
+            Commits: `{job.CommitsAndPrs}`{instanceHint}{sourceHint}
             Error: {EscapeMarkdown(error)}
             """;
         await SendMessageAsync(msg);

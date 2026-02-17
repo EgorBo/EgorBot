@@ -10,7 +10,7 @@
         h1 { color: #58a6ff; margin-bottom: 6px; font-size: 20px; }
         a { color: #58a6ff; text-decoration: none; }
         a:hover { text-decoration: underline; }
-        .back { margin-bottom: 16px; display: inline-block; font-size: 14px; }
+
         .meta { background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 16px; margin-bottom: 20px; }
         .meta-row { display: flex; gap: 32px; flex-wrap: wrap; margin-bottom: 6px; }
         .meta-label { color: #8b949e; min-width: 100px; font-size: 13px; }
@@ -47,7 +47,6 @@
     </style>
 </head>
 <body>
-    <a href="/" class="back">← Back to Dashboard</a>
     <h1 id="jobTitle">Job Details</h1>
 
     <div class="meta" id="metaSection">
@@ -76,7 +75,7 @@
                     startSSE();
                 } else {
                     loadAllLogs();
-                    if (job.status === 'Completed') loadResult();
+                    if (job.status === 'Completed') showResultsAvailable();
                     if (job.status === 'Failed' || job.status === 'TimedOut') showError(job.errorMessage);
                 }
             } catch (e) {
@@ -109,6 +108,7 @@
                     <span class="meta-value">${new Date(job.createdAt).toLocaleString()}</span>
                 </div>
                 ${job.completedAt ? `<div class="meta-row"><span class="meta-label">Completed</span><span class="meta-value">${new Date(job.completedAt).toLocaleString()}</span></div>` : ''}
+                ${job.sourceUrl ? `<div class="meta-row"><span class="meta-label">Source</span><span class="meta-value"><a href="${escapeHtml(job.sourceUrl)}" target="_blank">${escapeHtml(job.sourceUrl)}</a></span></div>` : ''}
             `;
         }
 
@@ -153,15 +153,12 @@
             container.scrollTop = container.scrollHeight;
         }
 
-        async function loadResult() {
-            try {
-                const res = await fetch(`/api/jobs/${jobId}/result`);
-                const text = await res.text();
-                document.getElementById('resultHeader').style.display = '';
-                const container = document.getElementById('resultContainer');
-                container.style.display = '';
-                container.textContent = text;
-            } catch (e) { console.error(e); }
+        function showResultsAvailable() {
+            document.getElementById('resultHeader').style.display = '';
+            const container = document.getElementById('resultContainer');
+            container.style.display = '';
+            container.innerHTML = 'Benchmark results are available. '
+                + `<a href="/api/jobs/${jobId}/result" target="_blank">View raw results</a>`;
         }
 
         function showError(msg) {

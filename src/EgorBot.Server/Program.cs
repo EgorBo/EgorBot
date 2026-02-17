@@ -17,7 +17,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=egorbot.db"));
 
 // ── Cloud providers ──────────────────────────────────────────────────────────
-builder.Services.AddSingleton<ICloudProvider, LocalRunnerProvider>();
+if (builder.Configuration.GetValue<bool>("EgorBot:AllowLocalTarget"))
+    builder.Services.AddSingleton<ICloudProvider, LocalRunnerProvider>();
 builder.Services.AddSingleton<ICloudProvider, AzureCloudProvider>();
 builder.Services.AddSingleton<ICloudProvider, AwsCloudProvider>();
 builder.Services.AddSingleton<CloudProviderFactory>();
@@ -86,6 +87,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
     }
 
     // Normalize & validate targets (resolve aliases, OS prefix)
+    var allowLocal = app.Configuration.GetValue<bool>("EgorBot:AllowLocalTarget");
     var normalizedPlatforms = new List<string>();
     foreach (var raw in request.Platforms)
     {
@@ -98,7 +100,15 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
                         $"Aliases: {string.Join(", ", Platform.GetAliases().Select(a => $"{a.Key}={a.Value}"))}."
             });
         }
-        normalizedPlatforms.Add(Platform.Normalize(raw));
+
+        var normalized = Platform.Normalize(raw);
+        if (Platform.IsLocal(normalized) && !allowLocal)
+        {
+            log.LogWarning("Validation failed: local target not allowed in production");
+            return Results.BadRequest(new { error = "The 'local' target is only available in development/testing mode." });
+        }
+
+        normalizedPlatforms.Add(normalized);
     }
 
     if (string.IsNullOrWhiteSpace(request.CommitsAndPrs))
@@ -122,6 +132,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             BenchmarkCode = request.BenchmarkCode,
             UseProfiler = request.UseProfiler,
             RequestedBy = request.RequestedBy,
+            SourceUrl = request.SourceUrl,
         };
 
         db.Jobs.Add(job);
@@ -183,6 +194,7 @@ api.MapGet("/jobs/{id:guid}/status", async (Guid id, AppDbContext db) =>
         job.CompletedAt,
         job.ErrorMessage,
         HasResult = job.ResultMarkdown != null,
+        job.SourceUrl,
     });
 });
 

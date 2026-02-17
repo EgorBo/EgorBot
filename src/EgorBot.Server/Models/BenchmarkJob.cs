@@ -37,6 +37,10 @@ public class BenchmarkJob
     [MaxLength(128)]
     public string? RequestedBy { get; set; }
 
+    /// <summary>URL of the original GitHub comment/issue that triggered the job.</summary>
+    [MaxLength(512)]
+    public string? SourceUrl { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }

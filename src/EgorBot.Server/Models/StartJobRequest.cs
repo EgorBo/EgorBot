@@ -22,4 +22,7 @@ public sealed class StartJobRequest
 
     /// <summary>GitHub login (or display name) of the user who requested the job.</summary>
     public string? RequestedBy { get; init; }
+
+    /// <summary>URL of the original GitHub comment/issue that triggered the job.</summary>
+    public string? SourceUrl { get; init; }
 }
