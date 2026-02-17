@@ -1,7 +1,7 @@
 using System.Text;
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Services.CloudInit;
+namespace EgorBot.Server.Services.CloudInit;
 
 /// <summary>
 /// Composes the cloud-init / bootstrap script that will run on the provisioned VM.

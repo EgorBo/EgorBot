@@ -1,4 +1,4 @@
-namespace EgorBot.Web.Models;
+namespace EgorBot.Server.Models;
 
 /// <summary>
 /// Lifecycle states for a benchmark job.

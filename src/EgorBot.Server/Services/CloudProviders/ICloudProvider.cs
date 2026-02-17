@@ -1,6 +1,6 @@
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Services.CloudProviders;
+namespace EgorBot.Server.Services.CloudProviders;
 
 /// <summary>
 /// Abstraction over cloud VM provisioning. Implementations exist for Azure, AWS, and local process execution.

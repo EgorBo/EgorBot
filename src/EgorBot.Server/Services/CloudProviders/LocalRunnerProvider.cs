@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Services.CloudProviders;
+namespace EgorBot.Server.Services.CloudProviders;
 
 /// <summary>
 /// Runs egorbot-agent.py as a local process — no VM provisioning.

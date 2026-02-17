@@ -6,7 +6,7 @@ namespace EgorBot.Github.Services;
 
 /// <summary>
 /// Manages the lifecycle of benchmark jobs:
-///   1. Submit the job to EgorBot.Web
+///   1. Submit the job to EgorBot.Server
 ///   2. Create a tracking issue in the runtime-utils repo
 ///   3. Poll job status and post results as comments
 ///   4. Close the tracking issue when all jobs complete
@@ -20,7 +20,7 @@ public sealed class JobTrackerService(
     private Timer? _pollTimer;
 
     /// <summary>
-    /// Handle a parsed @EgorBt command: submit to EgorBot.Web, create tracking issue, start monitoring.
+    /// Handle a parsed @EgorBt command: submit to EgorBot.Server, create tracking issue, start monitoring.
     /// </summary>
     public async Task HandleCommandAsync(MentionSource source, BotCommand command)
     {
@@ -30,8 +30,8 @@ public sealed class JobTrackerService(
             return;
         }
 
-        // 1. Submit job to EgorBot.Web
-        var response = await botClient.StartJobAsync(command);
+        // 1. Submit job to EgorBot.Server
+        var response = await botClient.StartJobAsync(command, source.Author);
         if (response is null)
         {
             logger.LogError("Failed to submit job for {Owner}/{Repo}#{Number}", source.Owner, source.Repo, source.Number);
@@ -283,7 +283,6 @@ public sealed class JobTrackerService(
             **Options:**
             `-profiler` — enable perf profiler
             `-pr <number>` — target a specific PR
-            `-commit <sha1> [vs <sha2>]` — compare specific commits
             `-help` — show this help
 
             Targets can be prefixed with OS: `-windows_arm`, `-linux_intel`

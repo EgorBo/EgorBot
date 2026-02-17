@@ -1,6 +1,6 @@
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Services.Notifications;
+namespace EgorBot.Server.Services.Notifications;
 
 /// <summary>
 /// Abstract notification service — called when jobs start, complete, or fail.

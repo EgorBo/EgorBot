@@ -1,4 +1,4 @@
-namespace EgorBot.Web.Services.CloudProviders;
+namespace EgorBot.Server.Services.CloudProviders;
 
 /// <summary>
 /// Resolves the appropriate <see cref="ICloudProvider"/> for a given platform string.

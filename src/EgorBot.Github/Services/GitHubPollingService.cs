@@ -93,6 +93,9 @@ public sealed class GitHubPollingService(
             var key = $"{repo.Owner}/{repo.Name}/comment/{comment.Id}";
             if (_processed.ContainsKey(key)) continue;
 
+            // Ignore comments left by the bot itself to avoid self-triggering loops
+            if (IsBotUser(comment.User.Login)) continue;
+
             if (!CommandParser.ContainsMention(comment.Body)) continue;
 
             // Mark as processed BEFORE handling (to avoid re-processing on edits)
@@ -149,6 +152,9 @@ public sealed class GitHubPollingService(
             var key = $"{repo.Owner}/{repo.Name}/issue/{issue.Number}";
             if (_processed.ContainsKey(key)) continue;
 
+            // Ignore issues/PRs authored by the bot itself
+            if (IsBotUser(issue.User.Login)) continue;
+
             if (!CommandParser.ContainsMention(issue.Body)) continue;
 
             // Mark as processed
@@ -193,6 +199,9 @@ public sealed class GitHubPollingService(
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
+
+    private static bool IsBotUser(string login) =>
+        login.Equals("EgorBt", StringComparison.OrdinalIgnoreCase);
 
     private GitHubClient CreateGitHubClient()
     {

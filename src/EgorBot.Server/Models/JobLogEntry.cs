@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace EgorBot.Web.Models;
+namespace EgorBot.Server.Models;
 
 /// <summary>
 /// A single log line captured from the agent and persisted for real-time viewing.

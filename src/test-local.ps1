@@ -2,7 +2,7 @@
 .SYNOPSIS
     Test script for EgorBot v2 — submits a local benchmark job and polls until completion.
 .DESCRIPTION
-    1. Starts the EgorBot.Web service via dotnet run
+    1. Starts the EgorBot.Server service via dotnet run
     2. Waits for the health endpoint
     3. Posts a StartJob request with local_x64 platform and a simple benchmark
     4. Polls status until completed/failed
@@ -17,12 +17,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$projectDir = Join-Path $scriptDir "EgorBot.Web"
+$projectDir = Join-Path $scriptDir "EgorBot.Server"
 
 # ── Start the server ──────────────────────────────────────────────────────────
 $serverProcess = $null
 if (-not $SkipServerStart) {
-    Write-Host "Starting EgorBot.Web..." -ForegroundColor Cyan
+    Write-Host "Starting EgorBot.Server..." -ForegroundColor Cyan
     $serverProcess = Start-Process -FilePath "dotnet" `
         -ArgumentList "run --project `"$projectDir`"" `
         -PassThru -NoNewWindow

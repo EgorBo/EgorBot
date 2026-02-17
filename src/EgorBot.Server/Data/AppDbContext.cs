@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Data;
+namespace EgorBot.Server.Data;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {

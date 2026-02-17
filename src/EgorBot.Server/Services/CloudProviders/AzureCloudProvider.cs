@@ -7,9 +7,9 @@ using Azure.ResourceManager.Compute;
 using Azure.ResourceManager.Network;
 using Azure.ResourceManager.Resources;
 using Azure.ResourceManager.Resources.Models;
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Services.CloudProviders;
+namespace EgorBot.Server.Services.CloudProviders;
 
 /// <summary>
 /// Azure VM provisioning via ARM template deployment.

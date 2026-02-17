@@ -6,12 +6,12 @@ using EgorBot.Github.Models;
 namespace EgorBot.Github.Services;
 
 /// <summary>
-/// HTTP client for communicating with the EgorBot.Web service.
+/// HTTP client for communicating with the EgorBot.Server service.
 /// Submits benchmark jobs and polls for their status/results.
 /// </summary>
 public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger)
 {
-    // ── DTOs matching EgorBot.Web's API ──────────────────────────────────
+    // ── DTOs matching EgorBot.Server's API ──────────────────────────────────
 
     private sealed class StartJobRequest
     {
@@ -29,6 +29,9 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
 
         [JsonPropertyName("useProfiler")]
         public bool UseProfiler { get; init; }
+
+        [JsonPropertyName("requestedBy")]
+        public string? RequestedBy { get; init; }
     }
 
     public sealed class StartJobResponse
@@ -69,8 +72,9 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
 
     // ── API calls ────────────────────────────────────────────────────────
 
-    /// <summary>Submit a benchmark job to EgorBot.Web. Returns the response or null on failure.</summary>
-    public async Task<StartJobResponse?> StartJobAsync(BotCommand command)
+    /// <summary>Submit a benchmark job to EgorBot.Server. Returns the response or null on failure.</summary>
+    /// <summary>Submit a benchmark job to EgorBot.Server. Returns the response or null on failure.</summary>
+    public async Task<StartJobResponse?> StartJobAsync(BotCommand command, string? requestedBy)
     {
         var request = new StartJobRequest
         {
@@ -79,11 +83,12 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
             BdnArguments = command.BdnArguments,
             BenchmarkCode = command.BenchmarkCode,
             UseProfiler = command.UseProfiler,
+            RequestedBy = requestedBy,
         };
 
         try
         {
-            logger.LogInformation("Submitting job to EgorBot.Web: targets=[{Targets}], commits={Commits}",
+            logger.LogInformation("Submitting job to EgorBot.Server: targets=[{Targets}], commits={Commits}",
                 string.Join(",", command.Targets), command.CommitsAndPrs);
 
             var response = await http.PostAsJsonAsync("/api/jobs", request);
@@ -91,7 +96,7 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
 
             if (!response.IsSuccessStatusCode)
             {
-                logger.LogError("EgorBot.Web returned {Status}: {Body}", response.StatusCode, body);
+                logger.LogError("EgorBot.Server returned {Status}: {Body}", response.StatusCode, body);
                 return null;
             }
 
@@ -102,12 +107,12 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to submit job to EgorBot.Web");
+            logger.LogError(ex, "Failed to submit job to EgorBot.Server");
             return null;
         }
     }
 
-    /// <summary>Get job status from EgorBot.Web.</summary>
+    /// <summary>Get job status from EgorBot.Server.</summary>
     public async Task<JobStatusResponse?> GetJobStatusAsync(Guid jobId)
     {
         try
@@ -123,7 +128,7 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
         }
     }
 
-    /// <summary>Get job result markdown from EgorBot.Web.</summary>
+    /// <summary>Get job result markdown from EgorBot.Server.</summary>
     public async Task<string?> GetJobResultAsync(Guid jobId)
     {
         try

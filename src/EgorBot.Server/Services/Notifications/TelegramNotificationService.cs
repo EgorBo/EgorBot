@@ -1,8 +1,8 @@
 using System.Text;
 using System.Text.Json;
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Services.Notifications;
+namespace EgorBot.Server.Services.Notifications;
 
 /// <summary>
 /// Sends job notifications to a Telegram chat via the Bot API.

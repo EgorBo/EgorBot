@@ -1,4 +1,4 @@
-namespace EgorBot.Web.Models;
+namespace EgorBot.Server.Models;
 
 /// <summary>
 /// Request DTO for the POST /api/jobs (StartJob) endpoint.
@@ -19,4 +19,7 @@ public sealed class StartJobRequest
 
     /// <summary>Enable perf profiler on the agent.</summary>
     public bool UseProfiler { get; init; }
+
+    /// <summary>GitHub login (or display name) of the user who requested the job.</summary>
+    public string? RequestedBy { get; init; }
 }

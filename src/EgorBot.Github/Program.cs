@@ -2,7 +2,10 @@ using EgorBot.Github.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── EgorBot.Web HTTP client ─────────────────────────────────────────────────
+// ── Load appsettings.Local.json (gitignored, holds secrets) ─────────────────
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+// ── EgorBot.Server HTTP client ─────────────────────────────────────────────────
 var egorBotBaseUrl = builder.Configuration["EgorBot:BaseUrl"] ?? "http://localhost:5000";
 builder.Services.AddHttpClient<EgorBotClient>(http =>
 {

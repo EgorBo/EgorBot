@@ -1,7 +1,7 @@
 using System.IO.Compression;
 using System.Text.RegularExpressions;
 
-namespace EgorBot.Web.Services;
+namespace EgorBot.Server.Services;
 
 /// <summary>
 /// Processes BDN artifacts uploaded by the agent: extracts the markdown report,

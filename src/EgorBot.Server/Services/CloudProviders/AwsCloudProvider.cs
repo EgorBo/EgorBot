@@ -3,9 +3,9 @@ using Amazon;
 using Amazon.EC2;
 using Amazon.EC2.Model;
 using Amazon.Runtime;
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Services.CloudProviders;
+namespace EgorBot.Server.Services.CloudProviders;
 
 /// <summary>
 /// AWS EC2 instance provisioning.

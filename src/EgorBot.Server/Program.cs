@@ -1,10 +1,10 @@
 using System.Text.Json;
-using EgorBot.Web.Data;
-using EgorBot.Web.Models;
-using EgorBot.Web.Services;
-using EgorBot.Web.Services.CloudInit;
-using EgorBot.Web.Services.CloudProviders;
-using EgorBot.Web.Services.Notifications;
+using EgorBot.Server.Data;
+using EgorBot.Server.Models;
+using EgorBot.Server.Services;
+using EgorBot.Server.Services.CloudInit;
+using EgorBot.Server.Services.CloudProviders;
+using EgorBot.Server.Services.Notifications;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -121,6 +121,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             BdnArguments = request.BdnArguments,
             BenchmarkCode = request.BenchmarkCode,
             UseProfiler = request.UseProfiler,
+            RequestedBy = request.RequestedBy,
         };
 
         db.Jobs.Add(job);
@@ -204,11 +205,13 @@ api.MapGet("/jobs/{id:guid}/result", async (Guid id, AppDbContext db) =>
 // GET /api/jobs/{id}/logs — all log entries
 api.MapGet("/jobs/{id:guid}/logs", async (Guid id, AppDbContext db) =>
 {
-    var logs = await db.JobLogs
+    var logs = (await db.JobLogs
         .Where(l => l.JobId == id)
         .OrderBy(l => l.Id)
         .Select(l => new { l.Id, l.Timestamp, l.Message })
-        .ToListAsync();
+        .ToListAsync())
+        .Select(l => new { l.Id, timestamp = l.Timestamp.ToString("o"), l.Message })
+        .ToList();
 
     return Results.Ok(logs);
 });
@@ -232,7 +235,8 @@ api.MapGet("/jobs/{id:guid}/logs/stream", async (Guid id, AppDbContext db, HttpC
 
         foreach (var log in newLogs)
         {
-            var json = JsonSerializer.Serialize(log);
+            var json = JsonSerializer.Serialize(new { log.Id, timestamp = log.Timestamp.ToString("o"), log.Message },
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
             await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
             lastLogId = log.Id;
         }

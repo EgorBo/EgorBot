@@ -1,6 +1,6 @@
-using EgorBot.Web.Models;
+using EgorBot.Server.Models;
 
-namespace EgorBot.Web.Services.Notifications;
+namespace EgorBot.Server.Services.Notifications;
 
 /// <summary>
 /// Default notification service that simply logs to the console/logger.

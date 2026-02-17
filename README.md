@@ -6,7 +6,7 @@ A web service for running [BenchmarkDotNet](https://benchmarkdotnet.org/) microb
 
 ```
 ┌────────────┐       POST /api/jobs        ┌──────────────┐      cloud-init       ┌──────────────┐
-│  Client /  │ ─────────────────────────── │  EgorBot.Web │ ───────────────────── │  Cloud VM    │
+│  Client /  │ ─────────────────────────── │EgorBot.Server│ ───────────────────── │  Cloud VM    │
 │  Web UI    │ ◄── SSE /api/jobs/{id}/     │  (ASP.NET)   │ ◄── logs/heartbeat ── │  (Agent.py)  │
 │            │     logs/stream             │              │ ◄── POST /complete ── │              │
 └────────────┘                             └──────────────┘                       └──────────────┘
@@ -147,7 +147,7 @@ Key settings:
 ## Running locally
 
 ```bash
-cd src/EgorBot.Web
+cd src/EgorBot.Server
 dotnet run --urls "http://localhost:5000"
 ```
 

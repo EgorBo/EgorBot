@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="EgorBot.Github/EgorBot.Github.csproj" />
-  <Project Path="EgorBot.Web/EgorBot.Web.csproj" />
+  <Project Path="EgorBot.Shared/EgorBot.Shared.csproj" />
+  <Project Path="EgorBot.Server/EgorBot.Server.csproj" />
 </Solution>

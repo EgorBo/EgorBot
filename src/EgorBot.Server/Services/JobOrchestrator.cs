@@ -1,13 +1,13 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using EgorBot.Web.Data;
-using EgorBot.Web.Models;
-using EgorBot.Web.Services.CloudInit;
-using EgorBot.Web.Services.CloudProviders;
-using EgorBot.Web.Services.Notifications;
+using EgorBot.Server.Data;
+using EgorBot.Server.Models;
+using EgorBot.Server.Services.CloudInit;
+using EgorBot.Server.Services.CloudProviders;
+using EgorBot.Server.Services.Notifications;
 using Microsoft.EntityFrameworkCore;
 
-namespace EgorBot.Web.Services;
+namespace EgorBot.Server.Services;
 
 /// <summary>
 /// Outcome posted by the agent (or timeout logic) to signal job completion.

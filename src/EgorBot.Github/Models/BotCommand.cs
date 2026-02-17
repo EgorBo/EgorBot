@@ -52,14 +52,14 @@ public sealed class MentionSource
 }
 
 /// <summary>
-/// Tracks an in-flight benchmark job submitted to EgorBot.Web.
+/// Tracks an in-flight benchmark job submitted to EgorBot.Server.
 /// </summary>
 public sealed class TrackedJob
 {
     public required MentionSource Source { get; init; }
     public required BotCommand Command { get; init; }
 
-    /// <summary>Job group ID returned by EgorBot.Web.</summary>
+    /// <summary>Job group ID returned by EgorBot.Server.</summary>
     public Guid GroupId { get; set; }
 
     /// <summary>Individual job IDs per platform.</summary>

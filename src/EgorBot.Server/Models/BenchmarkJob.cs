@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace EgorBot.Web.Models;
+namespace EgorBot.Server.Models;
 
 /// <summary>
 /// Persisted entity representing a single benchmark job targeting one platform.
@@ -32,6 +32,10 @@ public class BenchmarkJob
 
     /// <summary>Whether to enable profiling (perf record).</summary>
     public bool UseProfiler { get; set; }
+
+    /// <summary>GitHub login (or display name) of the user who requested the job.</summary>
+    [MaxLength(128)]
+    public string? RequestedBy { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }

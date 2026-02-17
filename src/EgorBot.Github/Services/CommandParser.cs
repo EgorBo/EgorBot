@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using EgorBot.Github.Models;
+using EgorBot.Shared;
 
 namespace EgorBot.Github.Services;
 
@@ -7,45 +8,19 @@ namespace EgorBot.Github.Services;
 /// Parses @EgorBt commands from GitHub comment/issue/PR body text.
 ///
 /// Format:
-///   @EgorBt [commands] [BDN args]
+///   @EgorBt [targets] [-commits SHA,main,SHA~2] [-profiler] [BDN args]
 ///   ```[cs|csharp|c#]
 ///   benchmark code
 ///   ```
 ///
 /// The @EgorBt mention must appear at the start of a line.
 /// Everything after the last code block is ignored.
+///
+/// Target names, aliases, and OS prefixes are defined in <see cref="TargetCatalog"/>.
 /// </summary>
 public static class CommandParser
 {
     private const string BotMention = "@EgorBt";
-
-    // Known EgorBot-specific command tokens (case-insensitive, leading dashes stripped).
-    // Once a token isn't recognized, everything from it onward becomes BDN args.
-    private static readonly HashSet<string> KnownTargets = new(StringComparer.OrdinalIgnoreCase)
-    {
-        // Azure
-        "arm", "arm64", "cobalt", "cobalt100", "azure_cobalt100",
-        "ampere", "azure_ampere",
-        "intel", "azure_intel", "azure_cascadelake", "cascadelake",
-        "x64", "amd", "azure_x64", "azure_genoa", "genoa",
-        "genoasmt1", "azure_genoasmt1",
-        "milano", "azure_milano",
-        // AWS
-        "aws_arm", "aws_graviton2", "aws_graviton3", "aws_graviton4",
-        "graviton2", "graviton3", "graviton4",
-        "aws_intel", "aws_sapphirelake", "sapphirelake",
-        "aws_icelake", "icelake",
-        "aws_amd", "aws_genoa", "aws_turin", "aws_milano",
-        "turin",
-        // Local
-        "local",
-    };
-
-    private static readonly HashSet<string> OsPrefixes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "linux", "windows", "ubuntu2404", "ubuntu2204", "ubuntu",
-        "debian12", "debian", "macos",
-    };
 
     /// <summary>
     /// Check whether <paramref name="body"/> contains an @EgorBt mention at the start of a line.
@@ -108,7 +83,7 @@ public static class CommandParser
             var normalized = raw.TrimStart('-').ToLowerInvariant();
 
             // Strip OS prefix (e.g. "linux_arm" → "arm", "windows_intel" → "intel")
-            var withoutOs = StripOsPrefix(normalized);
+            var withoutOs = TargetCatalog.StripOsPrefix(normalized);
 
             switch (withoutOs)
             {
@@ -131,30 +106,27 @@ public static class CommandParser
                     }
                     break;
 
-                // Commit reference: -commit abc123 [vs def456]
-                case "commit":
+                // Commit references: -commits abc123,def456,main  (comma or semicolon separated)
+                case "commit" or "commits":
                     if (i + 1 < tokens.Count)
                     {
                         i++;
-                        commits.Add(tokens[i]);
-                        // Check for "vs" separator
-                        if (i + 2 < tokens.Count &&
-                            tokens[i + 1].Equals("vs", StringComparison.OrdinalIgnoreCase))
+                        foreach (var part in tokens[i].Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                         {
-                            i += 2;
-                            commits.Add(tokens[i]);
+                            if (part.Length > 0)
+                                commits.Add(part);
                         }
                     }
                     break;
 
                 default:
                     // Check if it's a known target (with or without OS prefix)
-                    if (IsKnownTarget(normalized))
+                    if (TargetCatalog.IsKnownTarget(normalized))
                     {
                         // Re-add OS prefix if it was there (for windows_ support)
                         var hasOsPrefix = normalized != withoutOs;
                         var osPrefix = hasOsPrefix ? normalized[..normalized.IndexOf('_')] : null;
-                        var targetName = ResolveTargetAlias(withoutOs);
+                        var targetName = TargetCatalog.ResolveAlias(withoutOs);
                         targets.Add(osPrefix != null ? $"{osPrefix}_{targetName}" : targetName);
                     }
                     else
@@ -203,45 +175,6 @@ public static class CommandParser
             IsHelp = isHelp,
         };
     }
-
-    private static bool IsKnownTarget(string normalized)
-    {
-        if (KnownTargets.Contains(normalized)) return true;
-        var withoutOs = StripOsPrefix(normalized);
-        return withoutOs != normalized && KnownTargets.Contains(withoutOs);
-    }
-
-    private static string StripOsPrefix(string normalized)
-    {
-        var underscoreIdx = normalized.IndexOf('_');
-        if (underscoreIdx < 0) return normalized;
-
-        var prefix = normalized[..underscoreIdx];
-        if (OsPrefixes.Contains(prefix))
-            return normalized[(underscoreIdx + 1)..];
-        return normalized;
-    }
-
-    /// <summary>
-    /// Map short aliases to the canonical target names used by EgorBot.Web.
-    /// </summary>
-    private static string ResolveTargetAlias(string name) => name switch
-    {
-        "arm" or "arm64" or "cobalt" or "cobalt100" => "azure_cobalt100",
-        "ampere" => "azure_ampere",
-        "intel" => "azure_cascadelake",
-        "cascadelake" => "azure_cascadelake",
-        "x64" or "amd" or "genoa" => "azure_genoa",
-        "genoasmt1" => "azure_genoasmt1",
-        "milano" => "azure_milano",
-        "graviton2" => "aws_graviton2",
-        "graviton3" => "aws_graviton3",
-        "graviton4" => "aws_graviton4",
-        "sapphirelake" => "aws_sapphirelake",
-        "icelake" => "aws_icelake",
-        "turin" => "aws_turin",
-        _ => name, // Already canonical (e.g. "azure_genoa", "aws_graviton4", "local")
-    };
 
     private static List<string> Tokenize(string input)
     {
