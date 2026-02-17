@@ -526,8 +526,11 @@ def install_dependencies():
         marker.touch()
 
     elif TARGET_OS == "osx":
-        # TODO: insert macOS dependency installation here
-        pass  # marker.touch()
+        # Homebrew is typically available on Helix macOS machines
+        if shutil.which("brew"):
+            for pkg in ["cmake", "ninja", "icu4c"]:
+                run(f"brew install {pkg}", check=False)
+        marker.touch()
 
     elif TARGET_OS == "windows":
         # TODO: insert Windows dependency installation here
