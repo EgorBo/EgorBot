@@ -123,11 +123,21 @@ public static class CommandParser
                     // Check if it's a known target (with or without OS prefix)
                     if (TargetCatalog.IsKnownTarget(normalized))
                     {
-                        // Re-add OS prefix if it was there (for windows_ support)
-                        var hasOsPrefix = normalized != withoutOs;
-                        var osPrefix = hasOsPrefix ? normalized[..normalized.IndexOf('_')] : null;
-                        var targetName = TargetCatalog.ResolveAlias(withoutOs);
-                        targets.Add(osPrefix != null ? $"{osPrefix}_{targetName}" : targetName);
+                        // First, try resolving the full name as an alias (e.g. "windows_x64" → "helix_windows_x64")
+                        var fullResolved = TargetCatalog.ResolveAlias(normalized);
+                        if (fullResolved != normalized)
+                        {
+                            // The full name (including OS prefix) was an alias — use it directly
+                            targets.Add(fullResolved);
+                        }
+                        else
+                        {
+                            // Fallback: re-add OS prefix if it was there (for windows_ support)
+                            var hasOsPrefix = normalized != withoutOs;
+                            var osPrefix = hasOsPrefix ? normalized[..normalized.IndexOf('_')] : null;
+                            var targetName = TargetCatalog.ResolveAlias(withoutOs);
+                            targets.Add(osPrefix != null ? $"{osPrefix}_{targetName}" : targetName);
+                        }
                     }
                     else
                     {
