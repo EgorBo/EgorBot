@@ -28,6 +28,7 @@ builder.Services.AddSingleton<CloudProviderFactory>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<CloudInitBuilder>();
 builder.Services.AddSingleton<ResultProcessor>();
+builder.Services.AddSingleton<LogUploadService>();
 builder.Services.AddSingleton<INotificationService, ConsoleNotificationService>();
 builder.Services.AddSingleton<INotificationService, TelegramNotificationService>();
 builder.Services.AddSingleton<JobOrchestrator>();

@@ -629,7 +629,7 @@ def install_dependencies():
     if TARGET_OS == "linux":
         if shutil.which("apt"):
             run(f"{sudo}apt update", check=chk)
-            run(f"{sudo}apt install -y git zip ninja-build parallel", check=chk)
+            run(f"{sudo}apt install -y git zip ninja-build", check=chk)
 
             # Install perf if it's not available and PERF_ENABLED is 1
             if CFG.perf_enabled and not shutil.which("perf"):
@@ -640,9 +640,12 @@ def install_dependencies():
                     "| grep -v common | head -n 1) /usr/lib/linux-tools/$(uname -r) || true'",
                     check=False,
                 )
+        elif shutil.which("tdnf"):
+            run(f"{sudo}tdnf install -y git zip ninja-build", check=chk)
+            run(f"{sudo}tdnf tdnf update -y", check=chk)
         elif shutil.which("dnf"):
-            run(f"{sudo}dnf install -y git zip ninja-build parallel", check=chk)
-            run(f"{sudo}dnf install -y perl-open.noarch", check=chk)  # for FlameGraph
+            run(f"{sudo}dnf install -y git zip ninja-build", check=chk)
+            # run(f"{sudo}dnf install -y perl-open.noarch", check=chk)  # for FlameGraph
         marker.touch()
 
     elif TARGET_OS == "osx":

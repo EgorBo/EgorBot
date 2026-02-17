@@ -22,6 +22,7 @@ public sealed class JobOrchestrator(
     IServiceScopeFactory scopeFactory,
     CloudProviderFactory providerFactory,
     CloudInitBuilder cloudInitBuilder,
+    LogUploadService logUploadService,
     IEnumerable<INotificationService> notifiers,
     IConfiguration config,
     ILogger<JobOrchestrator> logger)
@@ -212,6 +213,26 @@ public sealed class JobOrchestrator(
         {
             job.CompletedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(CancellationToken.None);
+
+            // Upload full logs to Azure Blob Storage
+            try
+            {
+                var logsBlobUrl = await logUploadService.UploadJobLogsAsync(db, jobId);
+                if (logsBlobUrl is not null)
+                {
+                    job.LogsBlobUrl = logsBlobUrl;
+
+                    // Append log link to the result markdown
+                    var logLine = $"\n\n[Full logs]({logsBlobUrl})\n";
+                    job.ResultMarkdown = (job.ResultMarkdown ?? "") + logLine;
+
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to upload logs for job {JobId}", jobId);
+            }
 
             // Always deprovision
             if (instanceId is not null && provider is not null)

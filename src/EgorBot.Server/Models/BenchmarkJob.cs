@@ -52,6 +52,10 @@ public class BenchmarkJob
     /// <summary>Error message if the job failed.</summary>
     public string? ErrorMessage { get; set; }
 
+    /// <summary>URL of the uploaded full log in Azure Blob Storage.</summary>
+    [MaxLength(512)]
+    public string? LogsBlobUrl { get; set; }
+
     /// <summary>Provider-specific instance identifier for cleanup.</summary>
     [MaxLength(256)]
     public string? CloudProviderInstanceId { get; set; }
