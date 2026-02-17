@@ -70,10 +70,10 @@ public sealed class JobTrackerService(
             tracked.TrackingIssueNumber = source.Number;
 
             var logsLinks = string.Join("\n", tracked.Jobs.Select(j =>
-                $"- **{j.Platform}**: [logs]({botClient.GetLogsUrl(j.Id)})"));
+                $"- **{j.Platform}**: [online logs]({botClient.GetLogsUrl(j.Id)})"));
 
             await PostCommentOnTrackingIssueAsync(tracked,
-                $"Benchmark job submitted. Group ID: `{response.GroupId}` ({tracked.Jobs.Count} job(s)).\n\n{logsLinks}");
+                $"Benchmark job submitted. The results will be posted here once they are ready.\n\n{logsLinks}");
         }
         else
         {
