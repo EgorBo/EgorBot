@@ -505,6 +505,108 @@ def setup_environment(cfg: Config):
 ##
 ########################################################################################
 
+def _ensure_vs_build_tools():
+    """
+    Ensure Visual Studio Build Tools with C++ workload is available on Windows.
+    The dotnet/runtime native build (init-vs-env.cmd) requires vswhere.exe at
+    %ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe.
+    If it's missing, download it.  If VS Build Tools aren't installed at all,
+    install them with the C++ workload.
+    """
+    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    installer_dir = os.path.join(pf86, "Microsoft Visual Studio", "Installer")
+    vswhere_exe = os.path.join(installer_dir, "vswhere.exe")
+
+    # ── Step 1: ensure vswhere.exe exists ─────────────────────────────────
+    if not os.path.isfile(vswhere_exe):
+        post_log("vswhere.exe not found, downloading...")
+        os.makedirs(installer_dir, exist_ok=True)
+        vswhere_url = "https://netcorenativeassets.blob.core.windows.net/resource-packages/external/windows/vswhere/3.1.7/vswhere.exe"
+        try:
+            download(vswhere_url, Path(vswhere_exe))
+        except Exception as e:
+            post_log(f"WARNING: Failed to download vswhere.exe: {e}")
+            return
+
+    # ── Step 2: check if VS with C++ tools is already installed ───────────
+    result = subprocess.run(
+        [vswhere_exe, "-latest", "-prerelease", "-products", "*",
+         "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+         "-property", "installationPath"],
+        capture_output=True, text=True
+    )
+    vs_path = result.stdout.strip()
+    if vs_path and os.path.isdir(vs_path):
+        post_log(f"VS Build Tools found at {vs_path}")
+        _activate_vs_environment(vs_path)
+        return
+
+    # ── Step 3: install VS Build Tools with C++ workload ──────────────────
+    post_log("VS Build Tools with C++ not found — installing (this may take 10-20 min)...")
+    vs_installer_url = "https://aka.ms/vs/17/release/vs_BuildTools.exe"
+    vs_installer = WORK_DIR / "vs_BuildTools.exe"
+    try:
+        download(vs_installer_url, vs_installer)
+    except Exception as e:
+        post_log(f"WARNING: Failed to download VS Build Tools installer: {e}")
+        return
+
+    # Install only the C++ workload (VCTools) and the Windows SDK
+    run(f'"{vs_installer}" --quiet --wait --norestart '
+        '--add Microsoft.VisualStudio.Workload.VCTools '
+        '--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 '
+        '--add Microsoft.VisualStudio.Component.Windows11SDK.26100 '
+        '--includeRecommended',
+        check=False)
+
+    # Re-run vswhere to find the newly installed path
+    result = subprocess.run(
+        [vswhere_exe, "-latest", "-prerelease", "-products", "*",
+         "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+         "-property", "installationPath"],
+        capture_output=True, text=True
+    )
+    vs_path = result.stdout.strip()
+    if vs_path and os.path.isdir(vs_path):
+        post_log(f"VS Build Tools installed at {vs_path}")
+        _activate_vs_environment(vs_path)
+    else:
+        post_log("WARNING: VS Build Tools installation may have failed — build.cmd will likely fail")
+
+
+def _activate_vs_environment(vs_path: str):
+    """
+    Run VsDevCmd.bat and capture the resulting environment variables so that
+    init-vs-env.cmd in dotnet/runtime sees VisualStudioVersion already set
+    and skips its own vswhere lookup.
+    """
+    vsdevcmd = os.path.join(vs_path, "Common7", "Tools", "VsDevCmd.bat")
+    if not os.path.isfile(vsdevcmd):
+        post_log(f"WARNING: VsDevCmd.bat not found at {vsdevcmd}")
+        return
+
+    # Run VsDevCmd.bat and dump the resulting environment
+    result = subprocess.run(
+        f'cmd /c ""{vsdevcmd}" -no_logo && set"',
+        capture_output=True, text=True, shell=True
+    )
+    if result.returncode != 0:
+        post_log("WARNING: VsDevCmd.bat failed")
+        return
+
+    # Parse the environment and import key VS/MSVC variables
+    for line in result.stdout.splitlines():
+        if '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        # Import all VS-related variables plus PATH, INCLUDE, LIB, LIBPATH
+        if key.upper() in ("PATH", "INCLUDE", "LIB", "LIBPATH") or \
+           key.upper().startswith(("VS", "VC", "VSCMD", "VISUAL")):
+            os.environ[key] = value
+
+    post_log(f"VS environment activated (VisualStudioVersion={os.environ.get('VisualStudioVersion', '?')})")
+
+
 def install_dependencies():
     # On local runs (callback to localhost), don't kill dotnet — it would kill the web server!
     if not CFG.callback_url or "localhost" not in CFG.callback_url:
@@ -546,11 +648,14 @@ def install_dependencies():
     elif TARGET_OS == "osx":
         # Homebrew is typically available on Helix macOS machines
         if shutil.which("brew"):
-            for pkg in ["cmake", "ninja", "icu4c"]:
+            for pkg in ["cmake", "ninja", "icu4c", "pkg-config"]:
                 run(f"brew install {pkg}", check=False)
         marker.touch()
 
     elif TARGET_OS == "windows":
+        # Ensure VS Build Tools are available (needed for building dotnet/runtime native code)
+        _ensure_vs_build_tools()
+
         # Try to find git: check PATH, then common install locations, then download portable git
         if not shutil.which("git"):
             post_log("git not found on PATH, searching common locations...")
