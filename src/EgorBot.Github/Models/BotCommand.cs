@@ -5,7 +5,7 @@ namespace EgorBot.Github.Models;
 /// </summary>
 public sealed class BotCommand
 {
-    /// <summary>Target platforms (e.g. "arm", "azure_genoa"). Defaults to ["azure_genoa"] if none specified.</summary>
+    /// <summary>Target platforms (e.g. \"arm\", \"aws_genoa\"). Defaults to [\"helix_osx_arm64\"] if none specified.</summary>
     public List<string> Targets { get; init; } = [];
 
     /// <summary>Commits/PRs to compare, semicolon-separated (e.g. "PR_12345;main").</summary>
@@ -22,6 +22,9 @@ public sealed class BotCommand
 
     /// <summary>Show help text instead of running a job.</summary>
     public bool IsHelp { get; init; }
+
+    /// <summary>Validation error that should be reported back to the user instead of running a job.</summary>
+    public string? ErrorMessage { get; init; }
 }
 
 /// <summary>

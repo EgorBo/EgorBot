@@ -107,7 +107,7 @@ public static class CommandParser
                     break;
 
                 // Commit references: -commits abc123,def456,main  (comma or semicolon separated)
-                case "commit" or "commits":
+                case "commits":
                     if (i + 1 < tokens.Count)
                     {
                         i++;
@@ -119,7 +119,26 @@ public static class CommandParser
                     }
                     break;
 
+                // Obsolete: -commit (singular) — guide users to -commits
+                case "commit":
+                    return new BotCommand
+                    {
+                        ErrorMessage = "`-commit` is obsolete, please use `-commits commit1,commit2,commit3` instead. "
+                            + "For `previous` you can use ~ syntax, e.g. `-commits SHA~1` to get 1 commit before SHA.",
+                    };
+
                 default:
+                    // Check if user requested a Windows target — not currently supported
+                    if (normalized.StartsWith("windows", StringComparison.OrdinalIgnoreCase) ||
+                        normalized == "win" || normalized == "win64")
+                    {
+                        return new BotCommand
+                        {
+                            ErrorMessage = "Windows is not currently available as a target for EgorBot jobs. "
+                                + "Please choose a different target or run the agent on a non-Windows machine.",
+                        };
+                    }
+
                     // Check if it's a known target (with or without OS prefix)
                     if (TargetCatalog.IsKnownTarget(normalized))
                     {
@@ -162,7 +181,7 @@ public static class CommandParser
 
         // Default target if none specified
         if (targets.Count == 0)
-            targets.Add("azure_genoa");
+            targets.Add("helix_osx_arm64");
 
         // If we're in a PR context and no commits specified, use the PR itself + main
         if (commits.Count == 0 && contextPrNumber.HasValue)

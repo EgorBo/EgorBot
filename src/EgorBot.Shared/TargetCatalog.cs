@@ -68,9 +68,9 @@ public static class TargetCatalog
 
     private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Short-hand → canonical target name (default to AWS linux)
-        ["arm"]       = "aws_graviton4",
-        ["arm64"]     = "aws_graviton4",
+        // Short-hand → canonical target name
+        ["arm"]       = "helix_osx_arm64",
+        ["arm64"]     = "helix_osx_arm64",
         ["intel"]     = "aws_sapphirelake",
         ["x64"]       = "aws_sapphirelake",
         ["amd"]       = "aws_genoa",
@@ -103,6 +103,13 @@ public static class TargetCatalog
         ["azure_x64"] = "azure_genoa",
         ["azure_intel"] = "azure_cascadelake",
         ["azure_amd"] = "azure_genoa",
+
+        // Linux shortcuts (resolve to AWS)
+        ["linux_arm"]   = "aws_graviton4",
+        ["linux_arm64"] = "aws_graviton4",
+        ["linux_x64"]   = "aws_sapphirelake",
+        ["linux_amd"]   = "aws_genoa",
+        ["linux_intel"] = "aws_sapphirelake",
 
         // Local shortcuts
         ["local_x64"]   = "local",

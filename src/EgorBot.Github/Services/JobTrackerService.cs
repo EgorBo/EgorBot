@@ -36,6 +36,12 @@ public sealed class JobTrackerService(
             return;
         }
 
+        if (command.ErrorMessage is not null)
+        {
+            await PostCommentOnTrackingRepoAsync(source, $"⚠️ {command.ErrorMessage}");
+            return;
+        }
+
         // If the mention is in a tracking issue (in the tracking repo), try to infer
         // the source PR context from the issue title (e.g. "Benchmarks for dotnet/runtime#124445 ...")
         var effectiveCommand = TryInferPrFromTrackingIssue(source, command);
