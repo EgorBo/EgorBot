@@ -58,7 +58,7 @@ public sealed class TelegramNotificationService : INotificationService
             : "";
 
         var msg = $"""
-            \U0001F680 *Job started*
+            🚀 *Job started*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
             Commits: `{job.CommitsAndPrs}`{requestedByHint}{sourceHint}
@@ -78,7 +78,7 @@ public sealed class TelegramNotificationService : INotificationService
             : "";
 
         var msg = $"""
-            \U0001F5A5 *VM provisioned*
+            🖥 *VM provisioned*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
             Provider: {providerName}
@@ -96,7 +96,7 @@ public sealed class TelegramNotificationService : INotificationService
             : "";
 
         var msg = $"""
-            \u2705 *Job completed*
+            ✅ *Job completed*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
             Commits: `{job.CommitsAndPrs}`{sourceHint}
@@ -116,7 +116,7 @@ public sealed class TelegramNotificationService : INotificationService
             : "";
 
         var msg = $"""
-            \u274C *Job failed*
+            ❌ *Job failed*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
             Commits: `{job.CommitsAndPrs}`{instanceHint}{sourceHint}

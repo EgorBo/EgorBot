@@ -84,6 +84,8 @@ public static class TargetCatalog
         ["turin"]     = "aws_turin",
         // Cloud-vendor shortcuts
         ["aws_arm"]   = "aws_graviton4",
+        ["aws_arm64"] = "aws_graviton4",
+        ["aws_x64"]   = "aws_sapphirelake",
         ["aws_amd"]   = "aws_genoa",
         ["aws_intel"] = "aws_sapphirelake",
         ["azure_arm"] = "azure_cobalt100",

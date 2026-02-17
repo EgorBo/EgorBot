@@ -184,8 +184,12 @@ public sealed class JobTrackerService(
                 if (tracked.CompletedCount >= tracked.Jobs.Count)
                 {
                     _activeJobs.TryRemove(groupId, out _);
-                    logger.LogInformation("All jobs completed for group {GroupId}. Closing tracking issue.", groupId);
-                    await CloseTrackingIssueAsync(tracked);
+                    logger.LogInformation("All jobs completed for group {GroupId}.", groupId);
+
+                    if (config.GetValue("Github:CloseTrackingIssues", false))
+                        await CloseTrackingIssueAsync(tracked);
+                    else
+                        logger.LogInformation("Skipping closing tracking issue (Github:CloseTrackingIssues = false).");
                 }
             }
             catch (Exception ex)
