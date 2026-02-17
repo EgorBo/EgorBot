@@ -257,13 +257,13 @@ api.MapGet("/jobs/{id:guid}/logs", async (Guid id, int? tail, AppDbContext db) =
 });
 
 // GET /api/jobs/{id}/logs/stream — SSE endpoint for live log streaming
-api.MapGet("/jobs/{id:guid}/logs/stream", async (Guid id, AppDbContext db, HttpContext ctx, CancellationToken ct) =>
+api.MapGet("/jobs/{id:guid}/logs/stream", async (Guid id, long? after, AppDbContext db, HttpContext ctx, CancellationToken ct) =>
 {
     ctx.Response.ContentType = "text/event-stream";
     ctx.Response.Headers.CacheControl = "no-cache";
     ctx.Response.Headers.Connection = "keep-alive";
 
-    long lastLogId = 0;
+    long lastLogId = after ?? 0;
 
     while (!ct.IsCancellationRequested)
     {

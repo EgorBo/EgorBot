@@ -67,6 +67,7 @@
         let eventSource = null;
         let logLineCount = 0;
         let totalSkipped = 0;
+        let lastLogId = 0;
 
         async function loadJobStatus() {
             try {
@@ -75,7 +76,7 @@
                 renderMeta(job);
 
                 if (job.status === 'Running' || job.status === 'Provisioning') {
-                    startSSE();
+                    await loadTailThenSSE();
                 } else {
                     loadAllLogs();
                     if (job.status === 'Completed') showResultsAvailable();
@@ -115,9 +116,14 @@
             `;
         }
 
+        async function loadTailThenSSE() {
+            await loadAllLogs();
+            startSSE();
+        }
+
         function startSSE() {
             if (eventSource) return;
-            eventSource = new EventSource(`/api/jobs/${jobId}/logs/stream`);
+            eventSource = new EventSource(`/api/jobs/${jobId}/logs/stream?after=${lastLogId}`);
             eventSource.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 if (data.done) {
@@ -127,6 +133,7 @@
                     return;
                 }
                 appendLog(data);
+                if (data.id > lastLogId) lastLogId = data.id;
                 pruneOldLogs();
             };
             eventSource.onerror = () => {
@@ -155,6 +162,7 @@
                 for (const log of data.logs) {
                     frag.appendChild(createLogLine(log));
                     logLineCount++;
+                    if (log.id > lastLogId) lastLogId = log.id;
                 }
                 container.appendChild(frag);
                 container.scrollTop = container.scrollHeight;
