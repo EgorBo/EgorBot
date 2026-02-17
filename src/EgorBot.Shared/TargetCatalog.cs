@@ -50,7 +50,7 @@ public static class TargetCatalog
 
         // Helix — managed infrastructure, VmSizeTemplate stores the Helix queue ID
         // macOS
-        ["helix_osx_arm64"]     = new("helix_osx_arm64",     "Helix", "arm64", "osx",     false, "OSX.15.Arm64.Open",           null, null, "Apple Silicon (macOS 15)"),
+        ["helix_osx_arm64"]     = new("helix_osx_arm64",     "Helix", "arm64", "osx",     false, "osx.26.arm64.open",           null, null, "Apple Silicon (macOS 15)"),
         ["helix_osx_x64"]       = new("helix_osx_x64",       "Helix", "x64",   "osx",     false, "OSX.15.Amd64.Open",           null, null, "Intel Mac (macOS 15)"),
         // Linux
         ["helix_linux_x64"]     = new("helix_linux_x64",     "Helix", "x64",   "linux",   false, "azurelinux.3.amd64.open",     null, null, "Azure Linux 3 x64"),
