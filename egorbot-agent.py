@@ -533,8 +533,11 @@ def install_dependencies():
         marker.touch()
 
     elif TARGET_OS == "windows":
-        # TODO: insert Windows dependency installation here
-        pass  # marker.touch()
+        # On Windows, git and python are expected to be pre-installed.
+        # Verify git is available (required for cloning runtime).
+        if not shutil.which("git"):
+            post_log("WARNING: git not found on PATH — runtime clone will fail")
+        marker.touch()
 
     else:
         print(f"❌ Unsupported TARGET_OS: {TARGET_OS}")

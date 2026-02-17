@@ -108,8 +108,8 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
             return script
                 .Replace("$workDir = 'C:\\egorbot_work'",
                          "$workDir = Join-Path $env:HELIX_WORKITEM_PAYLOAD 'egorbot_work'")
-                // Run synchronously instead of Start-Process
-                .Replace("Start-Process python -ArgumentList '", "python ")
+                // Run synchronously instead of Start-Process (& is the call operator for variable commands)
+                .Replace("Start-Process $python -ArgumentList '", "& $python ")
                 .Replace("' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log", " 2>&1 | Tee-Object -FilePath agent.log");
         }
 

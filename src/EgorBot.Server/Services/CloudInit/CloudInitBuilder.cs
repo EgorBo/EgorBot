@@ -84,27 +84,59 @@ public sealed class CloudInitBuilder(IConfiguration config)
         var sb = new StringBuilder();
         sb.AppendLine("# PowerShell bootstrap for EgorBot agent");
         sb.AppendLine();
-        sb.AppendLine("$ErrorActionPreference = 'Stop'");
+        // TLS 1.2 for HTTPS downloads (Windows PowerShell 5.1 default is TLS 1.0)
+        sb.AppendLine("[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12");
+        sb.AppendLine();
         sb.AppendLine("$workDir = 'C:\\egorbot_work'");
         sb.AppendLine("New-Item -ItemType Directory -Force -Path $workDir | Out-Null");
         sb.AppendLine("Set-Location $workDir");
         sb.AppendLine();
 
+        // Error reporting helper — posts a log line to EgorBot before the agent is running
+        sb.AppendLine("function Report-Error($msg) {");
+        sb.AppendLine("    Write-Host \"FATAL: $msg\"");
+        sb.AppendLine($"    try {{ $body = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json @($msg)))");
+        sb.AppendLine($"        Invoke-WebRequest -Uri '{callbackUrl}/jobs/{job.Id}/logs' -Method POST -ContentType 'application/json' -Body $body -UseBasicParsing -ErrorAction SilentlyContinue | Out-Null");
+        sb.AppendLine($"    }} catch {{}}");
+        sb.AppendLine("}");
+        sb.AppendLine();
+
+        // Find Python executable
+        sb.AppendLine("$python = $null");
+        sb.AppendLine("foreach ($cmd in @('python3', 'python', 'py')) {");
+        sb.AppendLine("    if (Get-Command $cmd -ErrorAction SilentlyContinue) { $python = $cmd; break }");
+        sb.AppendLine("}");
+        sb.AppendLine("if (-not $python) {");
+        sb.AppendLine("    Report-Error \"Python not found on PATH. Searched: python3, python, py. PATH=$env:PATH\"");
+        sb.AppendLine("    exit 1");
+        sb.AppendLine("}");
+        sb.AppendLine("Write-Host \"Using Python: $python ($((Get-Command $python).Source))\"");
+        sb.AppendLine();
+
         // Download agent
-        sb.AppendLine($"Invoke-WebRequest -Uri '{agentUrl}' -OutFile 'egorbot-agent.py'");
+        sb.AppendLine("try {");
+        sb.AppendLine($"    Invoke-WebRequest -Uri '{agentUrl}' -OutFile 'egorbot-agent.py' -UseBasicParsing");
+        sb.AppendLine("} catch {");
+        sb.AppendLine("    Report-Error \"Failed to download agent script: $_\"");
+        sb.AppendLine("    exit 1");
+        sb.AppendLine("}");
         sb.AppendLine();
 
         // Write benchmark code
         if (!string.IsNullOrWhiteSpace(job.BenchmarkCode))
         {
-            var escapedCode = job.BenchmarkCode.Replace("'", "''");
             sb.AppendLine("# Write benchmark code");
-            sb.AppendLine($"Set-Content -Path 'Benchmark.cs' -Value @'");
+            sb.AppendLine($"Set-Content -Path 'Benchmark.cs' -Encoding UTF8 -Value @'");
             sb.AppendLine(job.BenchmarkCode);
             sb.AppendLine("'@");
             sb.AppendLine();
 
-            sb.AppendLine($"Invoke-WebRequest -Uri '{csprojUrl}' -OutFile 'bench.csproj'");
+            sb.AppendLine("try {");
+            sb.AppendLine($"    Invoke-WebRequest -Uri '{csprojUrl}' -OutFile 'bench.csproj' -UseBasicParsing");
+            sb.AppendLine("} catch {");
+            sb.AppendLine("    Report-Error \"Failed to download csproj template: $_\"");
+            sb.AppendLine("    exit 1");
+            sb.AppendLine("}");
             sb.AppendLine();
         }
 
@@ -112,7 +144,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         if (!string.IsNullOrWhiteSpace(job.BdnArguments))
         {
             sb.AppendLine("# Write BDN arguments");
-            sb.AppendLine("Set-Content -Path 'BDN_ARGS.rsp' -Value @(");
+            sb.AppendLine("Set-Content -Path 'BDN_ARGS.rsp' -Encoding UTF8 -Value @(");
             foreach (var arg in SplitBdnArgs(job.BdnArguments))
             {
                 sb.AppendLine($"    '{arg.Replace("'", "''")}'");
@@ -124,7 +156,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         // Launch agent
         var agentArgs = BuildAgentArgs(job, callbackUrl, hasBenchmarkFile: !string.IsNullOrWhiteSpace(job.BenchmarkCode));
         sb.AppendLine("# Launch agent");
-        sb.AppendLine($"Start-Process python -ArgumentList 'egorbot-agent.py {agentArgs}' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log");
+        sb.AppendLine($"Start-Process $python -ArgumentList 'egorbot-agent.py {agentArgs}' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log");
 
         return sb.ToString();
     }
