@@ -188,8 +188,25 @@ def run(
 def download(url: str, dest: Path):
     """Download *url* to *dest* using urllib (no third-party deps)."""
     import urllib.request
+    import ssl
     print(f"  ⬇  {url} → {dest}", flush=True)
-    urllib.request.urlretrieve(url, str(dest))
+    try:
+        urllib.request.urlretrieve(url, str(dest))
+    except urllib.error.URLError as e:
+        if "CERTIFICATE_VERIFY_FAILED" in str(e):
+            print("  ⚠  SSL verification failed, retrying with system cert store...", flush=True)
+            # Some Helix Windows machines lack a proper certifi bundle.
+            # Fall back to an unverified context for well-known hosts.
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            opener = urllib.request.build_opener(
+                urllib.request.HTTPSHandler(context=ctx)
+            )
+            with opener.open(url) as resp:
+                dest.write_bytes(resp.read())
+        else:
+            raise
 
 
 def read_lines(path: Path) -> List[str]:

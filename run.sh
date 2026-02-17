@@ -27,4 +27,3 @@ dotnet build src/EgorBot.Github/EgorBot.Github.csproj -c Release
 # Run
 nohup dotnet run --no-build --no-launch-profile --project src/EgorBot.Github/EgorBot.Github.csproj -c Release > ${WORK_DIR}/EgorBot.github.log 2>&1 &
 nohup dotnet run --no-build --no-launch-profile --project src/EgorBot.Server/EgorBot.Server.csproj -c Release > ${WORK_DIR}/EgorBot.server.log 2>&1 &
-popd
