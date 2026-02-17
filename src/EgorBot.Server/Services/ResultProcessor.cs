@@ -73,10 +73,29 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
     {
         foreach (var (dirName, label) in labels)
         {
-            // Replace paths like /core_roots/PR_12345/corerun or \core_roots\main\corerun.exe
+            var escaped = Regex.Escape(dirName);
+
+            // 1. Full path: anything\core_roots\DIRNAME\corerun.exe
             markdown = Regex.Replace(
                 markdown,
-                @"[^\s|]*[/\\]core_roots[/\\]" + Regex.Escape(dirName) + @"[/\\]corerun(\.exe)?",
+                @"[^\s|`]*[/\\]core_roots[/\\]" + escaped + @"[/\\]corerun(\.exe)?",
+                label,
+                RegexOptions.IgnoreCase);
+
+            // 2. Partial path without core_roots prefix: ...\DIRNAME\corerun.exe
+            //    (matches any leading path chars followed by \DIRNAME\corerun)
+            markdown = Regex.Replace(
+                markdown,
+                @"[^\s|`]*[/\\]" + escaped + @"[/\\]corerun(\.exe)?",
+                label,
+                RegexOptions.IgnoreCase);
+
+            // 3. Bare directory name in backticks or table cells (BDN sometimes
+            //    uses just the directory name as the column value)
+            //    e.g. ` PR_124445 ` in a pipe-separated table cell
+            markdown = Regex.Replace(
+                markdown,
+                @"(?<=\|[^|]*)" + escaped + @"(?=[^|]*\|)",
                 label,
                 RegexOptions.IgnoreCase);
         }

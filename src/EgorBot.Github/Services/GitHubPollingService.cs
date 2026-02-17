@@ -104,6 +104,9 @@ public sealed class GitHubPollingService(
             logger.LogInformation("Detected @EgorBt mention in comment {CommentId} on {Owner}/{Repo}#{IssueUrl}",
                 comment.Id, repo.Owner, repo.Name, comment.HtmlUrl);
 
+            // React with 👀 to acknowledge detection
+            await AddEyesReactionAsync(client, repo.Owner, repo.Name, comment.Id, isComment: true);
+
             // Determine the issue/PR number from the URL
             // comment.HtmlUrl looks like: https://github.com/dotnet/runtime/issues/12345#issuecomment-...
             // or https://github.com/dotnet/runtime/pull/12345#issuecomment-...
@@ -165,6 +168,9 @@ public sealed class GitHubPollingService(
             logger.LogInformation("Detected @EgorBt mention in {Type} #{Number} body on {Owner}/{Repo}",
                 isPr ? "PR" : "issue", issue.Number, repo.Owner, repo.Name);
 
+            // React with 👀 to acknowledge detection
+            await AddEyesReactionAsync(client, repo.Owner, repo.Name, issue.Number, isComment: false);
+
             var source = new MentionSource
             {
                 Owner = repo.Owner,
@@ -202,6 +208,27 @@ public sealed class GitHubPollingService(
 
     private static bool IsBotUser(string login) =>
         login.Equals("EgorBt", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Add a 👀 (eyes) reaction to a comment or issue/PR to acknowledge the mention.
+    /// </summary>
+    private async Task AddEyesReactionAsync(GitHubClient client, string owner, string repo, long entityId, bool isComment)
+    {
+        try
+        {
+            if (isComment)
+                await client.Reaction.IssueComment.Create(owner, repo, entityId, new NewReaction(ReactionType.Eyes));
+            else
+                await client.Reaction.Issue.Create(owner, repo, (int)entityId, new NewReaction(ReactionType.Eyes));
+
+            logger.LogInformation("Added 👀 reaction to {Type} {Id} on {Owner}/{Repo}",
+                isComment ? "comment" : "issue", entityId, owner, repo);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to add 👀 reaction to {Type} {Id}", isComment ? "comment" : "issue", entityId);
+        }
+    }
 
     private GitHubClient CreateGitHubClient()
     {
