@@ -39,7 +39,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine();
 
         // Download the agent script
-        sb.AppendLine($"wget -q -O egorbot-agent.py \"{agentUrl}\"");
+        sb.AppendLine($"curl -sL -o egorbot-agent.py \"{agentUrl}\"");
         sb.AppendLine("chmod +x egorbot-agent.py");
         sb.AppendLine();
 
@@ -53,7 +53,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
             sb.AppendLine();
 
             // Download the default csproj template
-            sb.AppendLine($"wget -q -O bench.csproj \"{csprojUrl}\"");
+            sb.AppendLine($"curl -sL -o bench.csproj \"{csprojUrl}\"");
             sb.AppendLine();
         }
 

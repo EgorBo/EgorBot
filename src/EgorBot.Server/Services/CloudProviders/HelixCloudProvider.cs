@@ -129,16 +129,6 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
             // Remove trailing '&' from agent launch (keep tee)
             .Replace("2>&1 | tee agent.log &", "2>&1 | tee agent.log");
 
-        if (isMacOs)
-        {
-            // macOS doesn't have wget by default — use curl instead
-            // Pattern: wget -q -O <filename> "<url>" → curl -sL -o <filename> "<url>"
-            adapted = System.Text.RegularExpressions.Regex.Replace(
-                adapted,
-                @"wget -q -O (\S+) ""([^""]+)""",
-                @"curl -sL -o $1 ""$2""");
-        }
-
         return adapted;
     }
 
