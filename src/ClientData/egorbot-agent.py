@@ -638,8 +638,8 @@ def install_dependencies():
 
             # Install perf if it's not available and PERF_ENABLED is 1
             if CFG.perf_enabled and not shutil.which("perf"):
-                print("perf not found, installing linux-tools-generic and linux-cloud-tools-generic")
-                run(f"sudo apt install -y linux-tools-generic linux-cloud-tools-generic", check=False)
+                print("perf not found, installing linux-tools-common, linux-tools-generic and linux-cloud-tools-generic")
+                run(f"sudo apt install -y linux-tools-common linux-tools-generic linux-cloud-tools-generic", check=False)
                 run(
                     "bash -c 'ln -s /usr/lib/linux-tools/$(ls /usr/lib/linux-tools/ "
                     "| grep -v common | head -n 1) /usr/lib/linux-tools/$(uname -r) || true'",
@@ -993,6 +993,229 @@ def run_benchmarks(bench_args: List[str]):
         shutil.copy2(src, ARTIFACTS_DIR)
 
 
+########################################################################################
+##
+## Perf profiling (Linux + code-snippet mode only)
+##
+########################################################################################
+
+def run_perf_profiling():
+    """
+    Run 'perf record' profiling for each core_root and each benchmark.
+    Generates flamegraph (.svg), annotated assembly (.asm), speedscope data,
+    function report, and perf stat.  All artefacts are placed into
+    ARTIFACTS_DIR/perf/ and will be included in the final zip.
+
+    Only runs when:
+      - TARGET_OS == "linux"
+      - perf_enabled is True
+      - code-snippet mode (not dotnet/performance)
+    """
+    if TARGET_OS != "linux":
+        post_log("[PERF] Profiling is only supported on Linux, skipping")
+        return
+    if CFG.bench_use_dotnet_performance:
+        post_log("[PERF] Profiling is not supported for dotnet/performance benchmarks, skipping")
+        return
+
+    # Relax perf restrictions (may fail on Helix without root)
+    run("sudo sysctl -w kernel.perf_event_paranoid=-1", check=False)
+    run("sudo sysctl -w kernel.kptr_restrict=0", check=False)
+
+    # Ensure perf is on PATH (some distros install it outside $PATH)
+    if not shutil.which("perf"):
+        for p in sorted(Path("/usr/lib").glob("linux-tools-*/perf")):
+            parent = str(p.parent)
+            if parent not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = parent + os.pathsep + os.environ["PATH"]
+            break
+        # Also try the generic tools path
+        generic_path = "/usr/lib/linux-tools-*/perf"
+        for p in sorted(Path("/usr/lib").glob("linux-tools/*/perf")):
+            parent = str(p.parent)
+            if parent not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = parent + os.pathsep + os.environ["PATH"]
+            break
+
+    if not shutil.which("perf"):
+        post_log("[PERF] perf not found even after PATH fix, skipping profiling")
+        return
+
+    post_log(f"[PERF] perf found at: {shutil.which('perf')}")
+
+    # Clone FlameGraph repo for stackcollapse-perf.pl and flamegraph.pl
+    flamegraph_dir = DIR_BENCHAPP / "FlameGraph"
+    if not flamegraph_dir.is_dir():
+        run(f'git clone --depth 1 https://github.com/brendangregg/FlameGraph "{flamegraph_dir}"')
+
+    # Publish benchmark app as self-contained (needed for corerun to run it)
+    rid = f"{TARGET_OS}-{TARGET_ARCH}"
+    result = run(f"dotnet publish -c Release -r {rid} -f {CFG.bench_tfm} --sc",
+                 cwd=DIR_BENCHAPP, check=False)
+    if result.returncode != 0:
+        post_log("[PERF] Failed to publish benchmark app, skipping profiling")
+        return
+
+    publish_dir = DIR_BENCHAPP / "bin" / "Release" / CFG.bench_tfm / rid / "publish"
+    bench_dll = publish_dir / "benchapp.dll"
+    if not bench_dll.exists():
+        post_log(f"[PERF] Published DLL not found at {bench_dll}, skipping")
+        return
+
+    # Copy NuGet.config from runtime repo if available
+    runtime_nuget = WORK_DIR / "runtime" / "NuGet.config"
+    if runtime_nuget.exists():
+        shutil.copy2(runtime_nuget, DIR_BENCHAPP / "NuGet.config")
+
+    # Read benchmark list
+    all_benchmarks_file = WORK_DIR / "all_benchmarks.txt"
+    benchmarks = [l.strip() for l in all_benchmarks_file.read_text().splitlines() if l.strip()]
+
+    if len(benchmarks) > 5:
+        post_log(f"[PERF] Too many benchmarks ({len(benchmarks)} > 5) for profiling, skipping")
+        return
+
+    # Gather core_root paths
+    corerun_paths = sorted(globmod.glob(str(CORE_ROOTS_DIR / "*" / make_exe("corerun"))))
+    if not corerun_paths:
+        post_log("[PERF] No core_roots found, skipping profiling")
+        return
+
+    perf_record_args = CFG.perf_record_args or "-e cpu-clock"
+    high_freq = int(CFG.perf_record_freq) if CFG.perf_record_freq else 1999
+    low_freq = 299
+
+    perf_out_dir = ARTIFACTS_DIR / "perf"
+    perf_out_dir.mkdir(parents=True, exist_ok=True)
+
+    for corerun_path in corerun_paths:
+        corerun = Path(corerun_path)
+        label = corerun.parent.name  # e.g. "PR_12345", "main", commit hash
+
+        for bdnline in benchmarks:
+            bdnline_escaped = re_mod.sub(r'[^a-zA-Z0-9]', '_', bdnline)
+            bench_dir = perf_out_dir / f"PerfBench__{bdnline_escaped}"
+            bench_dir.mkdir(parents=True, exist_ok=True)
+
+            post_log(f"[PERF] Profiling: {label} / {bdnline}")
+
+            kill_process_by_name("corerun")
+            kill_process_by_name("dotnet")
+            time.sleep(3)
+
+            # Run benchmark in infinite-iteration mode with perf map env vars
+            perf_env = {
+                **os.environ,
+                "DOTNET_JitEnableOptionalRelocs": "0",
+                "DOTNET_JitStdOutFile": "",
+                "DOTNET_PerfMapShowOptimizationTiers": "1",
+                "DOTNET_PerfMapStubGranularity": "3",
+                "DOTNET_JitFramed": "1",
+                "DOTNET_PerfMapEnabled": "1",
+                "DOTNET_EnableWriteXorExecute": "0",
+            }
+
+            bdn_artifacts = bench_dir / "bdn_scratch"
+            bench_cmd = [
+                str(corerun), str(bench_dll),
+                "--filter", bdnline, "-i",
+                "--noForcedGCs", "--noOverheadEvaluation", "--disableLogFile",
+                "--maxWarmupCount", "8",
+                "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
+                "-a", str(bdn_artifacts),
+            ]
+
+            proc = subprocess.Popen(
+                bench_cmd, env=perf_env, cwd=DIR_BENCHAPP,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+
+            post_log(f"[PERF]   Waiting 40s for warmup (PID={proc.pid})...")
+            time.sleep(40)
+
+            if proc.poll() is not None:
+                post_log(f"[PERF]   Process exited early (code {proc.returncode}), skipping")
+                continue
+
+            pid = proc.pid
+            perf_data = bench_dir / "perf.data"
+            perf_small = bench_dir / "perf_small.data"
+
+            # High-frequency perf record (for flamegraph & asm)
+            post_log(f"[PERF]   Recording high-freq (-F {high_freq}) for 5s...")
+            run(f"perf record {perf_record_args} -k 1 -g -F {high_freq} -p {pid} -o {perf_data} sleep 5",
+                check=False)
+            time.sleep(2)
+
+            # Low-frequency perf record (for speedscope — large files crash it)
+            post_log(f"[PERF]   Recording low-freq (-F {low_freq}) for 3s...")
+            run(f"perf record {perf_record_args} -k 1 -g -F {low_freq} -p {pid} -o {perf_small} sleep 3",
+                check=False)
+            time.sleep(2)
+
+            # Perf stat (hardware counters)
+            stats_file = bench_dir / f"{label}.stats"
+            run(f"perf stat -o {stats_file} -p {pid} sleep 6", check=False)
+
+            # List available perf counters
+            perf_list_file = bench_dir / f"{label}.perf_list.txt"
+            run(f"perf list", check=False, stdout_file=perf_list_file)
+
+            # Kill the benchmark process
+            post_log("[PERF]   Killing benchmark process...")
+            try:
+                proc.kill()
+                proc.wait(timeout=10)
+            except Exception:
+                pass
+            kill_process_by_name("corerun")
+            kill_process_by_name("dotnet")
+            time.sleep(2)
+
+            # Symbolize with perf inject (JIT support)
+            perfjit = bench_dir / "perfjit.data"
+            perfjit_small = bench_dir / "perfjit_small.data"
+            run(f"perf inject --input {perf_data} --jit --output {perfjit}", check=False)
+            run(f"perf inject --input {perf_small} --jit --output {perfjit_small}", check=False)
+
+            # Function report (text)
+            functions_file = bench_dir / f"{label}_functions.txt"
+            run(f"perf report --input {perfjit} --no-children --percent-limit 2 --stdio",
+                check=False, stdout_file=functions_file)
+
+            # Hot assembly annotation
+            asm_file = bench_dir / f"{label}.asm"
+            run(f"perf annotate --stdio2 -i {perfjit} --percent-limit 2 -M intel",
+                check=False, stdout_file=asm_file)
+
+            # Flamegraph (interactive SVG)
+            svg_file = bench_dir / f"{label}_flamegraph.svg"
+            run(f"perf script -i {perfjit} | "
+                f"{flamegraph_dir}/stackcollapse-perf.pl | "
+                f"{flamegraph_dir}/flamegraph.pl",
+                check=False, stdout_file=svg_file)
+
+            # Speedscope (collapsed stacks)
+            speedscope_file = bench_dir / f"speedscope_{label}_{CFG.job_id}.speedscope"
+            run(f"perf script -i {perfjit_small} | "
+                f"{flamegraph_dir}/stackcollapse-perf.pl",
+                check=False, stdout_file=speedscope_file)
+
+            # Clean up large binary perf data files (don't ship them in the zip)
+            for f in [perf_data, perf_small, perfjit, perfjit_small]:
+                if f.exists():
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+
+            # Clean up BDN scratch directory
+            if bdn_artifacts.exists():
+                shutil.rmtree(bdn_artifacts, ignore_errors=True)
+
+    post_log("[PERF] Profiling completed ✓")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Entry point
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1051,6 +1274,11 @@ def main(cfg: Optional[Config] = None):
     post_log("[STAGE 6/6] Running benchmarks...")
     run_benchmarks(bench_args)
     post_log("[STAGE 6/6] Benchmarks completed ✓")
+
+    # Run perf profiling if enabled (Linux + code-snippet mode only)
+    if cfg.perf_enabled:
+        post_log("[PERF] Starting perf profiling stage...")
+        run_perf_profiling()
 
     # Finalize: copy logs, zip artifacts, report success
     post_log("Finalizing — packaging artifacts and uploading results...")

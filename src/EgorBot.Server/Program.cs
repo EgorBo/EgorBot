@@ -343,7 +343,8 @@ internalApi.MapPost("/jobs/{id:guid}/heartbeat", (Guid id, JobOrchestrator orche
 
 // POST /api/internal/jobs/{id}/complete — agent posts final results
 internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
-    AppDbContext db, JobOrchestrator orchestrator, ResultProcessor resultProcessor, ILoggerFactory loggerFactory) =>
+    AppDbContext db, JobOrchestrator orchestrator, ResultProcessor resultProcessor,
+    LogUploadService logUploadService, ILoggerFactory loggerFactory) =>
 {
     var log = loggerFactory.CreateLogger("JobComplete");
     log.LogInformation("[Job {JobId}] Complete endpoint called", id);
@@ -365,9 +366,27 @@ internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
         {
             log.LogInformation("[Job {JobId}] Processing artifacts zip ({Size} bytes)", id, artifactsFile.Length);
             var job = await db.Jobs.FindAsync(id);
-            using var stream = artifactsFile.OpenReadStream();
-            markdown = resultProcessor.ProcessArtifactsZip(stream, job?.CommitsAndPrs ?? "");
+
+            // Buffer the zip to a MemoryStream so we can read it multiple times
+            using var ms = new MemoryStream();
+            await artifactsFile.OpenReadStream().CopyToAsync(ms);
+
+            // Extract BDN markdown report
+            ms.Position = 0;
+            markdown = resultProcessor.ProcessArtifactsZip(ms, job?.CommitsAndPrs ?? "");
             log.LogInformation("[Job {JobId}] Result markdown length={Len}", id, markdown?.Length ?? 0);
+
+            // Upload profiling artifacts to Azure Blob Storage (if profiling was enabled)
+            if (job?.UseProfiler == true)
+            {
+                ms.Position = 0;
+                var perfLinks = await logUploadService.UploadPerfArtifactsAsync(ms, id);
+                if (perfLinks is not null)
+                {
+                    markdown += perfLinks;
+                    log.LogInformation("[Job {JobId}] Appended perf artifact links to markdown", id);
+                }
+            }
         }
         else
         {
