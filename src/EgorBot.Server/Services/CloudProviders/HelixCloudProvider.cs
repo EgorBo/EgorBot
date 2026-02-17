@@ -99,18 +99,17 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
 
     /// <summary>
     /// Adapt the generated cloud-init script to run properly inside a Helix work item.
+    /// Uses <c>$HELIX_WORKITEM_PAYLOAD</c> (<c>%HELIX_WORKITEM_PAYLOAD%</c> on Windows)
+    /// as the root for a per-job working directory.
     /// </summary>
     private static string AdaptScriptForHelix(string script, bool isWindows, bool isMacOs = false)
     {
         if (isWindows)
         {
-            // For Windows PowerShell scripts — adjust working directory
+            // Use HELIX_WORKITEM_PAYLOAD as the work directory root
             return script
-                .Replace("$workDir = 'C:\\egorbot_work'", "$workDir = $PWD.Path")
-                .Replace("New-Item -ItemType Directory -Force -Path $workDir | Out-Null\r\n", "")
-                .Replace("New-Item -ItemType Directory -Force -Path $workDir | Out-Null\n", "")
-                .Replace("Set-Location $workDir\r\n", "")
-                .Replace("Set-Location $workDir\n", "")
+                .Replace("$workDir = 'C:\\egorbot_work'",
+                         "$workDir = Join-Path $env:HELIX_WORKITEM_PAYLOAD 'egorbot_work'")
                 // Run synchronously instead of Start-Process
                 .Replace("Start-Process python -ArgumentList '", "python ")
                 .Replace("' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log", " 2>&1 | Tee-Object -FilePath agent.log");
@@ -118,8 +117,8 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
 
         // Linux / macOS bash scripts
         var adapted = script
-            // Remove 'cd /home' — use Helix working directory
-            .Replace("cd /home\n", "")
+            // Use HELIX_WORKITEM_PAYLOAD as the work directory root
+            .Replace("cd /home\n", "cd \"$HELIX_WORKITEM_PAYLOAD\"\n")
             // Run agent synchronously (not as background process)
             .Replace("nohup python3 egorbot-agent.py", "python3 egorbot-agent.py")
             // Remove trailing '&' from agent launch (keep tee)
