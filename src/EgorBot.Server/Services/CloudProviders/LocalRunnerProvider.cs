@@ -193,7 +193,7 @@ public sealed class LocalRunnerProvider(IConfiguration config, ILogger<LocalRunn
         {
             while (await reader.ReadLineAsync() is { } line)
             {
-                logger.LogInformation("[{JobId}/{Stream}] {Line}", jobId, streamName, line);
+                logger.LogDebug("[{JobId}/{Stream}] {Line}", jobId, streamName, line);
             }
         }
         catch (Exception ex)

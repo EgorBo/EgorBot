@@ -58,6 +58,7 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
             .DefineWorkItem($"egorbot-{request.JobId}")
             .WithCommand(command)
             .WithSingleFilePayload(scriptFileName, payload)
+            .WithTimeout(TimeSpan.FromHours(1))
             .AttachToJob()
             .SendAsync(cancellationToken: ct);
 
@@ -86,6 +87,12 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
             await api.Job.CancelAsync(instanceId, "EgorBot deprovisioning", ct);
 
             logger.LogInformation("Helix: job '{CorrelationId}' cancelled", instanceId);
+        }
+        catch (Exception ex) when (ex is Newtonsoft.Json.JsonReaderException || ex.InnerException is Newtonsoft.Json.JsonReaderException)
+        {
+            // Helix API returns a non-JSON response when the job has already finished;
+            // the SDK chokes on it.  This is harmless — the job is done.
+            logger.LogDebug("Helix: job '{CorrelationId}' already finished (cancel returned non-JSON)", instanceId);
         }
         catch (Exception ex)
         {

@@ -623,29 +623,28 @@ def install_dependencies():
 
     is_helix = os.environ.get("HELIX_WORKITEM_PAYLOAD") is not None
     # On Helix, we don't have root — prepend sudo and ignore failures
-    sudo = "sudo " if is_helix else ""
     chk = not is_helix  # check=False on Helix so failures don't abort
 
     if TARGET_OS == "linux":
         if shutil.which("apt"):
-            run(f"{sudo}apt update", check=chk)
-            run(f"{sudo}apt install -y git zip ninja-build", check=chk)
+            run(f"sudo apt update", check=chk)
+            run(f"sudo apt install -y git zip ninja-build", check=chk)
 
             # Install perf if it's not available and PERF_ENABLED is 1
             if CFG.perf_enabled and not shutil.which("perf"):
                 print("perf not found, installing linux-tools-generic and linux-cloud-tools-generic")
-                run(f"{sudo}apt install -y linux-tools-generic linux-cloud-tools-generic", check=False)
+                run(f"sudo apt install -y linux-tools-generic linux-cloud-tools-generic", check=False)
                 run(
                     "bash -c 'ln -s /usr/lib/linux-tools/$(ls /usr/lib/linux-tools/ "
                     "| grep -v common | head -n 1) /usr/lib/linux-tools/$(uname -r) || true'",
                     check=False,
                 )
         elif shutil.which("tdnf"):
-            run(f"{sudo}tdnf install -y git zip ninja-build", check=chk)
-            run(f"{sudo}tdnf tdnf update -y", check=chk)
+            run(f"sudo tdnf install -y git zip ninja-build", check=chk)
+            run(f"sudo tdnf tdnf update -y", check=chk)
         elif shutil.which("dnf"):
-            run(f"{sudo}dnf install -y git zip ninja-build", check=chk)
-            # run(f"{sudo}dnf install -y perl-open.noarch", check=chk)  # for FlameGraph
+            run(f"sudo dnf install -y git zip ninja-build", check=chk)
+            # run(f"sudo dnf install -y perl-open.noarch", check=chk)  # for FlameGraph
         marker.touch()
 
     elif TARGET_OS == "osx":

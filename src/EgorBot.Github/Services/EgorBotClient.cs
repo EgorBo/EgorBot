@@ -71,6 +71,9 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
 
         [JsonPropertyName("errorMessage")]
         public string? ErrorMessage { get; set; }
+
+        [JsonPropertyName("logsBlobUrl")]
+        public string? LogsBlobUrl { get; set; }
     }
 
     // ── API calls ────────────────────────────────────────────────────────

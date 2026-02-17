@@ -77,4 +77,5 @@ public sealed class JobInfo
     public required Guid Id { get; init; }
     public required string Platform { get; init; }
     public bool IsCompleted { get; set; }
+    public string? LogsBlobUrl { get; set; }
 }

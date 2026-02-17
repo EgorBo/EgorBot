@@ -204,6 +204,7 @@ api.MapGet("/jobs/{id:guid}/status", async (Guid id, AppDbContext db) =>
         job.ErrorMessage,
         HasResult = job.ResultMarkdown != null,
         job.SourceUrl,
+        job.LogsBlobUrl,
     });
 });
 
@@ -315,11 +316,10 @@ internalApi.MapPost("/jobs/{id:guid}/logs", async (Guid id, HttpContext ctx, App
 
     var lines = JsonSerializer.Deserialize<List<string>>(body) ?? [];
     var now = DateTime.UtcNow;
-    log.LogInformation("[Job {JobId}] Received {Count} log lines from agent", id, lines.Count);
+    log.LogDebug("[Job {JobId}] Received {Count} log lines from agent", id, lines.Count);
 
     foreach (var line in lines)
     {
-        log.LogInformation("[Job {JobId}] AGENT: {Line}", id, line);
         db.JobLogs.Add(new JobLogEntry
         {
             JobId = id,

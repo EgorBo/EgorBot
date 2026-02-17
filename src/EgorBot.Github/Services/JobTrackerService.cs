@@ -222,6 +222,7 @@ public sealed class JobTrackerService(
             if (!terminal) continue;
 
             job.IsCompleted = true;
+            job.LogsBlobUrl = status.LogsBlobUrl;
             tracked.CompletedCount++;
 
             if (status.Status == "Completed" && status.HasResult)
@@ -269,7 +270,7 @@ public sealed class JobTrackerService(
 
                     {content}
 
-                    [View logs]({botClient.GetLogsUrl(job.Id)})
+                    [View logs]({botClient.GetLogsUrl(job.Id)}){(job.LogsBlobUrl is not null ? $" | [Full logs]({job.LogsBlobUrl})" : "")}
                     """;
             }
 
