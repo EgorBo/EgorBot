@@ -552,8 +552,9 @@ def install_dependencies():
 
             if not git_found:
                 # Download MinGit (portable) — ~50 MB
-                post_log("Downloading MinGit (portable)...")
-                mingit_url = "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/MinGit-2.47.1.2-64-bit.zip"
+                mingit_arch = "arm64" if TARGET_ARCH == "arm64" else "64-bit"
+                post_log(f"Downloading MinGit (portable, {mingit_arch})...")
+                mingit_url = f"https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/MinGit-2.47.1.2-{mingit_arch}.zip"
                 mingit_zip = WORK_DIR / "mingit.zip"
                 mingit_dir = WORK_DIR / "mingit"
                 try:
