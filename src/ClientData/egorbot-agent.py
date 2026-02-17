@@ -762,6 +762,8 @@ def clone_runtime():
     runtime_dir = WORK_DIR / "runtime"
     if not runtime_dir.is_dir():
         post_log("Cloning dotnet/runtime...")
+        # Enable long paths on Windows — dotnet/runtime has files that exceed the 260-char limit
+        run('git config --global core.longpaths true')
         run(f'git clone --no-tags --single-branch '
                     f'https://github.com/dotnet/runtime.git "{runtime_dir}"', check=False)
         run('git config --global user.email egorbot@egorbo.com', cwd=runtime_dir)
