@@ -63,7 +63,10 @@
 
     <script>
         const jobId = window.location.pathname.split('/').pop();
+        const MAX_VISIBLE_LINES = 200;
         let eventSource = null;
+        let logLineCount = 0;
+        let totalSkipped = 0;
 
         async function loadJobStatus() {
             try {
@@ -120,11 +123,11 @@
                 if (data.done) {
                     eventSource.close();
                     eventSource = null;
-                    // Reload to get final state
                     setTimeout(() => loadJobStatus(), 500);
                     return;
                 }
                 appendLog(data);
+                pruneOldLogs();
             };
             eventSource.onerror = () => {
                 eventSource.close();
@@ -133,24 +136,73 @@
             };
         }
 
-        async function loadAllLogs() {
+        async function loadAllLogs(loadFull) {
             try {
-                const res = await fetch(`/api/jobs/${jobId}/logs`);
-                const logs = await res.json();
+                const url = loadFull
+                    ? `/api/jobs/${jobId}/logs`
+                    : `/api/jobs/${jobId}/logs?tail=${MAX_VISIBLE_LINES}`;
+                const res = await fetch(url);
+                const data = await res.json();
                 const container = document.getElementById('logContainer');
                 container.innerHTML = '';
-                logs.forEach(appendLog);
+                logLineCount = 0;
+                totalSkipped = 0;
+
+                if (data.skipped && data.skipped > 0 && !loadFull) {
+                    totalSkipped = data.skipped;
+                    showSkippedBanner();
+                }
+
+                const frag = document.createDocumentFragment();
+                for (const log of data.logs) {
+                    frag.appendChild(createLogLine(log));
+                    logLineCount++;
+                }
+                container.appendChild(frag);
+                container.scrollTop = container.scrollHeight;
             } catch (e) { console.error(e); }
         }
 
-        function appendLog(log) {
-            const container = document.getElementById('logContainer');
+        function createLogLine(log) {
             const line = document.createElement('div');
             line.className = 'log-line';
             const time = new Date(log.timestamp).toLocaleTimeString();
             line.innerHTML = `<span class="log-time">${time}</span>${escapeHtml(log.message)}`;
-            container.appendChild(line);
+            return line;
+        }
+
+        function appendLog(log) {
+            const container = document.getElementById('logContainer');
+            container.appendChild(createLogLine(log));
+            logLineCount++;
             container.scrollTop = container.scrollHeight;
+        }
+
+        function pruneOldLogs() {
+            const container = document.getElementById('logContainer');
+            while (logLineCount > MAX_VISIBLE_LINES) {
+                // Remove the first .log-line (skip the banner if present)
+                const first = container.querySelector('.log-line');
+                if (!first) break;
+                container.removeChild(first);
+                logLineCount--;
+                totalSkipped++;
+            }
+            showSkippedBanner();
+        }
+
+        function showSkippedBanner() {
+            if (totalSkipped <= 0) return;
+            const container = document.getElementById('logContainer');
+            let banner = document.getElementById('skippedBanner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'skippedBanner';
+                banner.style.cssText = 'color:#58a6ff;cursor:pointer;padding:4px 0;font-size:12px;border-bottom:1px solid #21262d;margin-bottom:4px;';
+                banner.addEventListener('click', () => loadAllLogs(true));
+                container.prepend(banner);
+            }
+            banner.textContent = `⬆ ${totalSkipped.toLocaleString()} older lines hidden — click to load all`;
         }
 
         function showResultsAvailable() {

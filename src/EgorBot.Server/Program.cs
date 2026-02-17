@@ -223,17 +223,35 @@ api.MapGet("/jobs/{id:guid}/result", async (Guid id, AppDbContext db) =>
 });
 
 // GET /api/jobs/{id}/logs — all log entries
-api.MapGet("/jobs/{id:guid}/logs", async (Guid id, AppDbContext db) =>
+api.MapGet("/jobs/{id:guid}/logs", async (Guid id, int? tail, AppDbContext db) =>
 {
-    var logs = (await db.JobLogs
-        .Where(l => l.JobId == id)
-        .OrderBy(l => l.Id)
-        .Select(l => new { l.Id, l.Timestamp, l.Message })
-        .ToListAsync())
+    IQueryable<JobLogEntry> query = db.JobLogs.Where(l => l.JobId == id);
+
+    List<JobLogEntry> rawLogs;
+    int? skipped = null;
+
+    if (tail.HasValue && tail.Value > 0)
+    {
+        var totalCount = await query.CountAsync();
+        if (totalCount > tail.Value)
+            skipped = totalCount - tail.Value;
+
+        rawLogs = await query
+            .OrderByDescending(l => l.Id)
+            .Take(tail.Value)
+            .ToListAsync();
+        rawLogs.Reverse(); // restore chronological order
+    }
+    else
+    {
+        rawLogs = await query.OrderBy(l => l.Id).ToListAsync();
+    }
+
+    var logs = rawLogs
         .Select(l => new { l.Id, timestamp = l.Timestamp.ToString("o"), l.Message })
         .ToList();
 
-    return Results.Ok(logs);
+    return Results.Ok(new { skipped, logs });
 });
 
 // GET /api/jobs/{id}/logs/stream — SSE endpoint for live log streaming
