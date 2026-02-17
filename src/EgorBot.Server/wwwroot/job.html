@@ -63,7 +63,7 @@
 
     <script>
         const jobId = window.location.pathname.split('/').pop();
-        const MAX_VISIBLE_LINES = 200;
+        const MAX_VISIBLE_LINES = 100;
         let eventSource = null;
         let logLineCount = 0;
         let totalSkipped = 0;
@@ -136,11 +136,9 @@
             };
         }
 
-        async function loadAllLogs(loadFull) {
+        async function loadAllLogs() {
             try {
-                const url = loadFull
-                    ? `/api/jobs/${jobId}/logs`
-                    : `/api/jobs/${jobId}/logs?tail=${MAX_VISIBLE_LINES}`;
+                const url = `/api/jobs/${jobId}/logs?tail=${MAX_VISIBLE_LINES}`;
                 const res = await fetch(url);
                 const data = await res.json();
                 const container = document.getElementById('logContainer');
@@ -148,7 +146,7 @@
                 logLineCount = 0;
                 totalSkipped = 0;
 
-                if (data.skipped && data.skipped > 0 && !loadFull) {
+                if (data.skipped && data.skipped > 0) {
                     totalSkipped = data.skipped;
                     showSkippedBanner();
                 }
@@ -198,11 +196,10 @@
             if (!banner) {
                 banner = document.createElement('div');
                 banner.id = 'skippedBanner';
-                banner.style.cssText = 'color:#58a6ff;cursor:pointer;padding:4px 0;font-size:12px;border-bottom:1px solid #21262d;margin-bottom:4px;';
-                banner.addEventListener('click', () => loadAllLogs(true));
+                banner.style.cssText = 'color:#8b949e;padding:4px 0;font-size:12px;border-bottom:1px solid #21262d;margin-bottom:4px;';
                 container.prepend(banner);
             }
-            banner.textContent = `⬆ ${totalSkipped.toLocaleString()} older lines hidden — click to load all`;
+            banner.textContent = `⬆ ${totalSkipped.toLocaleString()} older lines hidden (showing last ${MAX_VISIBLE_LINES})`;
         }
 
         function showResultsAvailable() {

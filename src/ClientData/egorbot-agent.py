@@ -915,6 +915,12 @@ def main(cfg: Optional[Config] = None):
         if not rsp.exists():
             download("https://gist.github.com/EgorBo/1f99f41c39ad790294c164306001fb66/raw", rsp)
     bench_args = read_lines(rsp)
+    # RSP lines may contain shell-style quotes (e.g. --filter "Foo*").
+    # When passed as list elements to subprocess with shell=False, literal
+    # quotes are NOT stripped, so BDN receives "Foo*" (with quotes) as the
+    # filter value and matches nothing.  Use shlex.split to parse properly.
+    import shlex
+    bench_args = shlex.split(" ".join(bench_args), posix=True)
     post_log(f"  BDN args: {bench_args}")
 
     post_log("[STAGE 2/6] Installing dependencies...")
