@@ -70,11 +70,15 @@ public sealed class CloudInitBuilder(IConfiguration config)
             sb.AppendLine();
         }
 
-        // Compose the agent invocation
+        // Compose the agent invocation — use HELIX_PYTHONPATH if set, else python3
         var agentArgs = BuildAgentArgs(job, callbackUrl, hasBenchmarkFile: !string.IsNullOrWhiteSpace(job.BenchmarkCode));
 
+        sb.AppendLine("# Resolve Python");
+        sb.AppendLine("PYTHON=${HELIX_PYTHONPATH:-python3}");
+        sb.AppendLine("echo \"Using Python: $PYTHON\"");
+        sb.AppendLine();
         sb.AppendLine("# Launch agent in background (tee to both file and cloud-init log)");
-        sb.AppendLine($"nohup python3 egorbot-agent.py {agentArgs} 2>&1 | tee agent.log &");
+        sb.AppendLine($"nohup $PYTHON egorbot-agent.py {agentArgs} 2>&1 | tee agent.log &");
 
         return sb.ToString().Replace("\r\n", "\n");
     }
@@ -101,16 +105,29 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("}");
         sb.AppendLine();
 
-        // Find Python executable
+        // Find Python executable: HELIX_PYTHONPATH → python3 → python → py → download embeddable
+        sb.AppendLine("Write-Host 'Searching for Python...'");
         sb.AppendLine("$python = $null");
-        sb.AppendLine("foreach ($cmd in @('python3', 'python', 'py')) {");
-        sb.AppendLine("    if (Get-Command $cmd -ErrorAction SilentlyContinue) { $python = $cmd; break }");
-        sb.AppendLine("}");
+        sb.AppendLine("if ($env:HELIX_PYTHONPATH -and (Test-Path $env:HELIX_PYTHONPATH)) { $python = $env:HELIX_PYTHONPATH }");
+        sb.AppendLine("if (-not $python) { foreach ($cmd in @('python3', 'python', 'py')) { if (Get-Command $cmd -ErrorAction SilentlyContinue) { $python = $cmd; break } } }");
         sb.AppendLine("if (-not $python) {");
-        sb.AppendLine("    Report-Error \"Python not found on PATH. Searched: python3, python, py. PATH=$env:PATH\"");
-        sb.AppendLine("    exit 1");
+        sb.AppendLine("    Write-Host 'Python not found, downloading embeddable Python...'");
+        sb.AppendLine("    Report-Error 'Python not found — downloading embeddable Python...'");
+        sb.AppendLine("    try {");
+        sb.AppendLine("        $pyVer = '3.12.8'");
+        sb.AppendLine("        $pyZip = Join-Path $workDir \"python-$pyVer-embed-amd64.zip\"");
+        sb.AppendLine("        Invoke-WebRequest -Uri \"https://www.python.org/ftp/python/$pyVer/python-$pyVer-embed-amd64.zip\" -OutFile $pyZip -UseBasicParsing");
+        sb.AppendLine("        $pyDir = Join-Path $workDir 'python-embed'");
+        sb.AppendLine("        Expand-Archive $pyZip -DestinationPath $pyDir -Force");
+        sb.AppendLine("        $pthFile = Get-ChildItem $pyDir -Filter '*._pth' | Select-Object -First 1");
+        sb.AppendLine("        if ($pthFile) { (Get-Content $pthFile.FullName) -replace '#import site', 'import site' | Set-Content $pthFile.FullName }");
+        sb.AppendLine("        $python = Join-Path $pyDir 'python.exe'");
+        sb.AppendLine("    } catch {");
+        sb.AppendLine("        Report-Error \"Failed to download Python: $_\"");
+        sb.AppendLine("        exit 1");
+        sb.AppendLine("    }");
         sb.AppendLine("}");
-        sb.AppendLine("Write-Host \"Using Python: $python ($((Get-Command $python).Source))\"");
+        sb.AppendLine("Write-Host \"Using Python: $python\"");
         sb.AppendLine();
 
         // Download agent
@@ -156,7 +173,14 @@ public sealed class CloudInitBuilder(IConfiguration config)
         // Launch agent
         var agentArgs = BuildAgentArgs(job, callbackUrl, hasBenchmarkFile: !string.IsNullOrWhiteSpace(job.BenchmarkCode));
         sb.AppendLine("# Launch agent");
-        sb.AppendLine($"Start-Process $python -ArgumentList 'egorbot-agent.py {agentArgs}' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log");
+        sb.AppendLine("Write-Host 'Launching agent...'");
+        sb.AppendLine("try {");
+        sb.AppendLine($"    Start-Process $python -ArgumentList 'egorbot-agent.py {agentArgs}' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log -Wait");
+        sb.AppendLine("} catch {");
+        sb.AppendLine("    Report-Error \"Agent process failed: $_\"");
+        sb.AppendLine("    exit 1");
+        sb.AppendLine("}");
+        sb.AppendLine("Write-Host 'Agent process completed.'");
 
         return sb.ToString();
     }

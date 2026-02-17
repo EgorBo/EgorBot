@@ -108,9 +108,9 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
             return script
                 .Replace("$workDir = 'C:\\egorbot_work'",
                          "$workDir = Join-Path $env:HELIX_WORKITEM_PAYLOAD 'egorbot_work'")
-                // Run synchronously instead of Start-Process (& is the call operator for variable commands)
+                // Run synchronously instead of Start-Process + Wait
                 .Replace("Start-Process $python -ArgumentList '", "& $python ")
-                .Replace("' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log", " 2>&1 | Tee-Object -FilePath agent.log");
+                .Replace("' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log -Wait", " 2>&1 | Tee-Object -FilePath agent.log");
         }
 
         // Linux / macOS bash scripts
@@ -118,7 +118,7 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
             // Use HELIX_WORKITEM_PAYLOAD as the work directory root
             .Replace("cd /home\n", "cd \"$HELIX_WORKITEM_PAYLOAD\"\n")
             // Run agent synchronously (not as background process)
-            .Replace("nohup python3 egorbot-agent.py", "python3 egorbot-agent.py")
+            .Replace("nohup $PYTHON egorbot-agent.py", "$PYTHON egorbot-agent.py")
             // Remove trailing '&' from agent launch (keep tee)
             .Replace("2>&1 | tee agent.log &", "2>&1 | tee agent.log");
 
@@ -173,7 +173,7 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
                 {
                     logger.LogInformation("[{JobId}] Helix: all work items finished.", jobId);
 
-                    // Try to get the details URL for diagnostics
+                    // Try to get the details URL and work item results for diagnostics
                     try
                     {
                         var summary = await api.Job.SummaryAsync(correlationId);
@@ -186,6 +186,43 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
                     catch (Exception ex)
                     {
                         logger.LogWarning(ex, "[{JobId}] Helix: failed to fetch job summary", jobId);
+                    }
+
+                    // Fetch work item details (pass/fail, console logs)
+                    try
+                    {
+                        var workItems = await api.WorkItem.ListAsync(correlationId);
+                        foreach (var wi in workItems)
+                        {
+                            logger.LogInformation(
+                                "[{JobId}] Helix work item '{Name}': State={State}",
+                                jobId, wi.Name, wi.State);
+
+                            // Try to fetch console log for failed items
+                            if (!string.Equals(wi.State, "Passed", StringComparison.OrdinalIgnoreCase))
+                            {
+                                try
+                                {
+                                    using var logStream = await api.WorkItem.ConsoleLogAsync(wi.Name, correlationId);
+                                    using var reader = new StreamReader(logStream);
+                                    var consoleLog = await reader.ReadToEndAsync();
+                                    if (!string.IsNullOrEmpty(consoleLog))
+                                    {
+                                        // Log last 50 lines
+                                        var lines = consoleLog.Split('\n');
+                                        var tail = string.Join("\n", lines.Length > 50 ? lines[^50..] : lines);
+                                        logger.LogWarning(
+                                            "[{JobId}] Helix work item '{Name}' console (last 50 lines):\n{Log}",
+                                            jobId, wi.Name, tail);
+                                    }
+                                }
+                                catch { /* best effort */ }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "[{JobId}] Helix: failed to list work items", jobId);
                     }
 
                     break;
