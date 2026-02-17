@@ -190,10 +190,14 @@ public sealed class CloudInitBuilder(IConfiguration config)
         var parts = new List<string>
         {
             $"--job_tag \"{job.Id}\"",
-            $"--gh_commits_and_prs \"{job.CommitsAndPrs}\"",
             $"--callback_url \"{callbackUrl}\"",
             $"--job_id \"{job.Id}\"",
         };
+
+        if (!string.IsNullOrWhiteSpace(job.CommitsAndPrs))
+        {
+            parts.Add($"--gh_commits_and_prs \"{job.CommitsAndPrs}\"");
+        }
 
         if (hasBenchmarkFile)
         {

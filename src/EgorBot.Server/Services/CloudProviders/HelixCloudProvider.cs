@@ -13,7 +13,7 @@ namespace EgorBot.Server.Services.CloudProviders;
 /// InstanceId = Helix job correlation ID.
 /// No IP address is returned (Helix machines are not directly accessible).
 /// </summary>
-public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloudProvider> logger) : ICloudProvider
+public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider serviceProvider, ILogger<HelixCloudProvider> logger) : ICloudProvider
 {
     private const string DefaultCreator = "EgorBot";
     private const string DefaultSource = "EgorBot/bench";
@@ -173,14 +173,17 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
                 {
                     logger.LogInformation("[{JobId}] Helix: all work items finished.", jobId);
 
-                    // Try to get the details URL and work item results for diagnostics
+                    string? detailsUrl = null;
+
+                    // Try to get the details URL for diagnostics
                     try
                     {
                         var summary = await api.Job.SummaryAsync(correlationId);
-                        if (!string.IsNullOrEmpty(summary.DetailsUrl))
+                        detailsUrl = summary.DetailsUrl;
+                        if (!string.IsNullOrEmpty(detailsUrl))
                         {
                             logger.LogInformation("[{JobId}] Helix: details URL: {DetailsUrl}",
-                                jobId, summary.DetailsUrl);
+                                jobId, detailsUrl);
                         }
                     }
                     catch (Exception ex)
@@ -189,6 +192,7 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
                     }
 
                     // Fetch work item details (pass/fail, console logs)
+                    var errorLines = new List<string>();
                     try
                     {
                         var workItems = await api.WorkItem.ListAsync(correlationId);
@@ -198,9 +202,10 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
                                 "[{JobId}] Helix work item '{Name}': State={State}",
                                 jobId, wi.Name, wi.State);
 
-                            // Try to fetch console log for failed items
+                            // Try to fetch console log for non-passed items
                             if (!string.Equals(wi.State, "Passed", StringComparison.OrdinalIgnoreCase))
                             {
+                                errorLines.Add($"Work item '{wi.Name}' state: {wi.State}");
                                 try
                                 {
                                     using var logStream = await api.WorkItem.ConsoleLogAsync(wi.Name, correlationId);
@@ -208,12 +213,13 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
                                     var consoleLog = await reader.ReadToEndAsync();
                                     if (!string.IsNullOrEmpty(consoleLog))
                                     {
-                                        // Log last 50 lines
+                                        // Keep last 50 lines
                                         var lines = consoleLog.Split('\n');
                                         var tail = string.Join("\n", lines.Length > 50 ? lines[^50..] : lines);
                                         logger.LogWarning(
                                             "[{JobId}] Helix work item '{Name}' console (last 50 lines):\n{Log}",
                                             jobId, wi.Name, tail);
+                                        errorLines.Add(tail);
                                     }
                                 }
                                 catch { /* best effort */ }
@@ -223,7 +229,12 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
                     catch (Exception ex)
                     {
                         logger.LogWarning(ex, "[{JobId}] Helix: failed to list work items", jobId);
+                        errorLines.Add($"Failed to list work items: {ex.Message}");
                     }
+
+                    // Signal the orchestrator that the Helix job is done.
+                    // If the agent already called /complete, TrySetResult is a no-op.
+                    SignalOrchestrator(jobId, errorLines, detailsUrl);
 
                     break;
                 }
@@ -232,6 +243,43 @@ public sealed class HelixCloudProvider(IConfiguration config, ILogger<HelixCloud
         catch (Exception ex)
         {
             logger.LogWarning(ex, "[{JobId}] Helix: monitoring stopped due to error", jobId);
+        }
+    }
+
+    /// <summary>
+    /// Signal the orchestrator that the Helix work items have finished.
+    /// If the agent already called <c>/complete</c>, <c>TrySetResult</c> inside
+    /// <see cref="JobOrchestrator.CompleteJob"/> is a harmless no-op.
+    /// </summary>
+    private void SignalOrchestrator(string jobId, List<string> errorLines, string? detailsUrl)
+    {
+        if (!Guid.TryParse(jobId, out var jobGuid))
+        {
+            logger.LogWarning("Helix monitor: cannot parse jobId '{JobId}' as Guid", jobId);
+            return;
+        }
+
+        try
+        {
+            var orchestrator = serviceProvider.GetRequiredService<JobOrchestrator>();
+            if (errorLines.Count > 0)
+            {
+                var errorMsg = $"Helix work item(s) did not pass.";
+                if (!string.IsNullOrEmpty(detailsUrl))
+                    errorMsg += $" Details: {detailsUrl}";
+                errorMsg += "\n" + string.Join("\n", errorLines);
+                orchestrator.CompleteJob(jobGuid, new JobOutcome(Success: false, Error: errorMsg));
+            }
+            else
+            {
+                // All work items passed — agent should have already called /complete,
+                // but signal success as a safety net.
+                orchestrator.CompleteJob(jobGuid, new JobOutcome(Success: true));
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Helix monitor: failed to signal orchestrator for job {JobId}", jobId);
         }
     }
 }

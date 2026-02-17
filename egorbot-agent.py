@@ -69,9 +69,9 @@ class Config:
         p.add_argument("--job_tag", default="test",
                         help="Name to distinguish artifacts (default: test)")
         p.add_argument("--gh_commits_and_prs",
-                        default="PR_124445;main",
+                        default="",
                         help='Semicolon-separated commits/PRs to compare. PRs prefixed with "PR_", '
-                             'e.g. PR_12345;main  (default: PR_124445;main)')
+                             'e.g. PR_12345;main  (default: empty)')
         p.add_argument("--bench_code_file",
                         default="",
                         help="Local path to .cs benchmark file (empty = use dotnet/performance)")
