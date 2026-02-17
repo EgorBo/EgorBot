@@ -1,0 +1,367 @@
+using System.Text.Json;
+using EgorBot.Web.Data;
+using EgorBot.Web.Models;
+using EgorBot.Web.Services;
+using EgorBot.Web.Services.CloudInit;
+using EgorBot.Web.Services.CloudProviders;
+using EgorBot.Web.Services.Notifications;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Load optional appsettings.Local.json (gitignored) for real credentials
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+// ── Database ─────────────────────────────────────────────────────────────────
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=egorbot.db"));
+
+// ── Cloud providers ──────────────────────────────────────────────────────────
+builder.Services.AddSingleton<ICloudProvider, LocalRunnerProvider>();
+builder.Services.AddSingleton<ICloudProvider, AzureCloudProvider>();
+builder.Services.AddSingleton<ICloudProvider, AwsCloudProvider>();
+builder.Services.AddSingleton<CloudProviderFactory>();
+
+// ── Services ─────────────────────────────────────────────────────────────────
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<CloudInitBuilder>();
+builder.Services.AddSingleton<ResultProcessor>();
+builder.Services.AddSingleton<INotificationService, ConsoleNotificationService>();
+builder.Services.AddSingleton<INotificationService, TelegramNotificationService>();
+builder.Services.AddSingleton<JobOrchestrator>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<JobOrchestrator>());
+
+var app = builder.Build();
+
+// ── Auto-create database ─────────────────────────────────────────────────────
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.EnsureCreatedAsync();
+}
+
+// ── Request logging middleware ───────────────────────────────────────────────
+app.Use(async (ctx, next) =>
+{
+    var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("HTTP");
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    logger.LogInformation("→ {Method} {Path}{Query}",
+        ctx.Request.Method, ctx.Request.Path, ctx.Request.QueryString);
+    try
+    {
+        await next();
+    }
+    finally
+    {
+        sw.Stop();
+        logger.LogInformation("← {Method} {Path} → {StatusCode} ({ElapsedMs}ms)",
+            ctx.Request.Method, ctx.Request.Path, ctx.Response.StatusCode, sw.ElapsedMilliseconds);
+    }
+});
+
+// ── Static files for web UI ──────────────────────────────────────────────────
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Public API endpoints
+// ═════════════════════════════════════════════════════════════════════════════
+
+var api = app.MapGroup("/api");
+
+// POST /api/jobs — Start a new benchmark job
+api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchestrator orchestrator, ILoggerFactory loggerFactory) =>
+{
+    var log = loggerFactory.CreateLogger("StartJob");
+    log.LogInformation("POST /api/jobs called. Platforms=[{Platforms}], CommitsAndPrs={Commits}, HasCode={HasCode}",
+        string.Join(",", request.Platforms ?? []),
+        request.CommitsAndPrs,
+        request.BenchmarkCode is not null);
+
+    // Validate
+    if (request.Platforms is not { Count: > 0 })
+    {
+        log.LogWarning("Validation failed: no platforms");
+        return Results.BadRequest(new { error = "At least one platform/target is required." });
+    }
+
+    // Normalize & validate targets (resolve aliases, OS prefix)
+    var normalizedPlatforms = new List<string>();
+    foreach (var raw in request.Platforms)
+    {
+        if (!Platform.IsValid(raw))
+        {
+            log.LogWarning("Validation failed: unknown target '{Target}'", raw);
+            return Results.BadRequest(new
+            {
+                error = $"Unknown target: '{raw}'. Valid targets: {string.Join(", ", Platform.GetAllTargetNames())}. " +
+                        $"Aliases: {string.Join(", ", Platform.GetAliases().Select(a => $"{a.Key}={a.Value}"))}."
+            });
+        }
+        normalizedPlatforms.Add(Platform.Normalize(raw));
+    }
+
+    if (string.IsNullOrWhiteSpace(request.CommitsAndPrs))
+    {
+        log.LogWarning("Validation failed: CommitsAndPrs is empty");
+        return Results.BadRequest(new { error = "CommitsAndPrs is required." });
+    }
+
+    var groupId = Guid.NewGuid();
+    var jobs = new List<object>();
+    log.LogInformation("Creating job group {GroupId}", groupId);
+
+    foreach (var platform in normalizedPlatforms)
+    {
+        var job = new BenchmarkJob
+        {
+            GroupId = groupId,
+            Platform = platform,
+            CommitsAndPrs = request.CommitsAndPrs,
+            BdnArguments = request.BdnArguments,
+            BenchmarkCode = request.BenchmarkCode,
+            UseProfiler = request.UseProfiler,
+        };
+
+        db.Jobs.Add(job);
+        await db.SaveChangesAsync();
+        log.LogInformation("Job {JobId} saved to DB for platform {Platform}", job.Id, platform);
+
+        orchestrator.Enqueue(job.Id);
+        log.LogInformation("Job {JobId} enqueued to orchestrator", job.Id);
+        jobs.Add(new { id = job.Id, platform });
+    }
+
+    log.LogInformation("Returning {Count} jobs for group {GroupId}", jobs.Count, groupId);
+    return Results.Ok(new { groupId, jobs });
+});
+
+// GET /api/jobs — List recent jobs
+api.MapGet("/jobs", async (AppDbContext db, int? page, int? pageSize) =>
+{
+    var size = Math.Clamp(pageSize ?? 20, 1, 100);
+    var skip = ((page ?? 1) - 1) * size;
+
+    var jobs = await db.Jobs
+        .OrderByDescending(j => j.CreatedAt)
+        .Skip(skip).Take(size)
+        .Select(job => new
+        {
+            job.Id,
+            job.GroupId,
+            Status = job.Status.ToString(),
+            job.Platform,
+            job.CommitsAndPrs,
+            job.CreatedAt,
+            job.StartedAt,
+            job.CompletedAt,
+            HasResult = job.ResultMarkdown != null,
+            job.ErrorMessage,
+        })
+        .ToListAsync();
+
+    var total = await db.Jobs.CountAsync();
+    return Results.Ok(new { jobs, total, page = page ?? 1, pageSize = size });
+});
+
+// GET /api/jobs/{id}/status
+api.MapGet("/jobs/{id:guid}/status", async (Guid id, AppDbContext db) =>
+{
+    var job = await db.Jobs.FindAsync(id);
+    if (job is null)
+        return Results.NotFound(new { error = "Job not found." });
+
+    return Results.Ok(new
+    {
+        job.Id,
+        Status = job.Status.ToString(),
+        job.Platform,
+        job.CommitsAndPrs,
+        job.CreatedAt,
+        job.StartedAt,
+        job.CompletedAt,
+        job.ErrorMessage,
+        HasResult = job.ResultMarkdown != null,
+    });
+});
+
+// GET /api/jobs/{id}/result — returns the MD result
+api.MapGet("/jobs/{id:guid}/result", async (Guid id, AppDbContext db) =>
+{
+    var job = await db.Jobs.FindAsync(id);
+    if (job is null)
+        return Results.NotFound(new { error = "Job not found." });
+
+    if (job.Status == JobStatus.Failed || job.Status == JobStatus.TimedOut)
+        return Results.Ok(new { error = job.ErrorMessage ?? "Job failed." });
+
+    if (job.ResultMarkdown is null)
+        return Results.Ok(new { error = "Results not yet available.", status = job.Status.ToString() });
+
+    return Results.Text(job.ResultMarkdown, "text/markdown");
+});
+
+// GET /api/jobs/{id}/logs — all log entries
+api.MapGet("/jobs/{id:guid}/logs", async (Guid id, AppDbContext db) =>
+{
+    var logs = await db.JobLogs
+        .Where(l => l.JobId == id)
+        .OrderBy(l => l.Id)
+        .Select(l => new { l.Id, l.Timestamp, l.Message })
+        .ToListAsync();
+
+    return Results.Ok(logs);
+});
+
+// GET /api/jobs/{id}/logs/stream — SSE endpoint for live log streaming
+api.MapGet("/jobs/{id:guid}/logs/stream", async (Guid id, AppDbContext db, HttpContext ctx, CancellationToken ct) =>
+{
+    ctx.Response.ContentType = "text/event-stream";
+    ctx.Response.Headers.CacheControl = "no-cache";
+    ctx.Response.Headers.Connection = "keep-alive";
+
+    long lastLogId = 0;
+
+    while (!ct.IsCancellationRequested)
+    {
+        var newLogs = await db.JobLogs
+            .Where(l => l.JobId == id && l.Id > lastLogId)
+            .OrderBy(l => l.Id)
+            .Select(l => new { l.Id, l.Timestamp, l.Message })
+            .ToListAsync(ct);
+
+        foreach (var log in newLogs)
+        {
+            var json = JsonSerializer.Serialize(log);
+            await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
+            lastLogId = log.Id;
+        }
+
+        if (newLogs.Count > 0)
+            await ctx.Response.Body.FlushAsync(ct);
+
+        // Check if job is still running
+        var status = await db.Jobs.Where(j => j.Id == id)
+            .Select(j => j.Status)
+            .FirstOrDefaultAsync(ct);
+
+        if (status is JobStatus.Completed or JobStatus.Failed or JobStatus.TimedOut or JobStatus.Cancelled)
+        {
+            // Send final batch and close
+            await ctx.Response.WriteAsync($"data: {{\"done\":true,\"status\":\"{status}\"}}\n\n", ct);
+            await ctx.Response.Body.FlushAsync(ct);
+            break;
+        }
+
+        await Task.Delay(2000, ct);
+    }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Internal API endpoints (called by the agent on VMs)
+// ═════════════════════════════════════════════════════════════════════════════
+
+var internalApi = app.MapGroup("/api/internal");
+
+// POST /api/internal/jobs/{id}/logs — agent posts log lines
+internalApi.MapPost("/jobs/{id:guid}/logs", async (Guid id, HttpContext ctx, AppDbContext db, ILoggerFactory loggerFactory) =>
+{
+    var log = loggerFactory.CreateLogger("AgentLogs");
+    using var reader = new StreamReader(ctx.Request.Body);
+    var body = await reader.ReadToEndAsync();
+
+    var lines = JsonSerializer.Deserialize<List<string>>(body) ?? [];
+    var now = DateTime.UtcNow;
+    log.LogInformation("[Job {JobId}] Received {Count} log lines from agent", id, lines.Count);
+
+    foreach (var line in lines)
+    {
+        log.LogInformation("[Job {JobId}] AGENT: {Line}", id, line);
+        db.JobLogs.Add(new JobLogEntry
+        {
+            JobId = id,
+            Timestamp = now,
+            Message = line,
+        });
+    }
+
+    await db.SaveChangesAsync();
+    return Results.Ok();
+});
+
+// POST /api/internal/jobs/{id}/heartbeat
+internalApi.MapPost("/jobs/{id:guid}/heartbeat", (Guid id, JobOrchestrator orchestrator, ILoggerFactory loggerFactory) =>
+{
+    var log = loggerFactory.CreateLogger("Heartbeat");
+    log.LogDebug("[Job {JobId}] Heartbeat received", id);
+    orchestrator.RecordHeartbeat(id);
+    return Results.Ok();
+});
+
+// POST /api/internal/jobs/{id}/complete — agent posts final results
+internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
+    AppDbContext db, JobOrchestrator orchestrator, ResultProcessor resultProcessor, ILoggerFactory loggerFactory) =>
+{
+    var log = loggerFactory.CreateLogger("JobComplete");
+    log.LogInformation("[Job {JobId}] Complete endpoint called", id);
+
+    var form = await ctx.Request.ReadFormAsync();
+
+    var successStr = form["success"].FirstOrDefault() ?? "false";
+    var success = successStr.Equals("true", StringComparison.OrdinalIgnoreCase);
+    log.LogInformation("[Job {JobId}] Success={Success}, FormFiles={FileCount}", id, success, form.Files.Count);
+
+    string? markdown = null;
+    string? error = null;
+
+    if (success)
+    {
+        // Look for artifacts zip
+        var artifactsFile = form.Files.GetFile("artifacts");
+        if (artifactsFile is not null)
+        {
+            log.LogInformation("[Job {JobId}] Processing artifacts zip ({Size} bytes)", id, artifactsFile.Length);
+            var job = await db.Jobs.FindAsync(id);
+            using var stream = artifactsFile.OpenReadStream();
+            markdown = resultProcessor.ProcessArtifactsZip(stream, job?.CommitsAndPrs ?? "");
+            log.LogInformation("[Job {JobId}] Result markdown length={Len}", id, markdown?.Length ?? 0);
+        }
+        else
+        {
+            markdown = "_No artifacts uploaded._";
+            log.LogWarning("[Job {JobId}] No artifacts file in the upload", id);
+        }
+    }
+    else
+    {
+        error = form["error"].FirstOrDefault() ?? "Agent reported failure.";
+        log.LogWarning("[Job {JobId}] Agent reported failure: {Error}", id, error);
+    }
+
+    orchestrator.CompleteJob(id, new JobOutcome(success, markdown, error));
+    log.LogInformation("[Job {JobId}] CompleteJob signaled to orchestrator", id);
+    return Results.Ok();
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Web UI fallback: serve job.html for /jobs/{id} routes
+// ═════════════════════════════════════════════════════════════════════════════
+
+app.MapGet("/jobs/{id:guid}", async (Guid id, HttpContext ctx) =>
+{
+    var jobHtmlPath = Path.Combine(app.Environment.WebRootPath, "job.html");
+    if (File.Exists(jobHtmlPath))
+    {
+        ctx.Response.ContentType = "text/html";
+        await ctx.Response.SendFileAsync(jobHtmlPath);
+    }
+    else
+    {
+        ctx.Response.StatusCode = 404;
+    }
+});
+
+// Health check
+app.MapGet("/health", () => Results.Ok("healthy"));
+
+app.Run();

@@ -7,11 +7,15 @@ Requires only the Python 3 standard library (no pip install needed).
 
 import argparse
 import glob as globmod
+import io
+import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +25,7 @@ from typing import List, NoReturn, Optional
 # ═══════════════════════════════════════════════════════════════════════════════
 # Example usage:
 #   (1) With custom benchmark snippet:
-#       python egorbot-agent.py --job_tag my_test1 --gh_commits_and_prs "PR_12345;main" --bench_code_link "https://gist.github.com/your_gist_link/raw" --bench_add_entrypoint 1
+#       python egorbot-agent.py --job_tag my_test1 --gh_commits_and_prs "PR_12345;main" --bench_code_file ./MyBenchmark.cs --bench_add_entrypoint 1
 #
 #   (2) With dotnet/performance benchmarks for a27de4a and its previous commits:
 #       python egorbot-agent.py --job_tag my_test2 --gh_commits_and_prs "a27de4a;a27de4a~1;a27de4a~2"
@@ -34,20 +38,23 @@ class Config:
     work_dir: str
     job_tag: str
     gh_commits_and_prs: List[str]
-    bench_code_link: str
-    bench_csproj_link: str
+    bench_code_file: str
+    bench_csproj_file: str
     bench_add_entrypoint: bool
     bench_tfm: str
     runtime_build_args: str
+    bdn_args_file: str
     perf_enabled: bool
     perf_record_args: str
     perf_record_freq: str
+    callback_url: str
+    job_id: str
 
     @property
     def bench_use_dotnet_performance(self) -> bool:
-        """Use dotnet/performance benchmark suite when bench_code_link is empty.
+        """Use dotnet/performance benchmark suite when bench_code_file is empty.
         We'll rely on --filter arg from BDN_ARGS.rsp."""
-        return self.bench_code_link == ""
+        return self.bench_code_file == ""
 
     @staticmethod
     def parse_args(argv: Optional[List[str]] = None) -> "Config":
@@ -65,12 +72,12 @@ class Config:
                         default="PR_124445;main",
                         help='Semicolon-separated commits/PRs to compare. PRs prefixed with "PR_", '
                              'e.g. PR_12345;main  (default: PR_124445;main)')
-        p.add_argument("--bench_code_link",
+        p.add_argument("--bench_code_file",
                         default="",
-                        help="Link to benchmark snippet (empty = use dotnet/performance)")
-        p.add_argument("--bench_csproj_link",
-                        default="https://gist.github.com/EgorBo/c3378873ad204ebf522a07138f621128/raw",
-                        help="csproj template link for custom benchmarks")
+                        help="Local path to .cs benchmark file (empty = use dotnet/performance)")
+        p.add_argument("--bench_csproj_file",
+                        default="",
+                        help="Local path to .csproj template for custom benchmarks")
         p.add_argument("--bench_add_entrypoint", type=int, choices=[0, 1],
                         default=1,
                         help="1 = add Program.cs with BenchmarkSwitcher, 0 = don't (default: 1)")
@@ -78,6 +85,9 @@ class Config:
                         help="Target framework moniker (default: net10.0)")
         p.add_argument("--runtime_build_args", default="/p:NoPgoOptimize=true",
                         help='Extra args for build.sh/build.cmd (default: /p:NoPgoOptimize=true)')
+        p.add_argument("--bdn_args_file",
+                        default="",
+                        help="Local path to BDN arguments .rsp file (default: downloads a default one)")
         p.add_argument("--perf_enabled", type=int, choices=[0, 1],
                         default=0,
                         help="1 = enable perf recording (default: 0)")
@@ -85,6 +95,10 @@ class Config:
                         help="Extra args for perf record")
         p.add_argument("--perf_record_freq", default="999",
                         help="perf record -F frequency (default: 999)")
+        p.add_argument("--callback_url", default="",
+                        help="Base URL of EgorBot service for posting logs/results (e.g. http://host:5000/api/internal)")
+        p.add_argument("--job_id", default="",
+                        help="Job ID assigned by the EgorBot service")
 
         args = p.parse_args(argv)
 
@@ -92,14 +106,17 @@ class Config:
             work_dir=args.work_dir,
             job_tag=args.job_tag,
             gh_commits_and_prs=[s.strip() for s in args.gh_commits_and_prs.split(";") if s.strip()],
-            bench_code_link=args.bench_code_link,
-            bench_csproj_link=args.bench_csproj_link,
+            bench_code_file=args.bench_code_file,
+            bench_csproj_file=args.bench_csproj_file,
             bench_add_entrypoint=bool(args.bench_add_entrypoint),
             bench_tfm=args.bench_tfm,
             runtime_build_args=args.runtime_build_args,
+            bdn_args_file=args.bdn_args_file,
             perf_enabled=bool(args.perf_enabled),
             perf_record_args=args.perf_record_args,
             perf_record_freq=args.perf_record_freq,
+            callback_url=args.callback_url,
+            job_id=args.job_id,
         )
 
 
@@ -248,6 +265,137 @@ def dotnet_install_cmd(script: Path, *extra_args: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Callback support: TeeWriter, background log sender, result upload
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TeeWriter:
+    """Wraps stdout/stderr to also accumulate lines for the background sender."""
+
+    def __init__(self, original_stream):
+        self._original = original_stream
+        self._lock = threading.Lock()
+        self._buffer: List[str] = []
+
+    def write(self, text: str):
+        try:
+            self._original.write(text)
+        except UnicodeEncodeError:
+            self._original.write(text.encode('ascii', 'replace').decode())
+        if text.strip():
+            with self._lock:
+                self._buffer.append(text.rstrip())
+
+    def flush(self):
+        self._original.flush()
+
+    def drain(self) -> List[str]:
+        """Return and clear buffered lines."""
+        with self._lock:
+            lines = self._buffer[:]
+            self._buffer.clear()
+        return lines
+
+    # Delegate everything else to the original stream
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+
+_tee_stdout: Optional[TeeWriter] = None
+_log_sender_stop = threading.Event()
+
+
+def post_log(message: str):
+    """Immediately post a single log line to the callback endpoint (and print it)."""
+    try:
+        print(f">> {message}", flush=True)
+    except UnicodeEncodeError:
+        print(f">> {message.encode('ascii', 'replace').decode()}", flush=True)
+    if CFG.callback_url and CFG.job_id:
+        _post_json(f"{CFG.callback_url}/jobs/{CFG.job_id}/logs", [message])
+
+
+def _post_json(url: str, data) -> bool:
+    """POST JSON to url. Returns True on success."""
+    import urllib.request
+    try:
+        body = json.dumps(data).encode("utf-8")
+        req = urllib.request.Request(url, data=body,
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def _post_multipart(url: str, fields: dict, files: dict) -> bool:
+    """POST multipart/form-data. fields: {name: value}, files: {name: (filename, bytes)}."""
+    import urllib.request
+    try:
+        boundary = "----EgorBotBoundary" + str(int(time.time()))
+        body = io.BytesIO()
+
+        for key, val in fields.items():
+            body.write(f"--{boundary}\r\n".encode())
+            body.write(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode())
+            body.write(f"{val}\r\n".encode())
+
+        for key, (filename, filedata) in files.items():
+            body.write(f"--{boundary}\r\n".encode())
+            body.write(f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'.encode())
+            body.write(b"Content-Type: application/octet-stream\r\n\r\n")
+            body.write(filedata)
+            body.write(b"\r\n")
+
+        body.write(f"--{boundary}--\r\n".encode())
+
+        req = urllib.request.Request(
+            url, data=body.getvalue(),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        urllib.request.urlopen(req, timeout=120)
+        return True
+    except Exception as e:
+        print(f"  ⚠  Multipart upload failed: {e}")
+        return False
+
+
+def _log_sender_thread():
+    """Background thread that sends buffered log lines and heartbeats every 5 seconds."""
+    global _tee_stdout
+    while not _log_sender_stop.is_set():
+        _log_sender_stop.wait(5)
+        if _tee_stdout is None or not CFG.callback_url or not CFG.job_id:
+            continue
+        lines = _tee_stdout.drain()
+        if lines:
+            _post_json(f"{CFG.callback_url}/jobs/{CFG.job_id}/logs", lines)
+        # Heartbeat
+        _post_json(f"{CFG.callback_url}/jobs/{CFG.job_id}/heartbeat", {})
+
+
+def start_callback_sender():
+    """Install TeeWriter on stdout/stderr and start the background log sender."""
+    global _tee_stdout
+    if not CFG.callback_url or not CFG.job_id:
+        return
+    _tee_stdout = TeeWriter(sys.stdout)
+    sys.stdout = _tee_stdout  # type: ignore
+    sys.stderr = TeeWriter(sys.stderr)  # type: ignore
+    t = threading.Thread(target=_log_sender_thread, daemon=True)
+    t.start()
+
+
+def stop_callback_sender():
+    """Flush remaining logs and stop the background sender."""
+    global _tee_stdout
+    _log_sender_stop.set()
+    if _tee_stdout is not None and CFG.callback_url and CFG.job_id:
+        # Flush remaining lines
+        lines = _tee_stdout.drain()
+        if lines:
+            _post_json(f"{CFG.callback_url}/jobs/{CFG.job_id}/logs", lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  SendResults — the single exit point on success *or* failure
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -255,9 +403,8 @@ def send_results(*, success: bool, exit_code: int = 0) -> NoReturn:
     """
     Package artefacts into a zip and report the outcome.
     Always terminates the process.
-
-    TODO: plug in your own upload / notification logic here.
     """
+    post_log(f"send_results called: success={success}, exit_code={exit_code}")
     zip_path = WORK_DIR / f"artifacts_{CFG.job_tag}.zip"
 
     # Try to copy the agent log (if present) before zipping
@@ -270,12 +417,26 @@ def send_results(*, success: bool, exit_code: int = 0) -> NoReturn:
     else:
         print("  ⚠  No artefacts to zip.")
 
+    # Upload results to the EgorBot service if callback_url is configured
+    if CFG.callback_url and CFG.job_id:
+        stop_callback_sender()
+        complete_url = f"{CFG.callback_url}/jobs/{CFG.job_id}/complete"
+        fields = {"success": "true" if success else "false"}
+        if not success:
+            fields["error"] = f"Agent failed with exit code {exit_code}"
+        files = {}
+        if zip_path.exists():
+            files["artifacts"] = (zip_path.name, zip_path.read_bytes())
+        print(f"\n📤 Uploading results to {complete_url} ...")
+        if _post_multipart(complete_url, fields, files):
+            print("  ✅ Upload successful.")
+        else:
+            print("  ⚠  Upload failed — results are still available locally.")
+
     if success:
         print(f"\n✅ Finished successfully.  Artefacts: {zip_path}")
-        # TODO: upload zip_path / send success notification
     else:
         print(f"\n❌ Failed (exit code {exit_code}).  Artefacts: {zip_path}")
-        # TODO: upload zip_path / send failure notification
 
     sys.exit(0 if success else exit_code)
 
@@ -294,6 +455,10 @@ def setup_environment(cfg: Config):
     os.chdir(WORK_DIR)
 
     TARGET_OS, TARGET_ARCH = detect_platform()
+
+    # Ensure HOME is set (cloud-init on some distros runs without it)
+    if TARGET_OS != "windows" and not os.environ.get("HOME"):
+        os.environ["HOME"] = str(Path.home()) if Path.home() != Path("/") else "/root"
 
     ARTIFACTS_DIR  = WORK_DIR / "artifacts"
     DIR_BENCHAPP   = WORK_DIR / "benchapp"
@@ -315,12 +480,18 @@ def setup_environment(cfg: Config):
 ########################################################################################
 
 def install_dependencies():
-    kill_process_by_name("dotnet")
+    # On local runs (callback to localhost), don't kill dotnet — it would kill the web server!
+    if not CFG.callback_url or "localhost" not in CFG.callback_url:
+        kill_process_by_name("dotnet")
+    else:
+        post_log("Skipping dotnet kill (local mode, would kill the web server)")
 
     marker = WORK_DIR / ".deps_installed"
     if marker.exists():
-        print("Dependencies already installed, skipping installation")
+        post_log("Dependencies already installed, skipping installation")
         return
+
+    post_log(f"Installing dependencies for {TARGET_OS}...")
 
     if TARGET_OS == "linux":
         if shutil.which("apt"):
@@ -344,11 +515,11 @@ def install_dependencies():
 
     elif TARGET_OS == "osx":
         # TODO: insert macOS dependency installation here
-        # marker.touch()
+        pass  # marker.touch()
 
     elif TARGET_OS == "windows":
         # TODO: insert Windows dependency installation here
-        # marker.touch()
+        pass  # marker.touch()
 
     else:
         print(f"❌ Unsupported TARGET_OS: {TARGET_OS}")
@@ -366,15 +537,20 @@ def install_dotnet_sdks():
     script_path = WORK_DIR / script_name
 
     if not script_path.exists():
+        post_log(f"Downloading {script_name}...")
         download(f"https://dot.net/v1/{script_name}", script_path)
         if TARGET_OS != "windows":
             script_path.chmod(0o755)
 
+        post_log("Installing .NET 11.0 daily...")
         install_dir = str(WORK_DIR / ".dotnet")
         run(dotnet_install_cmd(script_path, "--channel", "11.0", "--quality", "daily",
                                "--install-dir", install_dir))
+        post_log("Installing .NET 10.0...")
         run(dotnet_install_cmd(script_path, "--channel", "10.0",
                                "--install-dir", install_dir))
+    else:
+        post_log("dotnet-install script already present, skipping download")
 
     dotnet_root = str(WORK_DIR / ".dotnet")
     os.environ["DOTNET_ROOT"] = dotnet_root
@@ -399,8 +575,10 @@ def install_dotnet_sdks():
 
 def build_benchmarks(bench_args: List[str]):
     if CFG.bench_use_dotnet_performance:
+        post_log("Building benchmarks from dotnet/performance repo...")
         _build_dotnet_performance_benchmarks(bench_args)
     else:
+        post_log("Building custom benchmarks...")
         _build_custom_benchmarks(bench_args)
 
     # Validate the discovered benchmark list
@@ -459,8 +637,11 @@ def _build_custom_benchmarks(bench_args: List[str]):
     csproj = DIR_BENCHAPP / "benchapp.csproj"
     if not csproj.exists():
         run(f"dotnet new console -f {CFG.bench_tfm}", cwd=DIR_BENCHAPP)
-        download(CFG.bench_code_link, DIR_BENCHAPP / "Program.cs")
-        download(CFG.bench_csproj_link, csproj)
+        shutil.copy2(CFG.bench_code_file, DIR_BENCHAPP / "Program.cs")
+        if CFG.bench_csproj_file:
+            shutil.copy2(CFG.bench_csproj_file, csproj)
+        else:
+            download("https://gist.github.com/EgorBo/c3378873ad204ebf522a07138f621128/raw", csproj)
 
         if CFG.bench_add_entrypoint:
             (DIR_BENCHAPP / "Entrypoint.cs").write_text(
@@ -488,17 +669,20 @@ def _build_custom_benchmarks(bench_args: List[str]):
 def clone_runtime():
     runtime_dir = WORK_DIR / "runtime"
     if not runtime_dir.is_dir():
+        post_log("Cloning dotnet/runtime...")
         run(f'git clone --no-tags --single-branch '
                     f'https://github.com/dotnet/runtime.git "{runtime_dir}"', check=False)
         run('git config --global user.email egorbot@egorbo.com', cwd=runtime_dir)
         run('git config --global user.name egorbot', cwd=runtime_dir)
+    else:
+        post_log("dotnet/runtime already cloned")
 
 def build_core_roots():
     runtime_dir = WORK_DIR / "runtime"
     clone_runtime()
 
     for item in CFG.gh_commits_and_prs:
-        print(f"\nBuilding for {item}")
+        post_log(f"Building core_root for '{item}'...")
         core_root_dest = CORE_ROOTS_DIR / item
         if core_root_dest.is_dir():
             print(f"Directory {core_root_dest} already exists, skipping")
@@ -549,6 +733,7 @@ def build_core_roots():
             run("./src/tests/build.sh Release generatelayoutonly", cwd=runtime_dir)
 
         print("Successfully built runtime")
+        post_log(f"Core_root built for '{item}' ✓")
 
         # Copy Core_Root to our core_roots folder
         core_root_src = (runtime_dir / "artifacts" / "tests" / "coreclr"
@@ -571,6 +756,7 @@ def run_benchmarks(bench_args: List[str]):
     corerun_paths = sorted(globmod.glob(
         str(CORE_ROOTS_DIR / "*" / make_exe("corerun"))
     ))
+    post_log(f"Running benchmarks with {len(corerun_paths)} corerun(s): {corerun_paths}")
     hide_columns = ["-h", "Job", "StdDev", "RatioSD", "Median", "Min", "Max"]
 
     if CFG.bench_use_dotnet_performance:
@@ -611,19 +797,46 @@ def main(cfg: Optional[Config] = None):
 
     setup_environment(cfg)
 
-    # Download / read BDN_ARGS.rsp
-    rsp = WORK_DIR / "BDN_ARGS.rsp"
-    if not rsp.exists():
-        download("https://gist.github.com/EgorBo/1f99f41c39ad790294c164306001fb66/raw", rsp)
-    bench_args = read_lines(rsp)
+    # Start background log sender if callback is configured
+    start_callback_sender()
 
+    post_log(f"[STAGE 1/6] Environment set up. OS={TARGET_OS}, Arch={TARGET_ARCH}, WorkDir={WORK_DIR}")
+    post_log(f"  Commits/PRs: {cfg.gh_commits_and_prs}")
+    post_log(f"  BenchCodeFile: {cfg.bench_code_file or '(none)'}")
+    post_log(f"  Callback: {cfg.callback_url or '(none)'}, JobId: {cfg.job_id or '(none)'}")
+
+    # Read BDN_ARGS.rsp (from user-provided path, or download a default)
+    if cfg.bdn_args_file:
+        rsp = Path(cfg.bdn_args_file).resolve()
+    else:
+        rsp = WORK_DIR / "BDN_ARGS.rsp"
+        if not rsp.exists():
+            download("https://gist.github.com/EgorBo/1f99f41c39ad790294c164306001fb66/raw", rsp)
+    bench_args = read_lines(rsp)
+    post_log(f"  BDN args: {bench_args}")
+
+    post_log("[STAGE 2/6] Installing dependencies...")
     install_dependencies()
+    post_log("[STAGE 2/6] Dependencies installed ✓")
+
+    post_log("[STAGE 3/6] Installing .NET SDKs...")
     install_dotnet_sdks()
+    post_log("[STAGE 3/6] .NET SDKs installed ✓")
+
+    post_log("[STAGE 4/6] Building benchmarks...")
     build_benchmarks(bench_args)
+    post_log("[STAGE 4/6] Benchmarks built ✓")
+
+    post_log("[STAGE 5/6] Building core_roots for all commits/PRs...")
     build_core_roots()
+    post_log("[STAGE 5/6] Core_roots built ✓")
+
+    post_log("[STAGE 6/6] Running benchmarks...")
     run_benchmarks(bench_args)
+    post_log("[STAGE 6/6] Benchmarks completed ✓")
 
     # Finalize: copy logs, zip artifacts, report success
+    post_log("Finalizing — packaging artifacts and uploading results...")
     agent_log = WORK_DIR / "agent.log"
     if agent_log.exists():
         shutil.copy2(agent_log, ARTIFACTS_DIR)

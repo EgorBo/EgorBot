@@ -1,0 +1,80 @@
+namespace EgorBot.Github.Models;
+
+/// <summary>
+/// Parsed @EgorBt command extracted from a GitHub comment or issue/PR body.
+/// </summary>
+public sealed class BotCommand
+{
+    /// <summary>Target platforms (e.g. "arm", "azure_genoa"). Defaults to ["azure_genoa"] if none specified.</summary>
+    public List<string> Targets { get; init; } = [];
+
+    /// <summary>Commits/PRs to compare, semicolon-separated (e.g. "PR_12345;main").</summary>
+    public string CommitsAndPrs { get; init; } = "";
+
+    /// <summary>BDN CLI arguments (everything that wasn't recognized as an EgorBot command).</summary>
+    public string? BdnArguments { get; init; }
+
+    /// <summary>Optional C# benchmark snippet from a markdown code block.</summary>
+    public string? BenchmarkCode { get; init; }
+
+    /// <summary>Enable perf profiler.</summary>
+    public bool UseProfiler { get; init; }
+
+    /// <summary>Show help text instead of running a job.</summary>
+    public bool IsHelp { get; init; }
+}
+
+/// <summary>
+/// Captures where the @EgorBt mention came from on GitHub.
+/// </summary>
+public sealed class MentionSource
+{
+    /// <summary>GitHub owner (e.g. "dotnet").</summary>
+    public required string Owner { get; init; }
+
+    /// <summary>GitHub repository name (e.g. "runtime").</summary>
+    public required string Repo { get; init; }
+
+    /// <summary>Issue or PR number.</summary>
+    public required int Number { get; init; }
+
+    /// <summary>Whether the source is a PR (true) or an issue (false).</summary>
+    public required bool IsPullRequest { get; init; }
+
+    /// <summary>The GitHub comment ID (null if the mention is in the issue/PR body itself).</summary>
+    public long? CommentId { get; init; }
+
+    /// <summary>Login of the user who wrote the comment/description.</summary>
+    public required string Author { get; init; }
+
+    /// <summary>Direct URL to the comment or issue/PR.</summary>
+    public required string HtmlUrl { get; init; }
+}
+
+/// <summary>
+/// Tracks an in-flight benchmark job submitted to EgorBot.Web.
+/// </summary>
+public sealed class TrackedJob
+{
+    public required MentionSource Source { get; init; }
+    public required BotCommand Command { get; init; }
+
+    /// <summary>Job group ID returned by EgorBot.Web.</summary>
+    public Guid GroupId { get; set; }
+
+    /// <summary>Individual job IDs per platform.</summary>
+    public List<JobInfo> Jobs { get; set; } = [];
+
+    /// <summary>Tracking issue number in the runtime-utils repo.</summary>
+    public int? TrackingIssueNumber { get; set; }
+
+    /// <summary>How many jobs have been completed (success or failure).</summary>
+    public int CompletedCount { get; set; }
+}
+
+public sealed class JobInfo
+{
+    public required Guid Id { get; init; }
+    public required string Platform { get; init; }
+    public bool IsCompleted { get; set; }
+}

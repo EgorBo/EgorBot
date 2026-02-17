@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="EgorBot.Github/EgorBot.Github.csproj" />
+  <Project Path="EgorBot.Web/EgorBot.Web.csproj" />
+</Solution>

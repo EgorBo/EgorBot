@@ -7,6 +7,9 @@
 *.rsuser
 *.suo
 *.user
+
+# Local secrets (never commit)
+appsettings.Local.json
 *.userosscache
 *.sln.docstates
 
