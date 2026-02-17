@@ -9,7 +9,7 @@ namespace EgorBot.Github.Services;
 /// HTTP client for communicating with the EgorBot.Server service.
 /// Submits benchmark jobs and polls for their status/results.
 /// </summary>
-public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger)
+public sealed class EgorBotClient(HttpClient http, IConfiguration configuration, ILogger<EgorBotClient> logger)
 {
     // ── DTOs matching EgorBot.Server's API ──────────────────────────────────
 
@@ -159,5 +159,10 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
     }
 
     /// <summary>Get the logs page URL for a job.</summary>
-    public string GetLogsUrl(Guid jobId) => $"{http.BaseAddress?.ToString().TrimEnd('/')}/jobs/{jobId}";
+    public string GetLogsUrl(Guid jobId)
+    {
+        var publicUrl = configuration["EgorBot:ServiceBaseUrl"];
+        var baseUrl = (!string.IsNullOrEmpty(publicUrl) ? publicUrl : http.BaseAddress?.ToString())?.TrimEnd('/');
+        return $"{baseUrl}/jobs/{jobId}";
+    }
 }
