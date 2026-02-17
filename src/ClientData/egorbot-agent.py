@@ -912,7 +912,9 @@ def build_core_roots():
                 run(f"git checkout {commit}", cwd=runtime_dir)
 
         # Install deps via runtime's own script (most deps come from here)
-        if TARGET_OS != "windows":
+        if TARGET_OS == "osx":
+            run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
+        elif TARGET_OS != "windows":
             run("sudo eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
 
         # Make it more resilient to warnings in case if we build old commits
