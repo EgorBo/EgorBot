@@ -111,11 +111,8 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
         normalizedPlatforms.Add(normalized);
     }
 
-    if (string.IsNullOrWhiteSpace(request.CommitsAndPrs))
-    {
-        log.LogWarning("Validation failed: CommitsAndPrs is empty");
-        return Results.BadRequest(new { error = "CommitsAndPrs is required." });
-    }
+    // CommitsAndPrs can be empty — the agent will run benchmarks with the default SDK runtime
+    var commitsAndPrs = request.CommitsAndPrs ?? "";
 
     var groupId = Guid.NewGuid();
     var jobs = new List<object>();
@@ -127,7 +124,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
         {
             GroupId = groupId,
             Platform = platform,
-            CommitsAndPrs = request.CommitsAndPrs,
+            CommitsAndPrs = commitsAndPrs,
             BdnArguments = request.BdnArguments,
             BenchmarkCode = request.BenchmarkCode,
             UseProfiler = request.UseProfiler,

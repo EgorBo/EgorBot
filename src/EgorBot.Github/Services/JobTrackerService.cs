@@ -90,8 +90,8 @@ public sealed class JobTrackerService(
         if (!IsTrackingRepo(source.Owner, source.Repo))
             return command;
 
-        // Only infer if no explicit commits were provided (just "main" default)
-        if (command.CommitsAndPrs != "main")
+        // Only infer if no explicit commits were provided
+        if (command.CommitsAndPrs is not ("main" or ""))
             return command;
 
         try

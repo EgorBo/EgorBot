@@ -759,7 +759,7 @@ def build_core_roots():
 ########################################################################################
 
 def run_benchmarks(bench_args: List[str]):
-    """Run BDN benchmarks using all built core_roots."""
+    """Run BDN benchmarks using all built core_roots (or without --corerun if none)."""
     # Gather all corerun paths (one per commit/PR)
     corerun_paths = sorted(globmod.glob(
         str(CORE_ROOTS_DIR / "*" / make_exe("corerun"))
@@ -767,12 +767,15 @@ def run_benchmarks(bench_args: List[str]):
     post_log(f"Running benchmarks with {len(corerun_paths)} corerun(s): {corerun_paths}")
     hide_columns = ["-h", "Job", "StdDev", "RatioSD", "Median", "Min", "Max"]
 
+    # Build the --corerun portion only when we actually have core_roots
+    corerun_args = ["--corerun"] + corerun_paths if corerun_paths else []
+
     if CFG.bench_use_dotnet_performance:
         # Run benchmarks from dotnet/performance repo
         micro_dir = WORK_DIR / "performance" / "src" / "benchmarks" / "micro"
         micro_bin = (WORK_DIR / "performance" / "artifacts" / "bin"
                      / "MicroBenchmarks" / "Release" / CFG.bench_tfm / "MicroBenchmarks")
-        run([str(micro_bin)] + bench_args + ["--corerun"] + corerun_paths + hide_columns,
+        run([str(micro_bin)] + bench_args + corerun_args + hide_columns,
             cwd=micro_dir, shell=False)
         # Copy performance/artifacts/.../BenchmarkDotNet.Artifacts/results to artifacts dir
         results_pattern = str(
@@ -781,8 +784,8 @@ def run_benchmarks(bench_args: List[str]):
         )
     else:
         # Run custom benchmarks
-        run(["dotnet", "run", "-c", "Release", "-f", CFG.bench_tfm, "--",
-             "--corerun"] + corerun_paths + bench_args + hide_columns,
+        run(["dotnet", "run", "-c", "Release", "-f", CFG.bench_tfm, "--"] +
+            corerun_args + bench_args + hide_columns,
             cwd=DIR_BENCHAPP, shell=False)
         # Copy benchapp/BenchmarkDotNet.Artifacts/results/*.* to artifacts dir
         results_pattern = str(
@@ -835,9 +838,12 @@ def main(cfg: Optional[Config] = None):
     build_benchmarks(bench_args)
     post_log("[STAGE 4/6] Benchmarks built ✓")
 
-    post_log("[STAGE 5/6] Building core_roots for all commits/PRs...")
-    build_core_roots()
-    post_log("[STAGE 5/6] Core_roots built ✓")
+    if cfg.gh_commits_and_prs:
+        post_log("[STAGE 5/6] Building core_roots for all commits/PRs...")
+        build_core_roots()
+        post_log("[STAGE 5/6] Core_roots built ✓")
+    else:
+        post_log("[STAGE 5/6] No commits/PRs specified — skipping core_root build")
 
     post_log("[STAGE 6/6] Running benchmarks...")
     run_benchmarks(bench_args)

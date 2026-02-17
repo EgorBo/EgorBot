@@ -161,9 +161,8 @@ public static class CommandParser
             commits.Add("main");
         }
 
-        // Fallback: if still no commits, just use "main"
-        if (commits.Count == 0)
-            commits.Add("main");
+        // If still no commits, leave empty — the agent will run benchmarks
+        // with the default SDK runtime (no core_root build, no --corerun)
 
         return new BotCommand
         {
