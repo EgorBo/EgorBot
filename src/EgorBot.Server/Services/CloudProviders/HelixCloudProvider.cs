@@ -58,7 +58,7 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
             .DefineWorkItem($"egorbot-{request.JobId}")
             .WithCommand(command)
             .WithSingleFilePayload(scriptFileName, payload)
-            .WithTimeout(TimeSpan.FromHours(1))
+            .WithTimeout(TimeSpan.FromHours(2.5))
             .AttachToJob()
             .SendAsync(cancellationToken: ct);
 

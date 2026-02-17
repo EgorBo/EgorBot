@@ -34,6 +34,7 @@ public sealed class JobOrchestrator(
 
     private readonly int _maxConcurrentJobs = config.GetValue("EgorBot:MaxConcurrentJobs", 4);
     private readonly TimeSpan _jobTimeout = TimeSpan.FromMinutes(config.GetValue("EgorBot:JobTimeoutMinutes", 60));
+    private readonly TimeSpan _helixJobTimeout = TimeSpan.FromMinutes(config.GetValue("EgorBot:HelixJobTimeoutMinutes", 150));
 
     /// <summary>Enqueue a job ID for processing.</summary>
     public void Enqueue(Guid jobId)
@@ -165,10 +166,11 @@ public sealed class JobOrchestrator(
                 await n.OnVmProvisionedAsync(job, provider.Name, result.IpAddress);
 
             // 4. Wait for agent to report completion (or timeout)
+            var effectiveTimeout = provider.Name == "Helix" ? _helixJobTimeout : _jobTimeout;
             logger.LogInformation("[{JobId}] Waiting for agent completion (timeout={Timeout}min)...",
-                jobId, _jobTimeout.TotalMinutes);
+                jobId, effectiveTimeout.TotalMinutes);
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(_jobTimeout);
+            timeoutCts.CancelAfter(effectiveTimeout);
 
             try
             {
@@ -194,7 +196,7 @@ public sealed class JobOrchestrator(
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
                 job.Status = JobStatus.TimedOut;
-                job.ErrorMessage = $"Job timed out after {_jobTimeout.TotalMinutes} minutes.";
+                job.ErrorMessage = $"Job timed out after {effectiveTimeout.TotalMinutes} minutes.";
                 await AddLogAsync(db, jobId, job.ErrorMessage);
                 foreach (var n in notifiers)
                     await n.OnJobFailedAsync(job, job.ErrorMessage);
