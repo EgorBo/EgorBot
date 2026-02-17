@@ -164,10 +164,18 @@ def run(
                 stdout=fout,
             )
     else:
-        result = subprocess.run(
+        # Stream subprocess output line-by-line through Python's sys.stdout
+        # so TeeWriter captures it for the callback log sender.
+        proc = subprocess.Popen(
             cmd, cwd=cwd, env=merged_env, shell=shell,
-            # No capture — stdout/stderr flow directly to the terminal in real time.
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            bufsize=1, text=True, errors="replace",
         )
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+        proc.wait()
+        result = subprocess.CompletedProcess(cmd, proc.returncode)
 
     if check and result.returncode != 0:
         print(f"\n❌ Command failed (exit {result.returncode}): {label}")

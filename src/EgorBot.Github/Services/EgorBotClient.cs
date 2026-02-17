@@ -32,6 +32,9 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
 
         [JsonPropertyName("requestedBy")]
         public string? RequestedBy { get; init; }
+
+        [JsonPropertyName("sourceUrl")]
+        public string? SourceUrl { get; init; }
     }
 
     public sealed class StartJobResponse
@@ -74,7 +77,7 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
 
     /// <summary>Submit a benchmark job to EgorBot.Server. Returns the response or null on failure.</summary>
     /// <summary>Submit a benchmark job to EgorBot.Server. Returns the response or null on failure.</summary>
-    public async Task<StartJobResponse?> StartJobAsync(BotCommand command, string? requestedBy)
+    public async Task<StartJobResponse?> StartJobAsync(BotCommand command, string? requestedBy, string? sourceUrl)
     {
         var request = new StartJobRequest
         {
@@ -84,6 +87,7 @@ public sealed class EgorBotClient(HttpClient http, ILogger<EgorBotClient> logger
             BenchmarkCode = command.BenchmarkCode,
             UseProfiler = command.UseProfiler,
             RequestedBy = requestedBy,
+            SourceUrl = sourceUrl,
         };
 
         try

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using EgorBot.Github.Models;
 using Octokit;
 
@@ -8,8 +9,13 @@ namespace EgorBot.Github.Services;
 /// Manages the lifecycle of benchmark jobs:
 ///   1. Submit the job to EgorBot.Server
 ///   2. Create a tracking issue in the runtime-utils repo
-///   3. Poll job status and post results as comments
+///   3. Poll job status and post results as comments on the tracking issue
 ///   4. Close the tracking issue when all jobs complete
+///   5. If the original requester is @Copilot, post a single summary comment
+///      back on the source PR (using a separate token)
+///
+/// All communication happens in the tracking repo (EgorBot/runtime-utils).
+/// No comments are posted in dotnet/runtime except the Copilot notification.
 /// </summary>
 public sealed class JobTrackerService(
     EgorBotClient botClient,
@@ -30,25 +36,39 @@ public sealed class JobTrackerService(
             return;
         }
 
+        // If the mention is in a tracking issue (in the tracking repo), try to infer
+        // the source PR context from the issue title (e.g. "Benchmarks for dotnet/runtime#124445 ...")
+        var effectiveCommand = TryInferPrFromTrackingIssue(source, command);
+
         // 1. Submit job to EgorBot.Server
-        var response = await botClient.StartJobAsync(command, source.Author);
+        var response = await botClient.StartJobAsync(effectiveCommand, source.Author, source.HtmlUrl);
         if (response is null)
         {
             logger.LogError("Failed to submit job for {Owner}/{Repo}#{Number}", source.Owner, source.Repo, source.Number);
-            await PostCommentOnSourceAsync(source, "Failed to submit the benchmark job to EgorBot. Please try again later.");
+            await PostCommentOnTrackingRepoAsync(source, "Failed to submit the benchmark job to EgorBot. Please try again later.");
             return;
         }
 
         var tracked = new TrackedJob
         {
             Source = source,
-            Command = command,
+            Command = effectiveCommand,
             GroupId = response.GroupId,
             Jobs = response.Jobs.Select(j => new JobInfo { Id = j.Id, Platform = j.Platform }).ToList(),
         };
 
-        // 2. Create tracking issue in runtime-utils repo
-        await CreateTrackingIssueAsync(tracked);
+        // 2. Create tracking issue in runtime-utils repo (unless already in one)
+        if (IsTrackingRepo(source.Owner, source.Repo))
+        {
+            // The command was posted in a tracking issue — reuse it
+            tracked.TrackingIssueNumber = source.Number;
+            await PostCommentOnTrackingIssueAsync(tracked,
+                $"Benchmark job submitted. Group ID: `{response.GroupId}` ({tracked.Jobs.Count} job(s)).");
+        }
+        else
+        {
+            await CreateTrackingIssueAsync(tracked);
+        }
 
         // 3. Register for monitoring
         _activeJobs[response.GroupId] = tracked;
@@ -58,6 +78,50 @@ public sealed class JobTrackerService(
             response.GroupId, tracked.Jobs.Count);
     }
 
+    // ── Infer PR from tracking issue title ──────────────────────────────
+
+    /// <summary>
+    /// If the command came from the tracking repo and has no explicit commits,
+    /// try to parse a PR number from the issue title.
+    /// E.g. "Benchmarks for dotnet/runtime#124445 (for @EgorBo)" → PR_124445
+    /// </summary>
+    private BotCommand TryInferPrFromTrackingIssue(MentionSource source, BotCommand command)
+    {
+        if (!IsTrackingRepo(source.Owner, source.Repo))
+            return command;
+
+        // Only infer if no explicit commits were provided (just "main" default)
+        if (command.CommitsAndPrs != "main")
+            return command;
+
+        try
+        {
+            var ghClient = CreateGitHubClient();
+            var issue = ghClient.Issue.Get(source.Owner, source.Repo, source.Number).GetAwaiter().GetResult();
+            var match = Regex.Match(issue.Title, @"#(\d+)");
+            if (match.Success && int.TryParse(match.Groups[1].Value, out var prNumber))
+            {
+                logger.LogInformation("Inferred PR #{PrNumber} from tracking issue title: {Title}",
+                    prNumber, issue.Title);
+                return new BotCommand
+                {
+                    Targets = command.Targets,
+                    CommitsAndPrs = $"PR_{prNumber};main",
+                    BdnArguments = command.BdnArguments,
+                    BenchmarkCode = command.BenchmarkCode,
+                    UseProfiler = command.UseProfiler,
+                    IsHelp = command.IsHelp,
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to infer PR from tracking issue #{Number}", source.Number);
+        }
+
+        return command;
+    }
+
     // ── Tracking issue lifecycle ────────────────────────────────────────
 
     private async Task CreateTrackingIssueAsync(TrackedJob tracked)
@@ -65,8 +129,7 @@ public sealed class JobTrackerService(
         try
         {
             var ghClient = CreateGitHubClient();
-            var trackingOwner = config["Github:TrackingRepo:Owner"] ?? "EgorBot";
-            var trackingRepo = config["Github:TrackingRepo:Name"] ?? "runtime-utils";
+            var (trackingOwner, trackingRepo) = GetTrackingRepo();
 
             var sourceType = tracked.Source.IsPullRequest ? "PR" : "issue";
             var sourceRef = $"{tracked.Source.Owner}/{tracked.Source.Repo}#{tracked.Source.Number}";
@@ -94,11 +157,6 @@ public sealed class JobTrackerService(
 
             logger.LogInformation("Created tracking issue #{IssueNumber} in {Owner}/{Repo}",
                 issue.Number, trackingOwner, trackingRepo);
-
-            // Also post a comment on the original source pointing to the tracking issue
-            var trackingUrl = issue.HtmlUrl;
-            var reply = $"Benchmark job submitted. Tracking progress at {trackingUrl}";
-            await PostCommentOnSourceAsync(tracked.Source, reply);
         }
         catch (Exception ex)
         {
@@ -161,12 +219,12 @@ public sealed class JobTrackerService(
             if (status.Status == "Completed" && status.HasResult)
             {
                 var markdown = await botClient.GetJobResultAsync(job.Id);
-                await PostResultCommentAsync(tracked, job, markdown, success: true);
+                await PostResultOnTrackingIssueAsync(tracked, job, markdown, success: true);
             }
             else
             {
                 var error = status.ErrorMessage ?? $"Job {status.Status.ToLowerInvariant()}.";
-                await PostResultCommentAsync(tracked, job, error, success: false);
+                await PostResultOnTrackingIssueAsync(tracked, job, error, success: false);
             }
 
             logger.LogInformation("Job {JobId} ({Platform}) → {Status}",
@@ -174,15 +232,14 @@ public sealed class JobTrackerService(
         }
     }
 
-    private async Task PostResultCommentAsync(TrackedJob tracked, JobInfo job, string? content, bool success)
+    private async Task PostResultOnTrackingIssueAsync(TrackedJob tracked, JobInfo job, string? content, bool success)
     {
         if (tracked.TrackingIssueNumber is not { } issueNumber) return;
 
         try
         {
             var ghClient = CreateGitHubClient();
-            var trackingOwner = config["Github:TrackingRepo:Owner"] ?? "EgorBot";
-            var trackingRepo = config["Github:TrackingRepo:Name"] ?? "runtime-utils";
+            var (trackingOwner, trackingRepo) = GetTrackingRepo();
 
             string body;
             if (success)
@@ -225,10 +282,9 @@ public sealed class JobTrackerService(
         try
         {
             var ghClient = CreateGitHubClient();
-            var trackingOwner = config["Github:TrackingRepo:Owner"] ?? "EgorBot";
-            var trackingRepo = config["Github:TrackingRepo:Name"] ?? "runtime-utils";
+            var (trackingOwner, trackingRepo) = GetTrackingRepo();
 
-            // Post a closing comment
+            // Post a closing comment on the tracking issue
             var summary = $"""
                 All benchmark jobs for this request have completed.
 
@@ -240,6 +296,12 @@ public sealed class JobTrackerService(
                 new IssueUpdate { State = ItemState.Closed });
 
             logger.LogInformation("Closed tracking issue #{Issue}", issueNumber);
+
+            // If the original requester was @Copilot, post a notification on the source repo
+            if (tracked.Source.Author.Equals("Copilot", StringComparison.OrdinalIgnoreCase))
+            {
+                await NotifyCopilotOnSourceAsync(tracked, issueNumber);
+            }
         }
         catch (Exception ex)
         {
@@ -247,19 +309,89 @@ public sealed class JobTrackerService(
         }
     }
 
-    // ── Comment on the original source ──────────────────────────────────
-
-    private async Task PostCommentOnSourceAsync(MentionSource source, string body)
+    /// <summary>
+    /// Post a comment on the original dotnet/runtime PR/issue notifying @Copilot
+    /// that benchmarks are done. Uses a separate GitHub token (Github:CopilotNotifyToken)
+    /// so it appears as a different identity.
+    /// </summary>
+    private async Task NotifyCopilotOnSourceAsync(TrackedJob tracked, int trackingIssueNumber)
     {
         try
         {
-            var ghClient = CreateGitHubClient();
-            await ghClient.Issue.Comment.Create(source.Owner, source.Repo, source.Number, body);
+            var copilotToken = config["Github:CopilotNotifyToken"]
+                ?? Environment.GetEnvironmentVariable("EGORBOT_GH_COPILOT_TOKEN");
+
+            if (string.IsNullOrEmpty(copilotToken))
+            {
+                logger.LogWarning("Github:CopilotNotifyToken not configured — skipping Copilot notification.");
+                return;
+            }
+
+            var (trackingOwner, trackingRepo) = GetTrackingRepo();
+            var trackingUrl = $"https://github.com/{trackingOwner}/{trackingRepo}/issues/{trackingIssueNumber}";
+
+            var comment = $"@Copilot, all benchmarks are finished, you can check the results here: {trackingUrl}";
+
+            var ghClient = new GitHubClient(new ProductHeaderValue(config["Github:BotName"] ?? "EgorBot"))
+            {
+                Credentials = new Credentials(copilotToken),
+            };
+
+            await ghClient.Issue.Comment.Create(
+                tracked.Source.Owner, tracked.Source.Repo, tracked.Source.Number, comment);
+
+            logger.LogInformation("Posted Copilot notification on {Owner}/{Repo}#{Number}",
+                tracked.Source.Owner, tracked.Source.Repo, tracked.Source.Number);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to post comment on {Owner}/{Repo}#{Number}",
-                source.Owner, source.Repo, source.Number);
+            logger.LogError(ex, "Failed to notify Copilot on source issue");
+        }
+    }
+
+    // ── Comment helpers (tracking repo only) ────────────────────────────
+
+    private async Task PostCommentOnTrackingIssueAsync(TrackedJob tracked, string body)
+    {
+        if (tracked.TrackingIssueNumber is not { } issueNumber) return;
+
+        try
+        {
+            var ghClient = CreateGitHubClient();
+            var (trackingOwner, trackingRepo) = GetTrackingRepo();
+            await ghClient.Issue.Comment.Create(trackingOwner, trackingRepo, issueNumber, body);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to post comment on tracking issue #{Issue}", tracked.TrackingIssueNumber);
+        }
+    }
+
+    /// <summary>
+    /// Post a comment on the tracking repo. For commands that come from dotnet/runtime,
+    /// we don't reply there — we only communicate through the tracking issue.
+    /// If the command came from the tracking repo itself, reply directly on that issue.
+    /// </summary>
+    private async Task PostCommentOnTrackingRepoAsync(MentionSource source, string body)
+    {
+        if (IsTrackingRepo(source.Owner, source.Repo))
+        {
+            try
+            {
+                var ghClient = CreateGitHubClient();
+                await ghClient.Issue.Comment.Create(source.Owner, source.Repo, source.Number, body);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to post comment on {Owner}/{Repo}#{Number}",
+                    source.Owner, source.Repo, source.Number);
+            }
+        }
+        else
+        {
+            // For dotnet/runtime — log only, no comment posted
+            logger.LogInformation("Skipping reply on {Owner}/{Repo}#{Number} (not tracking repo): {Body}",
+                source.Owner, source.Repo, source.Number, body);
         }
     }
 
@@ -283,16 +415,38 @@ public sealed class JobTrackerService(
             **Options:**
             `-profiler` — enable perf profiler
             `-pr <number>` — target a specific PR
+            `-commits SHA1,SHA2,...` — specify commits to compare
             `-help` — show this help
 
             Targets can be prefixed with OS: `-windows_arm`, `-linux_intel`
             First unrecognized argument starts BDN arguments (e.g. `--filter "*MyBench*"`).
             """;
 
-        await PostCommentOnSourceAsync(source, help);
+        // Help is safe to post on the source repo since the user explicitly asked for it
+        try
+        {
+            var ghClient = CreateGitHubClient();
+            await ghClient.Issue.Comment.Create(source.Owner, source.Repo, source.Number, help);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to post help on {Owner}/{Repo}#{Number}",
+                source.Owner, source.Repo, source.Number);
+        }
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
+
+    private bool IsTrackingRepo(string owner, string repo)
+    {
+        var (trackingOwner, trackingRepo) = GetTrackingRepo();
+        return owner.Equals(trackingOwner, StringComparison.OrdinalIgnoreCase) &&
+               repo.Equals(trackingRepo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private (string Owner, string Repo) GetTrackingRepo() =>
+        (config["Github:TrackingRepo:Owner"] ?? "EgorBot",
+         config["Github:TrackingRepo:Name"] ?? "runtime-utils");
 
     private GitHubClient CreateGitHubClient()
     {
