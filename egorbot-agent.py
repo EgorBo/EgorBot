@@ -501,24 +501,28 @@ def install_dependencies():
 
     post_log(f"Installing dependencies for {TARGET_OS}...")
 
+    is_helix = os.environ.get("HELIX_WORKITEM_PAYLOAD") is not None
+    # On Helix, we don't have root — prepend sudo and ignore failures
+    sudo = "sudo " if is_helix else ""
+    chk = not is_helix  # check=False on Helix so failures don't abort
+
     if TARGET_OS == "linux":
         if shutil.which("apt"):
-            run("apt update")
-            # ninja-build is not installed by install-dependencies.sh yet :'(
-            run("apt install -y git zip ninja-build parallel")
+            run(f"{sudo}apt update", check=chk)
+            run(f"{sudo}apt install -y git zip ninja-build parallel", check=chk)
 
             # Install perf if it's not available and PERF_ENABLED is 1
             if CFG.perf_enabled and not shutil.which("perf"):
                 print("perf not found, installing linux-tools-generic and linux-cloud-tools-generic")
-                run("apt install -y linux-tools-generic linux-cloud-tools-generic", check=False)
+                run(f"{sudo}apt install -y linux-tools-generic linux-cloud-tools-generic", check=False)
                 run(
                     "bash -c 'ln -s /usr/lib/linux-tools/$(ls /usr/lib/linux-tools/ "
                     "| grep -v common | head -n 1) /usr/lib/linux-tools/$(uname -r) || true'",
                     check=False,
                 )
         elif shutil.which("dnf"):
-            run("dnf install -y git zip ninja-build parallel")
-            run("dnf install -y perl-open.noarch")  # for FlameGraph
+            run(f"{sudo}dnf install -y git zip ninja-build parallel", check=chk)
+            run(f"{sudo}dnf install -y perl-open.noarch", check=chk)  # for FlameGraph
         marker.touch()
 
     elif TARGET_OS == "osx":
@@ -718,7 +722,12 @@ def build_core_roots():
 
         # Install deps via runtime's own script (most deps come from here)
         if TARGET_OS != "windows":
-            run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir)
+            is_helix = os.environ.get("HELIX_WORKITEM_PAYLOAD") is not None
+            if is_helix:
+                # On Helix, install-dependencies.sh may fail without root — best effort
+                run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
+            else:
+                run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir)
 
         # Make it more resilient to warnings in case if we build old commits
         dbp = runtime_dir / "Directory.Build.props"
