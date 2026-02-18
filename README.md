@@ -9,7 +9,7 @@ Mostly intended for triaging performance regressions/improvements from PRs (befo
 Mention `@EgorBot` in a PR or issue comment with a C# benchmark snippet:
 
 ````
-@EgorBot -commits SHA1,main
+@EgorBot -arm -amd --envvars DOTNET_JitDisasm:Bench
 
 ```cs
 using BenchmarkDotNet.Attributes;
@@ -22,7 +22,7 @@ public class MyBenchmarks
 ```
 ````
 
-EgorBot will build `dotnet/runtime` for each commit, run the benchmarks, and post BDN results back as a comment.
+EgorBot will build `dotnet/runtime` for the PR and main (or each commit passed via `-commits`), run the benchmark, and post BDN results back as a comment. `--envvars` and other BDN arguments can be passed through to customize the run.
 
 ### Command format
 
@@ -32,19 +32,19 @@ EgorBot will build `dotnet/runtime` for each commit, run the benchmarks, and pos
 
 Everything after `@EgorBot` on the same line is parsed as space-separated tokens.
 A fenced code block (` ```cs `) in the same comment provides the benchmark source.
+Once EgorBot-specific options are no longer recognized, the remaining tokens are passed verbatim as arguments to BDN (e.g. `--filter "*MyBench*"`).
 
 ### Options
 
 | Option | Description |
 |---|---|
 | `-commits SHA1,SHA2,...` | Commits/branches to compare (comma or semicolon-separated). Supports `SHA~N` syntax. |
-| `-pr <number>` | Target a specific PR (builds `PR_<number>` merge commit). |
-| `-profiler` | Enable perf profiler (Linux only). Aliases: `-profile`, `-perf`. |
-| `-help` | Show a brief help message as a GitHub comment. |
+| `-pr <number>` | Target a specific PR (this argument is implied when running in a PR context). |
+| `-profiler` | Enable perf profiler (Linux only). |
 
 ### Targets
 
-Targets specify where to run. Format: `{os}_{cloud}_{cpu}`. If omitted, defaults to `macos26_helix_arm64`.
+Targets specify where to run. Format: `{os}_{cloud}_{cpu}`. If `os` is omitted, defaults to `ubuntu24`. If `cloud` is omitted, defaults to `azure`. If no target is specified at all it defaults to `macos26_helix_arm64` (baremetal Apple Silicon via Helix).
 
 You don't have to spell out the full name — EgorBot resolves shorthands:
 
@@ -54,10 +54,8 @@ You don't have to spell out the full name — EgorBot resolves shorthands:
 | `-amd` or `-x64` | `ubuntu24_azure_genoa` | Preferred AMD x64 |
 | `-intel` | `ubuntu24_azure_cascadelake` | Preferred Intel x64 |
 | `-genoa` | `ubuntu24_azure_genoa` | CPU suffix lookup |
-| `-graviton4` | `ubuntu24_aws_graviton4` | CPU suffix lookup |
 | `-cobalt100` | `ubuntu24_azure_cobalt100` | CPU suffix lookup |
 | `-azure_arm` | `ubuntu24_azure_cobalt100` | Cloud + vendor |
-| `-aws_intel` | `ubuntu24_aws_icelake` | Cloud + vendor |
 | `-windows_intel` | `windows_azure_cascadelake` | OS + vendor |
 | `-linux` | `ubuntu24_azure_genoa` | OS-only → preferred default |
 | `-windows` | `windows_azure_cascadelake` | OS-only → preferred default |
@@ -73,6 +71,7 @@ Full target list:
 | `ubuntu24_azure_ampere` | arm64 | Azure | Arm Ampere |
 | `windows_azure_cascadelake` | x64 | Azure | Intel Cascade Lake |
 | `windows_azure_genoa` | x64 | Azure | AMD Genoa |
+| | | | |
 | `ubuntu24_aws_sapphirelake` | x64 | AWS | Intel Sapphire Lake |
 | `ubuntu24_aws_icelake` | x64 | AWS | Intel Ice Lake |
 | `ubuntu24_aws_genoa` | x64 | AWS | AMD Genoa |
@@ -83,6 +82,7 @@ Full target list:
 | `ubuntu24_aws_graviton4` | arm64 | AWS | Arm Graviton 4 |
 | `windows_aws_icelake` | x64 | AWS | Intel Ice Lake |
 | `windows_aws_genoa` | x64 | AWS | AMD Genoa |
+| | | | |
 | `macos26_helix_arm64` | arm64 | Helix | Apple Silicon |
 | `macos26_helix_x64` | x64 | Helix | Intel |
 | `ubuntu24_helix_x64` | x64 | Helix | — |
@@ -92,6 +92,7 @@ Full target list:
 | `windows_helix_arm64` | arm64 | Helix | Arm |
 
 Multiple targets can be specified in a single command.
+NOTE: 
 
 ### Default behavior
 
@@ -112,25 +113,16 @@ Compare two specific commits on AMD Genoa:
 @EgorBot -genoa -commits abc1234,def5678
 ```
 
-Run with a custom filter on AWS Graviton 4 with profiling:
-````
-@EgorBot -aws_graviton4 -profiler --filter "*MyBench*"
-
-```cs
-using BenchmarkDotNet.Attributes;
-
-public class MyBenchmarks
-{
-    [Benchmark]
-    public int Bench() => 42;
-}
+Compare a specific commit against its previous commit on Cobalt 100:
 ```
-````
+@EgorBot -azure_arm -commits abc1234,abc1234~1
+```
 
-Run on Windows:
+Compare a range of commits on Apple Silicon via Helix:
 ```
-@EgorBot -windows -commits abc1234,main
+@EgorBot -arm -commits abc1234...def5678
 ```
+
 
 ## Architecture
 
