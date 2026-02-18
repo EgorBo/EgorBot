@@ -259,12 +259,16 @@ public sealed class JobTrackerService(
             string body;
             if (success)
             {
+                var logsLine = job.LogsBlobUrl is not null
+                    ? $"\n\n[Full logs]({job.LogsBlobUrl})"
+                    : "";
+
                 body = $"""
                     ## Results for `{job.Platform}`
 
                     @{tracked.Source.Author}
 
-                    {content ?? "_No results available._"}
+                    {content ?? "_No results available._"}{logsLine}
                     """;
             }
             else

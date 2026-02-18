@@ -61,12 +61,27 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
         {
             var label = item.StartsWith("PR_", StringComparison.OrdinalIgnoreCase)
                 ? $"PR #{item[3..]}"
-                : item == "main" ? "main" : item[..Math.Min(8, item.Length)];
+                : item == "main" ? "main" : TruncateCommitRef(item);
 
             labels[item] = label;
         }
 
         return labels;
+    }
+
+    /// <summary>
+    /// Truncate a commit ref like "abc123def0~1" to "abc123de~1" (8-char hash + suffix).
+    /// </summary>
+    private static string TruncateCommitRef(string item)
+    {
+        var tildeIdx = item.IndexOf('~');
+        if (tildeIdx > 0)
+        {
+            var sha = item[..tildeIdx];
+            var suffix = item[tildeIdx..];
+            return sha[..Math.Min(8, sha.Length)] + suffix;
+        }
+        return item[..Math.Min(8, item.Length)];
     }
 
     private static string PrettifyMarkdown(string markdown, Dictionary<string, string> labels)
@@ -111,6 +126,13 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
         // 6. Collapse multiple consecutive blank lines into at most one
         markdown = ConsecutiveBlankLines().Replace(markdown, "\n\n");
 
+        // 7. Remove leading/trailing blank lines inside fenced code blocks
+        markdown = CodeBlockLeadingBlanks().Replace(markdown, "$1");
+        markdown = CodeBlockTrailingBlanks().Replace(markdown, "\n$1");
+
+        // 8. Catch-all: any remaining /SOMETHING/corerun paths — extract directory name
+        markdown = AnyCorerunPath().Replace(markdown, "$1");
+
         return markdown.Trim();
     }
 
@@ -125,4 +147,17 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
 
     [GeneratedRegex(@"\n{3,}")]
     private static partial Regex ConsecutiveBlankLines();
+
+    [GeneratedRegex(@"(```\s*\w*\s*\n)\n+")]
+    private static partial Regex CodeBlockLeadingBlanks();
+
+    [GeneratedRegex(@"\n\n+(```)")]
+    private static partial Regex CodeBlockTrailingBlanks();
+
+    /// <summary>
+    /// Catch-all for any remaining /DIR/corerun or /DIR/corerun.exe paths.
+    /// Extracts just the parent directory name (e.g. "12f45a03~1").
+    /// </summary>
+    [GeneratedRegex(@"[^\s|`]*/([^/\\]+)/corerun(\.exe)?", RegexOptions.IgnoreCase)]
+    private static partial Regex AnyCorerunPath();
 }
