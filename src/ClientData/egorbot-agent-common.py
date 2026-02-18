@@ -321,9 +321,10 @@ def load_platform_module(target_os: str):
 
     spec = importlib.util.spec_from_file_location(f"platform_{target_os}", mod_path)
     mod = importlib.util.module_from_spec(spec)
-    # Inject a reference to the common module so platform code can use run(), download(), etc.
-    mod.common = sys.modules[__name__]
     spec.loader.exec_module(mod)
+    # Inject a reference to the common module AFTER exec so the module-level
+    # ``common = None`` placeholder doesn't overwrite our reference.
+    mod.common = sys.modules[__name__]
     return mod
 
 
