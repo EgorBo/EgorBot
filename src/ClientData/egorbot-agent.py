@@ -649,6 +649,7 @@ def install_dependencies():
         marker.touch()
 
     elif TARGET_OS == "osx":
+        run("brew install ninja", check=False)
         marker.touch()
 
     elif TARGET_OS == "windows":
