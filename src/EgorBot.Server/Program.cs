@@ -31,6 +31,7 @@ builder.Services.AddSingleton<ResultProcessor>();
 builder.Services.AddSingleton<LogUploadService>();
 builder.Services.AddSingleton<INotificationService, ConsoleNotificationService>();
 builder.Services.AddSingleton<INotificationService, TelegramNotificationService>();
+builder.Services.AddHostedService<TelegramCommandService>();
 builder.Services.AddSingleton<JobOrchestrator>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobOrchestrator>());
 
