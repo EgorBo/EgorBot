@@ -238,6 +238,30 @@ def _install_ninja_standalone():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Ensure Python is on PATH (for dotnet/runtime native build)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _ensure_python_on_path():
+    """
+    Make sure 'python' or 'python3' is discoverable on PATH.
+    The embeddable Python that runs the agent (downloaded by the bootstrap script)
+    may not be on PATH — add its directory so that dotnet/runtime's CMake build
+    can find it for native code generation steps.
+    """
+    import sys as _sys
+    if shutil.which("python") or shutil.which("python3"):
+        common.post_log(f"Python on PATH: {shutil.which('python') or shutil.which('python3')}")
+        return
+    # Add the directory of the currently-running Python executable to PATH
+    py_dir = os.path.dirname(_sys.executable)
+    if py_dir and os.path.isdir(py_dir):
+        os.environ["PATH"] = py_dir + os.pathsep + os.environ.get("PATH", "")
+        common.post_log(f"Added running Python to PATH: {py_dir} ({_sys.executable})")
+    else:
+        common.post_log(f"WARNING: Could not determine Python directory from {_sys.executable}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  PATH refresh
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -306,6 +330,10 @@ def install_platform_deps():
         _install_cmake_standalone()
         _install_ninja_standalone()
         _ensure_vs_build_tools()
+
+    # Ensure the Python that's running the agent is discoverable by subprocesses
+    # (dotnet/runtime's native build requires Python for code generation).
+    _ensure_python_on_path()
 
     # Locate and activate VS environment
     pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
