@@ -448,11 +448,11 @@ def send_results(*, success: bool, exit_code: int = 0) -> NoReturn:
         files = {}
         if zip_path.exists():
             files["artifacts"] = (zip_path.name, zip_path.read_bytes())
-        print(f"\n📤 Uploading results to {complete_url} ...")
+        post_log(f"Uploading results to {complete_url} ({zip_path.stat().st_size if zip_path.exists() else 0} bytes)...")
         if _post_multipart(complete_url, fields, files):
-            print("  ✅ Upload successful.")
+            post_log("Upload successful.")
         else:
-            print("  ⚠  Upload failed — results are still available locally.")
+            post_log("WARNING: Upload to /complete failed — results are still available locally.")
 
     if success:
         print(f"\n✅ Finished successfully.  Artefacts: {zip_path}")

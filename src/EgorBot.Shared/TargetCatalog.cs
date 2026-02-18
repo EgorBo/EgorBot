@@ -174,6 +174,14 @@ public static class TargetCatalog
         // 2. Parse into (os?, cloud?, cpu?) with normalization
         var (userOs, userCloud, cpu) = ParseSegments(clean);
 
+        // 2b. Bare "arm" or "arm64" (no OS, no cloud) → macOS Helix Arm64
+        if (userOs == null && userCloud == null
+            && cpu is "arm" or "arm64")
+        {
+            canonicalName = "macos26_helix_arm64";
+            return true;
+        }
+
         // 3. Apply defaults: OS → ubuntu24, Cloud → azure (macos26 → helix)
         var os = userOs ?? "ubuntu24";
         var cloud = userCloud ?? (os == "macos26" ? "helix" : "azure");
