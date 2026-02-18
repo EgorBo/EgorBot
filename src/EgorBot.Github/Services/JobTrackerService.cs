@@ -19,7 +19,6 @@ namespace EgorBot.Github.Services;
 /// </summary>
 public sealed class JobTrackerService(
     EgorBotClient botClient,
-    BenchmarkValidatorClient validatorClient,
     IConfiguration config,
     ILogger<JobTrackerService> logger) : IDisposable
 {
@@ -46,27 +45,6 @@ public sealed class JobTrackerService(
         // If the mention is in a tracking issue (in the tracking repo), try to infer
         // the source PR context from the issue title (e.g. "Benchmarks for dotnet/runtime#124445 ...")
         var effectiveCommand = TryInferPrFromTrackingIssue(source, command);
-
-        // 0. Validate the benchmark snippet before spawning any VMs
-        /* if (effectiveCommand.BenchmarkCode is not null)
-        {
-            var validation = await validatorClient.ValidateAsync(effectiveCommand.BenchmarkCode, effectiveCommand.BdnArguments);
-            if (validation is null)
-            {
-                logger.LogWarning("Benchmark validation service unreachable, proceeding without validation");
-            }
-            else if (!validation.IsValid)
-            {
-                logger.LogWarning("Benchmark validation failed for {Owner}/{Repo}#{Number}: {Error}",
-                    source.Owner, source.Repo, source.Number, validation.Error);
-                await PostCommentOnTrackingRepoAsync(source, $"⚠️ Benchmark validation failed:\n\n{validation.Error}");
-                return;
-            }
-            else
-            {
-                logger.LogInformation("Benchmark validated: {Count} benchmark(s)", validation.BenchmarkCount);
-            }
-        }*/
 
         // 1. Submit job to EgorBot.Server
         var response = await botClient.StartJobAsync(effectiveCommand, source.Author, source.HtmlUrl);
