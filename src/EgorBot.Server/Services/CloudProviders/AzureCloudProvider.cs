@@ -90,8 +90,9 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     private async Task<string> DownloadArmTemplateAsync(bool isWindows, CancellationToken ct)
     {
         var configKey = isWindows ? "Azure:WindowsArmTemplateUrl" : "Azure:ArmTemplateUrl";
-        var url = config[configKey]
-            ?? throw new InvalidOperationException($"{configKey} not configured.");
+        var url = config[configKey];
+        if (string.IsNullOrEmpty(url))
+            throw new InvalidOperationException($"{configKey} not configured.");
         using var http = new HttpClient();
         return await http.GetStringAsync(url, ct);
     }

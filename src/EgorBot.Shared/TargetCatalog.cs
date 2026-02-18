@@ -341,6 +341,16 @@ public static class TargetCatalog
             var withCloud = candidates.FirstOrDefault(t =>
                 ExtractCloudSegment(t.Name).Equals(cloudHint, StringComparison.OrdinalIgnoreCase));
             if (withCloud != null) return withCloud;
+
+            // No preferred default for the requested cloud — pick any target
+            // matching (vendor + OS + cloud), even if not preferred, rather than
+            // returning a target from the wrong cloud.
+            var anyWithCloud = Targets.Values
+                .Where(t => t.Name != "local")
+                .Where(t => t.CpuVendor == vendor)
+                .Where(t => t.OsFamily.Equals(osFamily, StringComparison.OrdinalIgnoreCase))
+                .FirstOrDefault(t => ExtractCloudSegment(t.Name).Equals(cloudHint, StringComparison.OrdinalIgnoreCase));
+            if (anyWithCloud != null) return anyWithCloud;
         }
 
         return candidates[0];
