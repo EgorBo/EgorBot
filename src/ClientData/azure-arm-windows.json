@@ -213,7 +213,7 @@
                 "autoUpgradeMinorVersion": true,
                 "settings": {},
                 "protectedSettings": {
-                    "commandToExecute": "powershell -ExecutionPolicy Bypass -Command \"Copy-Item C:\\AzureData\\CustomData.bin C:\\AzureData\\bootstrap.ps1; Start-Process powershell.exe -ArgumentList '-ExecutionPolicy Bypass -File C:\\AzureData\\bootstrap.ps1' -RedirectStandardOutput C:\\AzureData\\bootstrap.log -RedirectStandardError C:\\AzureData\\bootstrap_err.log\""
+                    "commandToExecute": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -Command \"Copy-Item C:\\AzureData\\CustomData.bin C:\\AzureData\\bootstrap.ps1; Start-Process C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ArgumentList '-ExecutionPolicy Bypass -File C:\\AzureData\\bootstrap.ps1' -RedirectStandardOutput C:\\AzureData\\bootstrap.log -RedirectStandardError C:\\AzureData\\bootstrap_err.log\""
                 }
             }
         }

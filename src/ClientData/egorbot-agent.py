@@ -276,10 +276,25 @@ def _to_ps_arg(arg: str) -> str:
     return arg
 
 
+def _find_powershell() -> str:
+    """Find a working PowerShell executable: pwsh (PS 7) → powershell (PS 5.1) → full paths."""
+    for candidate in [
+        "pwsh",                                                             # PS 7, usually on PATH
+        "powershell",                                                       # PS 5.1, usually on PATH
+        r"C:\Program Files\PowerShell\7\pwsh.exe",                          # PS 7 default install
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",       # PS 5.1 full path
+    ]:
+        if shutil.which(candidate) or os.path.isfile(candidate):
+            return candidate
+    return "powershell"  # last-resort fallback
+
+_POWERSHELL: str = ""  # resolved lazily in setup_environment()
+
+
 def dotnet_install_cmd(script: Path, *extra_args: str) -> str:
     if TARGET_OS == "windows":
         ps_args = " ".join(_to_ps_arg(a) for a in extra_args)
-        return (f"powershell -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = "
+        return (f'"{_POWERSHELL}" -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = '
                 f"[Net.SecurityProtocolType]::Tls12; & '{script}' {ps_args}\"")
     args = " ".join(extra_args)
     return f'bash "{script}" {args}'
@@ -477,6 +492,12 @@ def setup_environment(cfg: Config):
 
     TARGET_OS, TARGET_ARCH = detect_platform()
 
+    # Resolve PowerShell executable early (Windows only)
+    if TARGET_OS == "windows":
+        global _POWERSHELL
+        _POWERSHELL = _find_powershell()
+        post_log(f"Using PowerShell: {_POWERSHELL}")
+
     # Ensure HOME is set (cloud-init on some distros runs without it)
     if TARGET_OS != "windows" and not os.environ.get("HOME"):
         os.environ["HOME"] = str(Path.home()) if Path.home() != Path("/") else "/root"
@@ -616,70 +637,41 @@ def _ensure_winget():
     release from GitHub and install it (with its VCLibs/UI.Xaml dependencies).
     Returns True if winget is usable, False otherwise.
     """
-    if shutil.which("winget"):
+    def _try_run_winget() -> bool:
+        """Return True if winget can actually execute (not just exist on disk)."""
+        try:
+            r = subprocess.run(
+                ["winget", "--version"],
+                capture_output=True, text=True, timeout=15,
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    if shutil.which("winget") and _try_run_winget():
         return True
 
-    # Try the well-known WindowsApps location (Server 2025)
-    win_apps = os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                            "Microsoft", "WindowsApps")
-    if os.path.isdir(win_apps):
-        winget_path = os.path.join(win_apps, "winget.exe")
-        if os.path.isfile(winget_path):
-            os.environ["PATH"] = win_apps + os.pathsep + os.environ["PATH"]
-            post_log(f"Found winget at {winget_path}")
-            return True
-
-    # Broader search under ProgramFiles\WindowsApps (System-scope MSIX)
+    # Try the well-known WindowsApps locations (MSIX)
+    search_dirs: list[str] = []
+    local_apps = os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                              "Microsoft", "WindowsApps")
+    if os.path.isdir(local_apps):
+        search_dirs.append(local_apps)
     sys_apps = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
                             "WindowsApps")
     if os.path.isdir(sys_apps):
         for entry in os.listdir(sys_apps):
             if entry.startswith("Microsoft.DesktopAppInstaller_"):
-                candidate = os.path.join(sys_apps, entry, "winget.exe")
-                if os.path.isfile(candidate):
-                    os.environ["PATH"] = os.path.join(sys_apps, entry) + os.pathsep + os.environ["PATH"]
-                    post_log(f"Found winget at {candidate}")
-                    return True
+                search_dirs.append(os.path.join(sys_apps, entry))
 
-    # Download and install winget + dependencies from GitHub
-    post_log("winget not on PATH — installing from GitHub releases...")
-    try:
-        import urllib.request, tempfile, glob as _glob
-        tmp = tempfile.mkdtemp(prefix="winget_install_")
-
-        # 1. VCLibs dependency
-        vclibs_url = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
-        vclibs_path = os.path.join(tmp, "vclibs.appx")
-        urllib.request.urlretrieve(vclibs_url, vclibs_path)
-        run(f'powershell -Command "Add-AppxPackage -Path \'{vclibs_path}\'"', check=False)
-
-        # 2. Microsoft.UI.Xaml dependency
-        xaml_url = "https://www.nuget.org/api/v2/package/Microsoft.UI.Xaml/2.8.6"
-        xaml_zip = os.path.join(tmp, "uixaml.zip")
-        urllib.request.urlretrieve(xaml_url, xaml_zip)
-        import zipfile
-        with zipfile.ZipFile(xaml_zip, 'r') as zf:
-            zf.extractall(os.path.join(tmp, "uixaml"))
-        # Find the x64 appx inside the NuGet package
-        xaml_candidates = _glob.glob(os.path.join(tmp, "uixaml", "tools", "AppX",
-                                                   "x64", "Release", "*.appx"))
-        for appx in xaml_candidates:
-            run(f'powershell -Command "Add-AppxPackage -Path \'{appx}\'"', check=False)
-
-        # 3. winget itself (latest release)
-        winget_url = ("https://github.com/microsoft/winget-cli/releases/latest/"
-                      "download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle")
-        winget_bundle = os.path.join(tmp, "winget.msixbundle")
-        urllib.request.urlretrieve(winget_url, winget_bundle)
-        run(f'powershell -Command "Add-AppxPackage -Path \'{winget_bundle}\'"', check=False)
-
-        # Refresh PATH so the newly installed MSIX is visible
-        _refresh_windows_path()
-        if shutil.which("winget"):
-            post_log("winget installed successfully from GitHub releases")
-            return True
-    except Exception as ex:
-        post_log(f"WARNING: failed to install winget: {ex}")
+    for d in search_dirs:
+        candidate = os.path.join(d, "winget.exe")
+        if os.path.isfile(candidate):
+            os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
+            post_log(f"Found winget at {candidate}")
+            if _try_run_winget():
+                return True
+            post_log(f"winget exists at {candidate} but Access Denied (MSIX not registered for this user)")
 
     return False
 
@@ -746,11 +738,13 @@ def _install_windows_deps():
 
 def _refresh_windows_path():
     """
-    Re-read Machine and User PATH from the registry so that tools installed
-    by winget (which modify the registry but not the current process) become visible.
+    Merge Machine and User PATH from the registry into the current process
+    PATH so that tools installed by winget (which modify the registry but not
+    the current process) become visible, without losing inherent system dirs
+    like C:\\Windows\\System32.
     """
     import winreg
-    parts = []
+    registry_dirs: list[str] = []
     for hive, subkey in [
         (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
         (winreg.HKEY_CURRENT_USER, r"Environment"),
@@ -758,12 +752,20 @@ def _refresh_windows_path():
         try:
             with winreg.OpenKey(hive, subkey) as key:
                 val, _ = winreg.QueryValueEx(key, "Path")
-                parts.append(val)
+                for d in val.split(os.pathsep):
+                    d = d.strip()
+                    if d:
+                        registry_dirs.append(d)
         except OSError:
             pass
-    if parts:
-        os.environ["PATH"] = os.pathsep.join(parts)
-        post_log("Refreshed PATH from registry")
+    if not registry_dirs:
+        return
+    # Merge: keep existing PATH entries, append any new ones from registry
+    current = set(p.lower() for p in os.environ.get("PATH", "").split(os.pathsep))
+    new_entries = [d for d in registry_dirs if d.lower() not in current]
+    if new_entries:
+        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + os.pathsep.join(new_entries)
+    post_log(f"Refreshed PATH from registry (+{len(new_entries)} new entries)")
 
 
 def install_dependencies():
