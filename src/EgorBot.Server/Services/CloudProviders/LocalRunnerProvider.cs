@@ -90,14 +90,14 @@ public sealed class LocalRunnerProvider(IConfiguration config, ILogger<LocalRunn
         return Task.CompletedTask;
     }
 
-    /// <summary>Resolve the local path to egorbot-agent.py.</summary>
+    /// <summary>Resolve the local path to egorbot-agent-common.py.</summary>
     private string ResolveAgentPath()
     {
         var agentPath = config["EgorBot:AgentScriptLocalPath"];
         if (string.IsNullOrWhiteSpace(agentPath))
         {
             agentPath = Path.GetFullPath(Path.Combine(
-                AppContext.BaseDirectory, "..", "..", "..", "..", "..", "ClientData", "egorbot-agent.py"));
+                AppContext.BaseDirectory, "..", "..", "..", "..", "..", "ClientData", "egorbot-agent-common.py"));
         }
 
         if (!File.Exists(agentPath))

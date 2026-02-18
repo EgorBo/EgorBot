@@ -3,10 +3,15 @@
 Cross-platform rewrite of run.sh — builds dotnet/runtime core_roots for
 specified commits/PRs and runs BDN microbenchmarks against them.
 Requires only the Python 3 standard library (no pip install needed).
+
+This is the common module shared by all platforms.  Platform-specific
+helpers live in egorbot-agent-{windows,linux,macos}.py and are loaded
+at runtime via ``load_platform_module``.
 """
 
 import argparse
 import glob as globmod
+import importlib.util
 import io
 import json
 import os
@@ -26,10 +31,10 @@ from typing import List, NoReturn, Optional
 # ═══════════════════════════════════════════════════════════════════════════════
 # Example usage:
 #   (1) With custom benchmark snippet:
-#       python egorbot-agent.py --job_tag my_test1 --gh_commits_and_prs "PR_12345;main" --bench_code_file ./MyBenchmark.cs
+#       python egorbot-agent-common.py --job_tag my_test1 --gh_commits_and_prs "PR_12345;main" --bench_code_file ./MyBenchmark.cs
 #
 #   (2) With dotnet/performance benchmarks for a27de4a and its previous commits:
-#       python egorbot-agent.py --job_tag my_test2 --gh_commits_and_prs "a27de4a;a27de4a~1;a27de4a~2"
+#       python egorbot-agent-common.py --job_tag my_test2 --gh_commits_and_prs "a27de4a;a27de4a~1;a27de4a~2"
 #
 # BDN arguments are read from BDN_ARGS.rsp file from current dir.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -124,6 +129,9 @@ CORE_ROOTS_DIR: Path
 TARGET_OS: str
 TARGET_ARCH: str
 CFG: Config
+
+# ── Platform module (loaded in setup_environment()) ─────────────────────────
+_platform_mod = None  # type: ignore
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -269,6 +277,17 @@ def make_script(name: str) -> str:
     return f"{name}.cmd" if TARGET_OS == "windows" else f"./{name}.sh"
 
 
+def dotnet_install_cmd(script: Path, *extra_args: str) -> str:
+    """Build the command to invoke dotnet-install.{ps1,sh}."""
+    if TARGET_OS == "windows":
+        ps_args = " ".join(_to_ps_arg(a) for a in extra_args)
+        ps = _platform_mod.POWERSHELL if _platform_mod else "powershell"
+        return (f'"{ps}" -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = '
+                f"[Net.SecurityProtocolType]::Tls12; & '{script}' {ps_args}\"")
+    args = " ".join(extra_args)
+    return f'bash "{script}" {args}'
+
+
 def _to_ps_arg(arg: str) -> str:
     """Convert a bash-style ``--kebab-arg`` to PowerShell ``-PascalArg``."""
     if arg.startswith("--"):
@@ -276,28 +295,36 @@ def _to_ps_arg(arg: str) -> str:
     return arg
 
 
-def _find_powershell() -> str:
-    """Find a working PowerShell executable: pwsh (PS 7) → powershell (PS 5.1) → full paths."""
-    for candidate in [
-        "pwsh",                                                             # PS 7, usually on PATH
-        "powershell",                                                       # PS 5.1, usually on PATH
-        r"C:\Program Files\PowerShell\7\pwsh.exe",                          # PS 7 default install
-        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",       # PS 5.1 full path
-    ]:
-        if shutil.which(candidate) or os.path.isfile(candidate):
-            return candidate
-    return "powershell"  # last-resort fallback
+def load_platform_module(target_os: str):
+    """
+    Dynamically load the platform-specific module from the same directory.
+    Maps: "windows" → egorbot-agent-windows.py
+          "linux"   → egorbot-agent-linux.py
+          "osx"     → egorbot-agent-macos.py
+    """
+    os_to_file = {
+        "windows": "egorbot-agent-windows.py",
+        "linux":   "egorbot-agent-linux.py",
+        "osx":     "egorbot-agent-macos.py",
+    }
+    filename = os_to_file.get(target_os)
+    if not filename:
+        post_log(f"WARNING: No platform module for OS '{target_os}'")
+        return None
 
-_POWERSHELL: str = ""  # resolved lazily in setup_environment()
+    # Look next to this script
+    script_dir = Path(__file__).parent
+    mod_path = script_dir / filename
+    if not mod_path.exists():
+        post_log(f"WARNING: Platform module not found: {mod_path}")
+        return None
 
-
-def dotnet_install_cmd(script: Path, *extra_args: str) -> str:
-    if TARGET_OS == "windows":
-        ps_args = " ".join(_to_ps_arg(a) for a in extra_args)
-        return (f'"{_POWERSHELL}" -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = '
-                f"[Net.SecurityProtocolType]::Tls12; & '{script}' {ps_args}\"")
-    args = " ".join(extra_args)
-    return f'bash "{script}" {args}'
+    spec = importlib.util.spec_from_file_location(f"platform_{target_os}", mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    # Inject a reference to the common module so platform code can use run(), download(), etc.
+    mod.common = sys.modules[__name__]
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -484,7 +511,7 @@ def send_results(*, success: bool, exit_code: int = 0) -> NoReturn:
 def setup_environment(cfg: Config):
     """Detect platform, create working directories, set global .NET env vars."""
     global WORK_DIR, ARTIFACTS_DIR, DIR_BENCHAPP, CORE_ROOTS_DIR
-    global TARGET_OS, TARGET_ARCH, CFG
+    global TARGET_OS, TARGET_ARCH, CFG, _platform_mod
 
     CFG = cfg
     WORK_DIR = Path(cfg.work_dir).resolve()
@@ -492,21 +519,10 @@ def setup_environment(cfg: Config):
 
     TARGET_OS, TARGET_ARCH = detect_platform()
 
-    # Resolve PowerShell executable early (Windows only)
-    if TARGET_OS == "windows":
-        global _POWERSHELL
-        _POWERSHELL = _find_powershell()
-        post_log(f"Using PowerShell: {_POWERSHELL}")
-
-    # Ensure HOME is set (cloud-init on some distros runs without it)
-    if TARGET_OS != "windows" and not os.environ.get("HOME"):
-        os.environ["HOME"] = str(Path.home()) if Path.home() != Path("/") else "/root"
-
-    # Ensure Homebrew is on PATH for macOS (Helix machines may not have it in PATH)
-    if TARGET_OS == "osx":
-        for brew_dir in ("/opt/homebrew/bin", "/usr/local/bin"):
-            if os.path.isfile(os.path.join(brew_dir, "brew")) and brew_dir not in os.environ.get("PATH", ""):
-                os.environ["PATH"] = brew_dir + os.pathsep + os.environ.get("PATH", "")
+    # Load platform-specific module
+    _platform_mod = load_platform_module(TARGET_OS)
+    if _platform_mod and hasattr(_platform_mod, "setup_platform"):
+        _platform_mod.setup_platform()
 
     ARTIFACTS_DIR  = WORK_DIR / "artifacts"
     DIR_BENCHAPP   = WORK_DIR / "benchapp"
@@ -523,294 +539,8 @@ def setup_environment(cfg: Config):
 ########################################################################################
 ##
 ## Install dependencies
-## NOTE: most deps are installed by 'eng/common/native/install-dependencies.sh'
 ##
 ########################################################################################
-
-def _ensure_vs_build_tools():
-    """
-    Ensure Visual Studio Build Tools with C++ workload is available on Windows.
-    The dotnet/runtime native build (init-vs-env.cmd) requires vswhere.exe at
-    %ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe.
-    If it's missing, download it.  If VS Build Tools aren't installed at all,
-    install them with the C++ workload.
-    """
-    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-    installer_dir = os.path.join(pf86, "Microsoft Visual Studio", "Installer")
-    vswhere_exe = os.path.join(installer_dir, "vswhere.exe")
-
-    # ── Step 1: ensure vswhere.exe exists ─────────────────────────────────
-    if not os.path.isfile(vswhere_exe):
-        post_log("vswhere.exe not found, downloading...")
-        os.makedirs(installer_dir, exist_ok=True)
-        vswhere_url = "https://netcorenativeassets.blob.core.windows.net/resource-packages/external/windows/vswhere/3.1.7/vswhere.exe"
-        try:
-            download(vswhere_url, Path(vswhere_exe))
-        except Exception as e:
-            post_log(f"WARNING: Failed to download vswhere.exe: {e}")
-            return
-
-    # ── Step 2: check if VS with C++ tools is already installed ───────────
-    result = subprocess.run(
-        [vswhere_exe, "-latest", "-prerelease", "-products", "*",
-         "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-         "-property", "installationPath"],
-        capture_output=True, text=True
-    )
-    vs_path = result.stdout.strip()
-    if vs_path and os.path.isdir(vs_path):
-        post_log(f"VS Build Tools found at {vs_path}")
-        _activate_vs_environment(vs_path)
-        return
-
-    # ── Step 3: install VS Build Tools with C++ workload ──────────────────
-    post_log("VS Build Tools with C++ not found — installing (this may take 10-20 min)...")
-    vs_installer_url = "https://aka.ms/vs/17/release/vs_BuildTools.exe"
-    vs_installer = WORK_DIR / "vs_BuildTools.exe"
-    try:
-        download(vs_installer_url, vs_installer)
-    except Exception as e:
-        post_log(f"WARNING: Failed to download VS Build Tools installer: {e}")
-        return
-
-    # Install only the C++ workload (VCTools) and the Windows SDK
-    run(f'"{vs_installer}" --quiet --wait --norestart '
-        '--add Microsoft.VisualStudio.Workload.VCTools '
-        '--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 '
-        '--add Microsoft.VisualStudio.Component.Windows11SDK.26100 '
-        '--includeRecommended',
-        check=False)
-
-    # Re-run vswhere to find the newly installed path
-    result = subprocess.run(
-        [vswhere_exe, "-latest", "-prerelease", "-products", "*",
-         "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-         "-property", "installationPath"],
-        capture_output=True, text=True
-    )
-    vs_path = result.stdout.strip()
-    if vs_path and os.path.isdir(vs_path):
-        post_log(f"VS Build Tools installed at {vs_path}")
-        _activate_vs_environment(vs_path)
-    else:
-        post_log("WARNING: VS Build Tools installation may have failed — build.cmd will likely fail")
-
-
-def _activate_vs_environment(vs_path: str):
-    """
-    Run VsDevCmd.bat and capture the resulting environment variables so that
-    init-vs-env.cmd in dotnet/runtime sees VisualStudioVersion already set
-    and skips its own vswhere lookup.
-    """
-    vsdevcmd = os.path.join(vs_path, "Common7", "Tools", "VsDevCmd.bat")
-    if not os.path.isfile(vsdevcmd):
-        post_log(f"WARNING: VsDevCmd.bat not found at {vsdevcmd}")
-        return
-
-    # Run VsDevCmd.bat and dump the resulting environment
-    result = subprocess.run(
-        f'cmd /c ""{vsdevcmd}" -no_logo && set"',
-        capture_output=True, text=True, shell=True
-    )
-    if result.returncode != 0:
-        post_log("WARNING: VsDevCmd.bat failed")
-        return
-
-    # Parse the environment and import key VS/MSVC variables
-    for line in result.stdout.splitlines():
-        if '=' not in line:
-            continue
-        key, _, value = line.partition('=')
-        # Import all VS-related variables plus PATH, INCLUDE, LIB, LIBPATH
-        if key.upper() in ("PATH", "INCLUDE", "LIB", "LIBPATH") or \
-           key.upper().startswith(("VS", "VC", "VSCMD", "VISUAL")):
-            os.environ[key] = value
-
-    post_log(f"VS environment activated (VisualStudioVersion={os.environ.get('VisualStudioVersion', '?')})")
-
-
-def _ensure_winget():
-    """
-    Check if winget is usable.  Returns True only if winget is already on PATH
-    and can actually execute.  On Windows Server, cloud-init scripts run as
-    SYSTEM which cannot execute MSIX apps like winget — so we don't bother
-    scanning WindowsApps folders (they'll always fail with Access Denied).
-    """
-    if shutil.which("winget"):
-        try:
-            r = subprocess.run(
-                ["winget", "--version"],
-                capture_output=True, text=True, timeout=15,
-            )
-            if r.returncode == 0:
-                post_log(f"winget available: {r.stdout.strip()}")
-                return True
-        except Exception:
-            pass
-    post_log("winget not usable (SYSTEM account cannot run MSIX apps)")
-    return False
-
-    return False
-
-
-def _install_git_standalone():
-    """Download and silently install Git for Windows (portable) if not already available."""
-    if shutil.which("git"):
-        post_log(f"Git already available: {shutil.which('git')}")
-        return
-    post_log("Installing Git for Windows (portable)...")
-    git_ver = "2.47.1"
-    git_url = f"https://github.com/git-for-windows/git/releases/download/v{git_ver}.windows.1/PortableGit-{git_ver}-64-bit.7z.exe"
-    git_dir = WORK_DIR / "PortableGit"
-    git_archive = WORK_DIR / "PortableGit.exe"
-    try:
-        download(git_url, git_archive)
-        # PortableGit self-extracting 7z: -y = yes to all, -o = output dir
-        run(f'"{git_archive}" -y -o"{git_dir}"', check=False)
-        git_bin = git_dir / "cmd"
-        if git_bin.is_dir():
-            os.environ["PATH"] = str(git_bin) + os.pathsep + os.environ["PATH"]
-            post_log(f"Git installed at {git_bin}")
-        else:
-            post_log("WARNING: Git extraction may have failed")
-    except Exception as e:
-        post_log(f"WARNING: Failed to install Git: {e}")
-
-
-def _install_cmake_standalone():
-    """Download and install CMake if not already available."""
-    if shutil.which("cmake"):
-        post_log(f"CMake already available: {shutil.which('cmake')}")
-        return
-    post_log("Installing CMake...")
-    cmake_ver = "3.31.4"
-    cmake_url = f"https://github.com/Kitware/CMake/releases/download/v{cmake_ver}/cmake-{cmake_ver}-windows-x86_64.zip"
-    cmake_zip = WORK_DIR / "cmake.zip"
-    cmake_dir = WORK_DIR / "cmake"
-    try:
-        download(cmake_url, cmake_zip)
-        import zipfile
-        with zipfile.ZipFile(cmake_zip, 'r') as zf:
-            zf.extractall(cmake_dir)
-        # The zip contains cmake-ver-windows-x86_64/bin/cmake.exe
-        for d in cmake_dir.rglob("cmake.exe"):
-            bin_dir = str(d.parent)
-            os.environ["PATH"] = bin_dir + os.pathsep + os.environ["PATH"]
-            post_log(f"CMake installed at {bin_dir}")
-            break
-    except Exception as e:
-        post_log(f"WARNING: Failed to install CMake: {e}")
-
-
-def _install_ninja_standalone():
-    """Download and install Ninja if not already available."""
-    if shutil.which("ninja"):
-        post_log(f"Ninja already available: {shutil.which('ninja')}")
-        return
-    post_log("Installing Ninja...")
-    ninja_url = "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip"
-    ninja_zip = WORK_DIR / "ninja.zip"
-    ninja_dir = WORK_DIR / "ninja"
-    try:
-        download(ninja_url, ninja_zip)
-        import zipfile
-        with zipfile.ZipFile(ninja_zip, 'r') as zf:
-            zf.extractall(ninja_dir)
-        os.environ["PATH"] = str(ninja_dir) + os.pathsep + os.environ["PATH"]
-        post_log(f"Ninja installed at {ninja_dir}")
-    except Exception as e:
-        post_log(f"WARNING: Failed to install Ninja: {e}")
-
-
-def _install_windows_deps():
-    """
-    Install all Windows build dependencies, then activate VS environment.
-    Tools: Git, CMake, Ninja (standalone downloads), VS Build Tools (direct installer).
-    If winget is available, use it for everything; otherwise fall back to direct downloads.
-    """
-    use_winget = _ensure_winget()
-
-    if use_winget:
-        post_log("Installing Windows build dependencies via winget...")
-        for pkg in ["Git.Git", "Kitware.CMake", "Ninja-build.Ninja", "Python.Python.3.11"]:
-            run(f'winget install -e --id {pkg} --accept-source-agreements --accept-package-agreements',
-                check=False)
-        _refresh_windows_path()
-
-        post_log("Installing Visual Studio 2022 Community with C++ workload (this may take 10-20 min)...")
-        run(
-            'winget install -e --id Microsoft.VisualStudio.2022.Community '
-            '--accept-source-agreements --accept-package-agreements '
-            '--override "'
-            '--quiet --wait --norestart '
-            '--add Microsoft.VisualStudio.Workload.NativeDesktop '
-            '--includeRecommended'
-            '"',
-            check=False,
-        )
-    else:
-        post_log("winget not available — installing tools via direct download...")
-        _install_git_standalone()
-        _install_cmake_standalone()
-        _install_ninja_standalone()
-        _ensure_vs_build_tools()
-
-    # Locate and activate VS environment
-    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-    vswhere_exe = os.path.join(pf86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
-
-    # winget VS install puts vswhere in the Installer dir; also check PATH
-    if not os.path.isfile(vswhere_exe) and shutil.which("vswhere"):
-        vswhere_exe = shutil.which("vswhere")
-
-    if os.path.isfile(vswhere_exe):
-        result = subprocess.run(
-            [vswhere_exe, "-latest", "-prerelease", "-products", "*",
-             "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-             "-property", "installationPath"],
-            capture_output=True, text=True
-        )
-        vs_path = result.stdout.strip()
-        if vs_path and os.path.isdir(vs_path):
-            post_log(f"VS 2022 found at {vs_path}")
-            _activate_vs_environment(vs_path)
-        else:
-            post_log("WARNING: VS installed but vswhere can't find VC tools — build.cmd may fail")
-    else:
-        post_log("WARNING: vswhere not found after VS install — build.cmd may fail")
-
-
-def _refresh_windows_path():
-    """
-    Merge Machine and User PATH from the registry into the current process
-    PATH so that tools installed by winget (which modify the registry but not
-    the current process) become visible, without losing inherent system dirs
-    like C:\\Windows\\System32.
-    """
-    import winreg
-    registry_dirs: list[str] = []
-    for hive, subkey in [
-        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
-        (winreg.HKEY_CURRENT_USER, r"Environment"),
-    ]:
-        try:
-            with winreg.OpenKey(hive, subkey) as key:
-                val, _ = winreg.QueryValueEx(key, "Path")
-                for d in val.split(os.pathsep):
-                    d = d.strip()
-                    if d:
-                        registry_dirs.append(d)
-        except OSError:
-            pass
-    if not registry_dirs:
-        return
-    # Merge: keep existing PATH entries, append any new ones from registry
-    current = set(p.lower() for p in os.environ.get("PATH", "").split(os.pathsep))
-    new_entries = [d for d in registry_dirs if d.lower() not in current]
-    if new_entries:
-        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + os.pathsep.join(new_entries)
-    post_log(f"Refreshed PATH from registry (+{len(new_entries)} new entries)")
-
 
 def install_dependencies():
     # On local runs (callback to localhost), don't kill dotnet — it would kill the web server!
@@ -826,43 +556,12 @@ def install_dependencies():
 
     post_log(f"Installing dependencies for {TARGET_OS}...")
 
-    is_helix = os.environ.get("HELIX_WORKITEM_PAYLOAD") is not None
-    # On Helix, we don't have root — prepend sudo and ignore failures
-    chk = not is_helix  # check=False on Helix so failures don't abort
-
-    if TARGET_OS == "linux":
-        if shutil.which("apt"):
-            run(f"sudo apt update", check=chk)
-            run(f"sudo apt install -y git zip ninja-build", check=chk)
-
-            # Install perf if it's not available and PERF_ENABLED is 1
-            if CFG.perf_enabled and not shutil.which("perf"):
-                print("perf not found, installing linux-tools-common, linux-tools-generic and linux-cloud-tools-generic")
-                run(f"sudo apt install -y linux-tools-common linux-tools-generic linux-cloud-tools-generic", check=False)
-                run(
-                    "bash -c 'ln -s /usr/lib/linux-tools/$(ls /usr/lib/linux-tools/ "
-                    "| grep -v common | head -n 1) /usr/lib/linux-tools/$(uname -r) || true'",
-                    check=False,
-                )
-        elif shutil.which("tdnf"):
-            run(f"sudo tdnf install -y git zip ninja-build", check=chk)
-            run(f"sudo tdnf tdnf update -y", check=chk)
-        elif shutil.which("dnf"):
-            run(f"sudo dnf install -y git zip ninja-build", check=chk)
-            # run(f"sudo dnf install -y perl-open.noarch", check=chk)  # for FlameGraph
-        marker.touch()
-
-    elif TARGET_OS == "osx":
-        run("brew install ninja", check=False)
-        marker.touch()
-
-    elif TARGET_OS == "windows":
-        _install_windows_deps()
-        marker.touch()
-
+    if _platform_mod and hasattr(_platform_mod, "install_platform_deps"):
+        _platform_mod.install_platform_deps()
     else:
-        print(f"❌ Unsupported TARGET_OS: {TARGET_OS}")
-        send_results(success=False, exit_code=1)
+        post_log(f"WARNING: No platform module or install_platform_deps for {TARGET_OS}")
+
+    marker.touch()
 
 
 ########################################################################################
@@ -1205,243 +904,6 @@ def run_benchmarks(bench_args: List[str]):
         shutil.copy2(src, ARTIFACTS_DIR)
 
 
-########################################################################################
-##
-## Perf profiling (Linux + code-snippet mode only)
-##
-########################################################################################
-
-def run_perf_profiling():
-    """
-    Run 'perf record' profiling for each core_root and each benchmark.
-    Generates flamegraph (.svg), annotated assembly (.asm), speedscope data,
-    function report, and perf stat.  All artefacts are placed into
-    ARTIFACTS_DIR/perf/ and will be included in the final zip.
-
-    Only runs when:
-      - TARGET_OS == "linux"
-      - perf_enabled is True
-      - code-snippet mode (not dotnet/performance)
-    """
-    if TARGET_OS != "linux":
-        post_log("[PERF] Profiling is only supported on Linux, skipping")
-        return
-    if CFG.bench_use_dotnet_performance:
-        post_log("[PERF] Profiling is not supported for dotnet/performance benchmarks, skipping")
-        return
-
-    # Relax perf restrictions (may fail on Helix without root)
-    run("sudo sysctl -w kernel.perf_event_paranoid=-1", check=False)
-    run("sudo sysctl -w kernel.kptr_restrict=0", check=False)
-
-    # Ensure perf is on PATH (some distros install it outside $PATH)
-    if not shutil.which("perf"):
-        for p in sorted(Path("/usr/lib").glob("linux-tools-*/perf")):
-            parent = str(p.parent)
-            if parent not in os.environ.get("PATH", ""):
-                os.environ["PATH"] = parent + os.pathsep + os.environ["PATH"]
-            break
-        # Also try the generic tools path
-        generic_path = "/usr/lib/linux-tools-*/perf"
-        for p in sorted(Path("/usr/lib").glob("linux-tools/*/perf")):
-            parent = str(p.parent)
-            if parent not in os.environ.get("PATH", ""):
-                os.environ["PATH"] = parent + os.pathsep + os.environ["PATH"]
-            break
-
-    if not shutil.which("perf"):
-        post_log("[PERF] perf not found even after PATH fix, skipping profiling")
-        return
-
-    post_log(f"[PERF] perf found at: {shutil.which('perf')}")
-
-    # Clone FlameGraph repo for stackcollapse-perf.pl and flamegraph.pl
-    flamegraph_dir = DIR_BENCHAPP / "FlameGraph"
-    if not flamegraph_dir.is_dir():
-        run(f'git clone --depth 1 https://github.com/brendangregg/FlameGraph "{flamegraph_dir}"')
-
-    # Publish benchmark app as self-contained (needed for corerun to run it)
-    rid = f"{TARGET_OS}-{TARGET_ARCH}"
-    result = run(f"dotnet publish -c Release -r {rid} -f {CFG.bench_tfm} --sc",
-                 cwd=DIR_BENCHAPP, check=False)
-    if result.returncode != 0:
-        post_log("[PERF] Failed to publish benchmark app, skipping profiling")
-        return
-
-    publish_dir = DIR_BENCHAPP / "bin" / "Release" / CFG.bench_tfm / rid / "publish"
-    bench_dll = publish_dir / "benchapp.dll"
-    if not bench_dll.exists():
-        post_log(f"[PERF] Published DLL not found at {bench_dll}, skipping")
-        return
-
-    # Copy NuGet.config from runtime repo if available
-    runtime_nuget = WORK_DIR / "runtime" / "NuGet.config"
-    if runtime_nuget.exists():
-        shutil.copy2(runtime_nuget, DIR_BENCHAPP / "NuGet.config")
-
-    # Read benchmark list
-    all_benchmarks_file = WORK_DIR / "all_benchmarks.txt"
-    benchmarks = [l.strip() for l in all_benchmarks_file.read_text().splitlines() if l.strip()]
-
-    if len(benchmarks) > 5:
-        post_log(f"[PERF] Too many benchmarks ({len(benchmarks)} > 5) for profiling, skipping")
-        return
-
-    # Gather core_root paths — if none exist, profile the published app directly via dotnet
-    corerun_paths = sorted(globmod.glob(str(CORE_ROOTS_DIR / "*" / make_exe("corerun"))))
-    if not corerun_paths:
-        # No core_roots: single "default" entry that will use dotnet directly
-        run_entries = [("default", None)]
-    else:
-        run_entries = [(Path(p).parent.name, p) for p in corerun_paths]
-
-    perf_record_args = CFG.perf_record_args or "-e cpu-clock"
-    high_freq = int(CFG.perf_record_freq) if CFG.perf_record_freq else 1999
-    low_freq = 299
-
-    perf_out_dir = ARTIFACTS_DIR / "perf"
-    perf_out_dir.mkdir(parents=True, exist_ok=True)
-
-    for label, corerun_path in run_entries:
-
-        for bdnline in benchmarks:
-            bdnline_escaped = re_mod.sub(r'[^a-zA-Z0-9]', '_', bdnline)
-            bench_dir = perf_out_dir / f"PerfBench__{bdnline_escaped}"
-            bench_dir.mkdir(parents=True, exist_ok=True)
-
-            post_log(f"[PERF] Profiling: {label} / {bdnline}")
-
-            kill_process_by_name("corerun")
-            kill_process_by_name("dotnet")
-            time.sleep(3)
-
-            # Run benchmark in infinite-iteration mode with perf map env vars
-            perf_env = {
-                **os.environ,
-                "DOTNET_JitEnableOptionalRelocs": "0",
-                "DOTNET_JitStdOutFile": "",
-                "DOTNET_PerfMapShowOptimizationTiers": "1",
-                "DOTNET_PerfMapStubGranularity": "3",
-                "DOTNET_JitFramed": "1",
-                "DOTNET_PerfMapEnabled": "1",
-                "DOTNET_EnableWriteXorExecute": "0",
-            }
-
-            bdn_artifacts = bench_dir / "bdn_scratch"
-
-            if corerun_path:
-                # Use corerun from core_root
-                bench_cmd = [
-                    str(corerun_path), str(bench_dll),
-                    "--filter", bdnline, "-i",
-                    "--noForcedGCs", "--noOverheadEvaluation", "--disableLogFile",
-                    "--maxWarmupCount", "8",
-                    "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
-                    "-a", str(bdn_artifacts),
-                ]
-                target_process = "corerun"
-            else:
-                # No core_root — run the published app directly via dotnet
-                bench_cmd = [
-                    "dotnet", str(bench_dll),
-                    "--filter", bdnline, "-i",
-                    "--noForcedGCs", "--noOverheadEvaluation", "--disableLogFile",
-                    "--maxWarmupCount", "8",
-                    "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
-                    "-a", str(bdn_artifacts),
-                ]
-                target_process = "dotnet"
-
-            proc = subprocess.Popen(
-                bench_cmd, env=perf_env, cwd=DIR_BENCHAPP,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-
-            post_log(f"[PERF]   Waiting 40s for warmup (PID={proc.pid})...")
-            time.sleep(40)
-
-            if proc.poll() is not None:
-                post_log(f"[PERF]   Process exited early (code {proc.returncode}), skipping")
-                continue
-
-            pid = proc.pid
-            perf_data = bench_dir / "perf.data"
-            perf_small = bench_dir / "perf_small.data"
-
-            # High-frequency perf record (for flamegraph & asm)
-            post_log(f"[PERF]   Recording high-freq (-F {high_freq}) for 5s...")
-            run(f"perf record {perf_record_args} -k 1 -g -F {high_freq} -p {pid} -o {perf_data} sleep 5",
-                check=False)
-            time.sleep(2)
-
-            # Low-frequency perf record (for speedscope — large files crash it)
-            post_log(f"[PERF]   Recording low-freq (-F {low_freq}) for 3s...")
-            run(f"perf record {perf_record_args} -k 1 -g -F {low_freq} -p {pid} -o {perf_small} sleep 3",
-                check=False)
-            time.sleep(2)
-
-            # Perf stat (hardware counters)
-            stats_file = bench_dir / f"{label}.stats"
-            run(f"perf stat -o {stats_file} -p {pid} sleep 6", check=False)
-
-            # List available perf counters
-            perf_list_file = bench_dir / f"{label}.perf_list.txt"
-            run(f"perf list", check=False, stdout_file=perf_list_file)
-
-            # Kill the benchmark process
-            post_log("[PERF]   Killing benchmark process...")
-            try:
-                proc.kill()
-                proc.wait(timeout=10)
-            except Exception:
-                pass
-            kill_process_by_name(target_process)
-            time.sleep(2)
-
-            # Symbolize with perf inject (JIT support)
-            perfjit = bench_dir / "perfjit.data"
-            perfjit_small = bench_dir / "perfjit_small.data"
-            run(f"perf inject --input {perf_data} --jit --output {perfjit}", check=False)
-            run(f"perf inject --input {perf_small} --jit --output {perfjit_small}", check=False)
-
-            # Function report (text)
-            functions_file = bench_dir / f"{label}_functions.txt"
-            run(f"perf report --input {perfjit} --no-children --percent-limit 2 --stdio",
-                check=False, stdout_file=functions_file)
-
-            # Hot assembly annotation
-            asm_file = bench_dir / f"{label}.asm"
-            run(f"perf annotate --stdio2 -i {perfjit} --percent-limit 2 -M intel",
-                check=False, stdout_file=asm_file)
-
-            # Flamegraph (interactive SVG)
-            svg_file = bench_dir / f"{label}_flamegraph.svg"
-            run(f"perf script -i {perfjit} | "
-                f"{flamegraph_dir}/stackcollapse-perf.pl | "
-                f"{flamegraph_dir}/flamegraph.pl",
-                check=False, stdout_file=svg_file)
-
-            # Speedscope (collapsed stacks)
-            speedscope_file = bench_dir / f"speedscope_{label}_{CFG.job_id}.speedscope"
-            run(f"perf script -i {perfjit_small} | "
-                f"{flamegraph_dir}/stackcollapse-perf.pl",
-                check=False, stdout_file=speedscope_file)
-
-            # Clean up large binary perf data files (don't ship them in the zip)
-            for f in [perf_data, perf_small, perfjit, perfjit_small]:
-                if f.exists():
-                    try:
-                        f.unlink()
-                    except Exception:
-                        pass
-
-            # Clean up BDN scratch directory
-            if bdn_artifacts.exists():
-                shutil.rmtree(bdn_artifacts, ignore_errors=True)
-
-    post_log("[PERF] Profiling completed ✓")
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Entry point
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1501,10 +963,10 @@ def main(cfg: Optional[Config] = None):
     run_benchmarks(bench_args)
     post_log("[STAGE 6/6] Benchmarks completed ✓")
 
-    # Run perf profiling if enabled (Linux + code-snippet mode only)
-    if cfg.perf_enabled:
+    # Run perf profiling if enabled (Linux only — delegated to platform module)
+    if cfg.perf_enabled and _platform_mod and hasattr(_platform_mod, "run_perf_profiling"):
         post_log("[PERF] Starting perf profiling stage...")
-        run_perf_profiling()
+        _platform_mod.run_perf_profiling()
 
     # Finalize: copy logs, zip artifacts, report success
     post_log("Finalizing — packaging artifacts and uploading results...")

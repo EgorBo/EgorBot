@@ -14,20 +14,37 @@ public sealed class CloudInitBuilder(IConfiguration config)
     /// </summary>
     public string Build(BenchmarkJob job)
     {
-        var agentUrl = config["EgorBot:AgentScriptUrl"]
-            ?? throw new InvalidOperationException("EgorBot:AgentScriptUrl configuration is required");
+        var commonUrl = config["EgorBot:AgentScriptCommonUrl"]
+            ?? throw new InvalidOperationException("EgorBot:AgentScriptCommonUrl configuration is required");
         var serviceBaseUrl = config["EgorBot:ServiceBaseUrl"]
                              ?? throw new InvalidOperationException("EgorBot:ServiceBaseUrl configuration is required");
         var callbackUrl = $"{serviceBaseUrl.TrimEnd('/')}/api/internal";
         var csprojUrl = config["EgorBot:DefaultCsprojUrl"] 
                         ?? throw new InvalidOperationException("EgorBot:DefaultCsprojUrl configuration is required");
 
-        return Platform.IsWindows(job.Platform)
-            ? BuildWindowsScript(job, agentUrl, callbackUrl, csprojUrl)
-            : BuildLinuxScript(job, agentUrl, callbackUrl, csprojUrl);
+        var isWindows = Platform.IsWindows(job.Platform);
+        var isMacOs = Platform.GetOs(job.Platform).Equals("osx", StringComparison.OrdinalIgnoreCase);
+
+        var platformUrl = isWindows
+            ? config["EgorBot:AgentScriptWindowsUrl"]
+              ?? throw new InvalidOperationException("EgorBot:AgentScriptWindowsUrl configuration is required")
+            : isMacOs
+                ? config["EgorBot:AgentScriptMacosUrl"]
+                  ?? throw new InvalidOperationException("EgorBot:AgentScriptMacosUrl configuration is required")
+                : config["EgorBot:AgentScriptLinuxUrl"]
+                  ?? throw new InvalidOperationException("EgorBot:AgentScriptLinuxUrl configuration is required");
+
+        var platformFileName = isWindows ? "egorbot-agent-windows.py"
+            : isMacOs ? "egorbot-agent-macos.py"
+            : "egorbot-agent-linux.py";
+
+        return isWindows
+            ? BuildWindowsScript(job, commonUrl, platformUrl, platformFileName, callbackUrl, csprojUrl)
+            : BuildLinuxScript(job, commonUrl, platformUrl, platformFileName, callbackUrl, csprojUrl);
     }
 
-    private static string BuildLinuxScript(BenchmarkJob job, string agentUrl, string callbackUrl, string csprojUrl)
+    private static string BuildLinuxScript(BenchmarkJob job, string commonUrl, string platformUrl,
+        string platformFileName, string callbackUrl, string csprojUrl)
     {
         var sb = new StringBuilder();
         sb.AppendLine("#!/bin/bash");
@@ -38,9 +55,11 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("cd egorbot_work");
         sb.AppendLine();
 
-        // Download the agent script
-        sb.AppendLine($"curl -sL -o egorbot-agent.py \"{agentUrl}\"");
-        sb.AppendLine("chmod +x egorbot-agent.py");
+        // Download the agent scripts (common + platform-specific)
+        sb.AppendLine($"curl -sL -o egorbot-agent-common.py \"{commonUrl}\"");
+        sb.AppendLine($"curl -sL -o {platformFileName} \"{platformUrl}\"");
+        sb.AppendLine("chmod +x egorbot-agent-common.py");
+        sb.AppendLine($"chmod +x {platformFileName}");
         sb.AppendLine();
 
         // Write benchmark code file if provided
@@ -78,12 +97,13 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("echo \"Using Python: $PYTHON\"");
         sb.AppendLine();
         sb.AppendLine("# Launch agent in background (tee to both file and cloud-init log)");
-        sb.AppendLine($"nohup $PYTHON egorbot-agent.py {agentArgs} 2>&1 | tee agent.log &");
+        sb.AppendLine($"nohup $PYTHON egorbot-agent-common.py {agentArgs} 2>&1 | tee agent.log &");
 
         return sb.ToString().Replace("\r\n", "\n");
     }
 
-    private static string BuildWindowsScript(BenchmarkJob job, string agentUrl, string callbackUrl, string csprojUrl)
+    private static string BuildWindowsScript(BenchmarkJob job, string commonUrl, string platformUrl,
+        string platformFileName, string callbackUrl, string csprojUrl)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# PowerShell bootstrap for EgorBot agent");
@@ -130,11 +150,12 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("Write-Host \"Using Python: $python\"");
         sb.AppendLine();
 
-        // Download agent
+        // Download agent scripts (common + platform-specific)
         sb.AppendLine("try {");
-        sb.AppendLine($"    Invoke-WebRequest -Uri '{agentUrl}' -OutFile 'egorbot-agent.py' -UseBasicParsing");
+        sb.AppendLine($"    Invoke-WebRequest -Uri '{commonUrl}' -OutFile 'egorbot-agent-common.py' -UseBasicParsing");
+        sb.AppendLine($"    Invoke-WebRequest -Uri '{platformUrl}' -OutFile '{platformFileName}' -UseBasicParsing");
         sb.AppendLine("} catch {");
-        sb.AppendLine("    Report-Error \"Failed to download agent script: $_\"");
+        sb.AppendLine("    Report-Error \"Failed to download agent scripts: $_\"");
         sb.AppendLine("    exit 1");
         sb.AppendLine("}");
         sb.AppendLine();
@@ -175,7 +196,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("# Launch agent");
         sb.AppendLine("Write-Host 'Launching agent...'");
         sb.AppendLine("try {");
-        sb.AppendLine($"    Start-Process $python -ArgumentList 'egorbot-agent.py {agentArgs}' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log -Wait");
+        sb.AppendLine($"    Start-Process $python -ArgumentList 'egorbot-agent-common.py {agentArgs}' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log -Wait");
         sb.AppendLine("} catch {");
         sb.AppendLine("    Report-Error \"Agent process failed: $_\"");
         sb.AppendLine("    exit 1");

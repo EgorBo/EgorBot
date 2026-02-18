@@ -40,9 +40,9 @@ var app = builder.Build();
 {
     var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     var serviceBaseUrl = app.Configuration["EgorBot:ServiceBaseUrl"];
-    var agentScriptUrl = app.Configuration["EgorBot:AgentScriptUrl"];
+    var agentCommonUrl = app.Configuration["EgorBot:AgentScriptCommonUrl"];
     startupLogger.LogInformation("Config: EgorBot:ServiceBaseUrl = {ServiceBaseUrl}", serviceBaseUrl);
-    startupLogger.LogInformation("Config: EgorBot:AgentScriptUrl = {AgentScriptUrl}", agentScriptUrl);
+    startupLogger.LogInformation("Config: EgorBot:AgentScriptCommonUrl = {AgentScriptCommonUrl}", agentCommonUrl);
     startupLogger.LogInformation("Config: Environment = {Env}", app.Environment.EnvironmentName);
 }
 
