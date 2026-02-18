@@ -17,6 +17,7 @@ namespace EgorBot.Server.Services.Notifications;
 public sealed class TelegramCommandService(
     IConfiguration config,
     IServiceScopeFactory scopeFactory,
+    JobOrchestrator orchestrator,
     IHostApplicationLifetime appLifetime,
     IHttpClientFactory httpFactory,
     ILogger<TelegramCommandService> logger) : BackgroundService
@@ -112,6 +113,10 @@ public sealed class TelegramCommandService(
             case "jobs":
                 await HandleJobsCommandAsync(ct);
                 break;
+            case "cancelall":
+            case "cancel":
+                await HandleCancelAllAsync(ct);
+                break;
             case "quit":
             case "stop":
             case "shutdown":
@@ -124,6 +129,7 @@ public sealed class TelegramCommandService(
                 await SendReplyAsync(
                     "📋 *Available commands:*\n" +
                     "`jobs` — list active jobs\n" +
+                    "`cancelall` — cancel all active jobs & deprovision VMs\n" +
                     "`quit` — shut down the service\n" +
                     "`help` — show this message");
                 break;
@@ -182,6 +188,15 @@ public sealed class TelegramCommandService(
         }
 
         await SendReplyAsync(sb.ToString());
+    }
+
+    private async Task HandleCancelAllAsync(CancellationToken ct)
+    {
+        await SendReplyAsync("🔄 Cancelling all active jobs...");
+        var count = await orchestrator.CancelAllJobsAsync();
+        await SendReplyAsync(count > 0
+            ? $"✅ Cancelled {count} job(s) and deprovisioned their VMs."
+            : "No active jobs to cancel.");
     }
 
     private async Task SendReplyAsync(string text)

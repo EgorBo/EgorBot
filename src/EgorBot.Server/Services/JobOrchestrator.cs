@@ -68,6 +68,58 @@ public sealed class JobOrchestrator(
         _heartbeats[jobId] = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// Cancel all active jobs, mark them as Cancelled, and deprovision their VMs.
+    /// Returns the number of jobs cancelled.
+    /// </summary>
+    public async Task<int> CancelAllJobsAsync()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var activeJobs = await db.Jobs
+            .Where(j => j.Status == JobStatus.Pending
+                     || j.Status == JobStatus.Provisioning
+                     || j.Status == JobStatus.Running)
+            .ToListAsync();
+
+        foreach (var job in activeJobs)
+        {
+            logger.LogWarning("CancelAllJobs: cancelling job {JobId} (status={Status}, platform={Platform})",
+                job.Id, job.Status, job.Platform);
+
+            job.Status = JobStatus.Cancelled;
+            job.ErrorMessage = "Cancelled by admin.";
+            job.CompletedAt = DateTime.UtcNow;
+
+            // Signal the TCS so ProcessJobAsync unblocks and proceeds to cleanup
+            if (_completions.TryGetValue(job.Id, out var tcs))
+                tcs.TrySetResult(new JobOutcome(Success: false, Error: "Cancelled by admin."));
+
+            // Deprovision VM/instance
+            if (job.CloudProviderInstanceId is not null)
+            {
+                try
+                {
+                    var provider = providerFactory.GetProvider(job.Platform);
+                    await provider.DeprovisionAsync(job.CloudProviderInstanceId, CancellationToken.None);
+                    logger.LogInformation("CancelAllJobs: deprovisioned {InstanceId} for job {JobId}",
+                        job.CloudProviderInstanceId, job.Id);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "CancelAllJobs: failed to deprovision {InstanceId} for job {JobId}",
+                        job.CloudProviderInstanceId, job.Id);
+                }
+            }
+        }
+
+        if (activeJobs.Count > 0)
+            await db.SaveChangesAsync();
+
+        return activeJobs.Count;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("JobOrchestrator started. MaxConcurrent={Max}, Timeout={Timeout}",
