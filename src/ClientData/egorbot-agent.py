@@ -895,10 +895,12 @@ def _expand_commit_ranges(items: List[str], runtime_dir: Path) -> List[str]:
     for item in items:
         if ".." in item and not item.startswith("PR_"):
             post_log(f"Expanding commit range: {item}")
+            # Normalize ... to .. for git log (both mean "commits between" for our purposes)
+            range_expr = item.replace("...", "..")
             # Ensure full history is available for range resolution
             run("git fetch --unshallow origin || git fetch origin", cwd=runtime_dir, check=False)
             proc = subprocess.run(
-                f"git log --format=%H --reverse {item}",
+                f"git log --format=%H --reverse {range_expr}",
                 cwd=runtime_dir, shell=True,
                 capture_output=True, text=True,
             )

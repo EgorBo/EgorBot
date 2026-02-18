@@ -72,10 +72,12 @@ public static class CommandParser
         var commits = new List<string>();
         bool useProfiler = false;
         bool isHelp = false;
-        string? bdnArgs = null;
 
         var tokens = Tokenize(commandLine);
-        int bdnStartIndex = -1;
+
+        // Two-pass parsing: first extract all known EgorBot flags (they can appear
+        // anywhere, even after BDN args like --filter), then treat the remainder as BDN args.
+        var consumed = new bool[tokens.Count]; // tracks which tokens are EgorBot flags
 
         for (int i = 0; i < tokens.Count; i++)
         {
@@ -90,27 +92,33 @@ public static class CommandParser
                 // Profiler
                 case "profiler" or "profile" or "perf":
                     useProfiler = true;
+                    consumed[i] = true;
                     break;
 
                 // Help
                 case "help":
                     isHelp = true;
+                    consumed[i] = true;
                     break;
 
                 // PR reference: -pr 12345
                 case "pr":
+                    consumed[i] = true;
                     if (i + 1 < tokens.Count)
                     {
                         i++;
+                        consumed[i] = true;
                         commits.Add($"PR_{tokens[i].TrimStart('#')}");
                     }
                     break;
 
                 // Commit references: -commits abc123,def456,main  (comma or semicolon separated)
                 case "commits":
+                    consumed[i] = true;
                     if (i + 1 < tokens.Count)
                     {
                         i++;
+                        consumed[i] = true;
                         foreach (var part in tokens[i].Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                         {
                             if (part.Length > 0)
@@ -142,6 +150,8 @@ public static class CommandParser
                     // Check if it's a known target (with or without OS prefix)
                     if (TargetCatalog.IsKnownTarget(normalized))
                     {
+                        consumed[i] = true;
+
                         // First, try resolving the full name as an alias (e.g. "windows_x64" → "helix_windows_x64")
                         var fullResolved = TargetCatalog.ResolveAlias(normalized);
                         if (fullResolved != normalized)
@@ -158,22 +168,16 @@ public static class CommandParser
                             targets.Add(osPrefix != null ? $"{osPrefix}_{targetName}" : targetName);
                         }
                     }
-                    else
-                    {
-                        // First unrecognized token — everything from here is BDN args
-                        bdnStartIndex = i;
-                        goto doneParsingCommands;
-                    }
+                    // else: not consumed — will be included in BDN args
                     break;
             }
         }
 
-        doneParsingCommands:
-
-        if (bdnStartIndex >= 0)
+        // Collect unconsumed tokens as BDN args
+        string? bdnArgs = null;
+        var bdnTokens = tokens.Where((_, idx) => !consumed[idx]).ToList();
+        if (bdnTokens.Count > 0)
         {
-            // Reconstruct BDN args from remaining tokens
-            var bdnTokens = tokens.Skip(bdnStartIndex);
             bdnArgs = string.Join(" ", bdnTokens);
             // Replace backticks with quotes (common in GitHub comments)
             bdnArgs = bdnArgs.Replace('`', '"');
