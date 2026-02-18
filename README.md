@@ -38,7 +38,7 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 
 | Option | Description |
 |---|---|
-| `-commits SHA1,SHA2,...` | Commits/branches to compare (comma or semicolon-separated). Supports `SHA~N` syntax. |
+| `-commits SHA1,SHA2,...` | Commits to compare (comma or semicolon-separated). Supports `SHA~N` syntax and ranges. |
 | `-pr <number>` | Target a specific PR (this argument is implied when running in a PR context). |
 | `-profiler` | Enable perf profiler (Linux only). |
 
@@ -53,12 +53,7 @@ You don't have to spell out the full name — EgorBot resolves shorthands:
 | `-arm` or `-arm64` | `macos26_helix_arm64` | Apple Silicon via Helix |
 | `-amd` or `-x64` | `ubuntu24_azure_genoa` | Preferred AMD x64 |
 | `-intel` | `ubuntu24_azure_cascadelake` | Preferred Intel x64 |
-| `-genoa` | `ubuntu24_azure_genoa` | CPU suffix lookup |
-| `-cobalt100` | `ubuntu24_azure_cobalt100` | CPU suffix lookup |
-| `-azure_arm` | `ubuntu24_azure_cobalt100` | Cloud + vendor |
-| `-windows_intel` | `windows_azure_cascadelake` | OS + vendor |
-| `-linux` | `ubuntu24_azure_genoa` | OS-only → preferred default |
-| `-windows` | `windows_azure_cascadelake` | OS-only → preferred default |
+
 
 Full target list:
 
@@ -92,7 +87,7 @@ Full target list:
 | `windows_helix_arm64` | arm64 | Helix | Arm |
 
 Multiple targets can be specified in a single command.
-NOTE: 
+**NOTE:** Use AWS targets only when absolutely necessary since these targets are not free for me.
 
 ### Default behavior
 
@@ -118,9 +113,9 @@ Compare a specific commit against its previous commit on Cobalt 100:
 @EgorBot -azure_arm -commits abc1234,abc1234~1
 ```
 
-Compare a range of commits on Apple Silicon via Helix:
+Compare a range of commits on Apple Silicon via Helix for a specific dotnet/performance benchmark:
 ```
-@EgorBot -arm -commits abc1234...def5678
+@EgorBot -arm -commits abc1234...def5678 --filter "*MyBench*"
 ```
 
 
@@ -148,21 +143,6 @@ Compare a range of commits on Apple Silicon via Helix:
 | **EgorBot.Server** | REST API + job orchestrator. Provisions cloud infrastructure, waits for agent completion, processes results. Runs on port 5000. |
 | **EgorBot.Github** | Polls GitHub for `@EgorBot` mentions in issue/PR comments, parses commands, and calls EgorBot.Server's API. Runs on port 5001. |
 | **EgorBot.Shared** | Shared library: target catalog (hardware definitions, aliases), models. |
-
-### Agent (`egorbot-agent-common.py` + platform modules)
-
-A standalone Python 3 script (no pip dependencies) split into a shared entry point (`egorbot-agent-common.py`) and per-platform modules (`egorbot-agent-linux.py`, `egorbot-agent-windows.py`, `egorbot-agent-macos.py`). The server generates a bootstrap script (bash or PowerShell) that downloads both scripts onto the provisioned machine. The agent runs a 6-stage pipeline:
-
-1. **Setup environment** — detect OS/arch, create working directories
-2. **Install dependencies** — git, ninja, etc. (+ MinGit download on Windows if needed)
-3. **Install .NET SDKs** — .NET 10 + 11 preview via `dotnet-install` scripts
-4. **Build benchmarks** — either from a custom C# snippet or from `dotnet/performance`
-5. **Build core_roots** — clone `dotnet/runtime`, build for each specified commit/PR
-6. **Run benchmarks** — BDN with `--corerun` for each core_root, collect results
-
-The agent sends live logs and heartbeats back to the server, and uploads a results zip on completion.
-
-Requires .NET 10+ SDK. Agent requires Python 3.
 
 ## API
 
