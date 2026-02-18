@@ -13,6 +13,14 @@ builder.Services.AddHttpClient<EgorBotClient>(http =>
     http.Timeout = TimeSpan.FromSeconds(30);
 });
 
+// ── BenchmarkValidator HTTP client ──────────────────────────────────────────
+var validatorBaseUrl = builder.Configuration["EgorBot:ValidatorUrl"] ?? "http://localhost:5002";
+builder.Services.AddHttpClient<BenchmarkValidatorClient>(http =>
+{
+    http.BaseAddress = new Uri(validatorBaseUrl);
+    http.Timeout = TimeSpan.FromMinutes(5);
+});
+
 // ── Services ────────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<JobTrackerService>();
 builder.Services.AddHostedService<GitHubPollingService>();

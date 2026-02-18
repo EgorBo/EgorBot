@@ -97,18 +97,33 @@ def run_perf_profiling():
     if not flamegraph_dir.is_dir():
         common.run(f'git clone --depth 1 https://github.com/brendangregg/FlameGraph "{flamegraph_dir}"')
 
-    # Publish benchmark app as self-contained
+    # Build/publish the benchmark app for profiling.
+    # When we have core_roots (corerun), we do a *framework-dependent* build
+    # because corerun provides its own runtime — mixing with a self-contained
+    # publish causes crashes (SIGABRT / exit code -6).
+    # When there are no core_roots, we do self-contained publish.
     rid = f"{common.TARGET_OS}-{common.TARGET_ARCH}"
-    result = common.run(f"dotnet publish -c Release -r {rid} -f {common.CFG.bench_tfm} --sc",
-                        cwd=common.DIR_BENCHAPP, check=False)
-    if result.returncode != 0:
-        common.post_log("[PERF] Failed to publish benchmark app, skipping profiling")
-        return
+    has_coreruns = bool(sorted(globmod.glob(
+        str(common.CORE_ROOTS_DIR / "*" / common.make_exe("corerun"))
+    )))
 
-    publish_dir = common.DIR_BENCHAPP / "bin" / "Release" / common.CFG.bench_tfm / rid / "publish"
-    bench_dll = publish_dir / "benchapp.dll"
+    if has_coreruns:
+        result = common.run(f"dotnet build -c Release -f {common.CFG.bench_tfm}",
+                            cwd=common.DIR_BENCHAPP, check=False)
+        if result.returncode != 0:
+            common.post_log("[PERF] Failed to build benchmark app, skipping profiling")
+            return
+        bench_dll = common.DIR_BENCHAPP / "bin" / "Release" / common.CFG.bench_tfm / "benchapp.dll"
+    else:
+        result = common.run(f"dotnet publish -c Release -r {rid} -f {common.CFG.bench_tfm} --sc",
+                            cwd=common.DIR_BENCHAPP, check=False)
+        if result.returncode != 0:
+            common.post_log("[PERF] Failed to publish benchmark app, skipping profiling")
+            return
+        bench_dll = common.DIR_BENCHAPP / "bin" / "Release" / common.CFG.bench_tfm / rid / "publish" / "benchapp.dll"
+
     if not bench_dll.exists():
-        common.post_log(f"[PERF] Published DLL not found at {bench_dll}, skipping")
+        common.post_log(f"[PERF] Benchmark DLL not found at {bench_dll}, skipping")
         return
 
     # Copy NuGet.config from runtime repo if available
