@@ -276,7 +276,7 @@ public sealed class JobTrackerService(
 
                     {content}
 
-                    [View logs]({botClient.GetLogsUrl(job.Id)}){(job.LogsBlobUrl is not null ? $" | [Full logs]({job.LogsBlobUrl})" : "")}
+                    [Job]({botClient.GetLogsUrl(job.Id)}){(job.LogsBlobUrl is not null ? $" | [Full logs]({job.LogsBlobUrl})" : "")}
                     """;
             }
 
