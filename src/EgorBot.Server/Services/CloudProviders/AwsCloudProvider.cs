@@ -19,7 +19,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
     public string Name => "AWS";
 
     // ── AMI catalog (us-east-1) ──────────────────────────────────────────
-    private const string Ubuntu2404X64  = "ami-0181ceca08e32d5dd";
+    private const string Ubuntu2404X64  = "ami-0b6c6ebed2801a5cb";
     private const string Ubuntu2404Arm64 = "ami-096ea6a12ea24a797";
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
 
             var instanceType = ResolveInstanceType(request.Platform, request.Cores);
             var imageId = ResolveAmi(request.Platform);
-            var diskSize = Math.Max(request.DiskSizeGb, 100); // AMI snapshot requires >= 100 GB
+            var diskSize = Math.Max(request.DiskSizeGb, 64);
 
             logger.LogInformation(
                 "[{JobId}] Creating EC2 instance: type={Type}, ami={Ami}, disk={Disk}GB, sg={SG}, subnet={Subnet}",
