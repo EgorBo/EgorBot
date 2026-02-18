@@ -102,6 +102,11 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
                 "[{JobId}] Creating EC2 instance: type={Type}, ami={Ami}, disk={Disk}GB, sg={SG}, subnet={Subnet}",
                 request.JobId, instanceType, imageId, diskSize, securityGroupId, subnetId);
 
+            // AWS EC2Launch requires PowerShell UserData wrapped in <powershell> tags
+            var userData = Platform.IsWindows(request.Platform)
+                ? $"<powershell>\n{request.CloudInitScript}\n</powershell>"
+                : request.CloudInitScript;
+
             var runRequest = new RunInstancesRequest
             {
                 ImageId = imageId,
@@ -109,7 +114,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
                 MinCount = 1,
                 MaxCount = 1,
                 KeyName = keyPairName,
-                UserData = Convert.ToBase64String(Encoding.UTF8.GetBytes(request.CloudInitScript)),
+                UserData = Convert.ToBase64String(Encoding.UTF8.GetBytes(userData)),
                 SecurityGroupIds = [securityGroupId],
                 SubnetId = subnetId,
                 BlockDeviceMappings =
