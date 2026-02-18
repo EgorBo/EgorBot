@@ -885,9 +885,43 @@ def clone_runtime():
     else:
         post_log("dotnet/runtime already cloned")
 
+def _expand_commit_ranges(items: List[str], runtime_dir: Path) -> List[str]:
+    """
+    Expand SHA1..SHA2 range entries into individual commit hashes using git log.
+    Non-range entries (plain commits, PRs, 'main') are passed through as-is.
+    Each range is capped at 10 commits.
+    """
+    result = []
+    for item in items:
+        if ".." in item and not item.startswith("PR_"):
+            post_log(f"Expanding commit range: {item}")
+            # Ensure full history is available for range resolution
+            run("git fetch --unshallow origin || git fetch origin", cwd=runtime_dir, check=False)
+            proc = subprocess.run(
+                f"git log --format=%H --reverse {item}",
+                cwd=runtime_dir, shell=True,
+                capture_output=True, text=True,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                post_log(f"Failed to expand range '{item}': {proc.stderr.strip()}")
+                send_results(success=False, exit_code=1)
+            commits = [c.strip() for c in proc.stdout.strip().splitlines() if c.strip()]
+            if len(commits) > 10:
+                post_log(f"Range '{item}' has {len(commits)} commits (max 10), truncating to last 10")
+                commits = commits[-10:]
+            post_log(f"  Expanded to {len(commits)} commits: {[c[:8] for c in commits]}")
+            result.extend(commits)
+        else:
+            result.append(item)
+    return result
+
+
 def build_core_roots():
     runtime_dir = WORK_DIR / "runtime"
     clone_runtime()
+
+    # Expand any SHA1..SHA2 ranges into individual commits
+    CFG.gh_commits_and_prs = _expand_commit_ranges(CFG.gh_commits_and_prs, runtime_dir)
 
     for item in CFG.gh_commits_and_prs:
         post_log(f"Building core_root for '{item}'...")
