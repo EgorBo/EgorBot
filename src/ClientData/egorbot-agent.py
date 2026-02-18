@@ -608,14 +608,89 @@ def _activate_vs_environment(vs_path: str):
     post_log(f"VS environment activated (VisualStudioVersion={os.environ.get('VisualStudioVersion', '?')})")
 
 
+def _ensure_winget():
+    """
+    Make sure winget is available.  On Windows Server 2025 winget ships as an
+    MSIX but its path is not in the SYSTEM account's PATH.  We first look in
+    the well-known WindowsApps folder.  If that fails we download the latest
+    release from GitHub and install it (with its VCLibs/UI.Xaml dependencies).
+    Returns True if winget is usable, False otherwise.
+    """
+    if shutil.which("winget"):
+        return True
+
+    # Try the well-known WindowsApps location (Server 2025)
+    win_apps = os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                            "Microsoft", "WindowsApps")
+    if os.path.isdir(win_apps):
+        winget_path = os.path.join(win_apps, "winget.exe")
+        if os.path.isfile(winget_path):
+            os.environ["PATH"] = win_apps + os.pathsep + os.environ["PATH"]
+            post_log(f"Found winget at {winget_path}")
+            return True
+
+    # Broader search under ProgramFiles\WindowsApps (System-scope MSIX)
+    sys_apps = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                            "WindowsApps")
+    if os.path.isdir(sys_apps):
+        for entry in os.listdir(sys_apps):
+            if entry.startswith("Microsoft.DesktopAppInstaller_"):
+                candidate = os.path.join(sys_apps, entry, "winget.exe")
+                if os.path.isfile(candidate):
+                    os.environ["PATH"] = os.path.join(sys_apps, entry) + os.pathsep + os.environ["PATH"]
+                    post_log(f"Found winget at {candidate}")
+                    return True
+
+    # Download and install winget + dependencies from GitHub
+    post_log("winget not on PATH — installing from GitHub releases...")
+    try:
+        import urllib.request, tempfile, glob as _glob
+        tmp = tempfile.mkdtemp(prefix="winget_install_")
+
+        # 1. VCLibs dependency
+        vclibs_url = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
+        vclibs_path = os.path.join(tmp, "vclibs.appx")
+        urllib.request.urlretrieve(vclibs_url, vclibs_path)
+        run(f'powershell -Command "Add-AppxPackage -Path \'{vclibs_path}\'"', check=False)
+
+        # 2. Microsoft.UI.Xaml dependency
+        xaml_url = "https://www.nuget.org/api/v2/package/Microsoft.UI.Xaml/2.8.6"
+        xaml_zip = os.path.join(tmp, "uixaml.zip")
+        urllib.request.urlretrieve(xaml_url, xaml_zip)
+        import zipfile
+        with zipfile.ZipFile(xaml_zip, 'r') as zf:
+            zf.extractall(os.path.join(tmp, "uixaml"))
+        # Find the x64 appx inside the NuGet package
+        xaml_candidates = _glob.glob(os.path.join(tmp, "uixaml", "tools", "AppX",
+                                                   "x64", "Release", "*.appx"))
+        for appx in xaml_candidates:
+            run(f'powershell -Command "Add-AppxPackage -Path \'{appx}\'"', check=False)
+
+        # 3. winget itself (latest release)
+        winget_url = ("https://github.com/microsoft/winget-cli/releases/latest/"
+                      "download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle")
+        winget_bundle = os.path.join(tmp, "winget.msixbundle")
+        urllib.request.urlretrieve(winget_url, winget_bundle)
+        run(f'powershell -Command "Add-AppxPackage -Path \'{winget_bundle}\'"', check=False)
+
+        # Refresh PATH so the newly installed MSIX is visible
+        _refresh_windows_path()
+        if shutil.which("winget"):
+            post_log("winget installed successfully from GitHub releases")
+            return True
+    except Exception as ex:
+        post_log(f"WARNING: failed to install winget: {ex}")
+
+    return False
+
+
 def _install_windows_deps():
     """
     Install all Windows build dependencies via winget, then activate VS environment.
     Packages: Git, CMake, Ninja, Python 3.11, VS 2022 Community with C++ workload.
-    winget is pre-installed on Windows 10 1709+ and Windows 11.
     """
-    if not shutil.which("winget"):
-        post_log("WARNING: winget not found — falling back to legacy VS Build Tools installer")
+    if not _ensure_winget():
+        post_log("WARNING: winget not available — falling back to legacy VS Build Tools installer")
         _ensure_vs_build_tools()
         return
 
