@@ -100,6 +100,17 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
                 RegexOptions.IgnoreCase);
         }
 
+        // 4. Catch-all: any remaining full 40-char SHA in corerun paths or table cells
+        //    (e.g. from commit-range expansions the server didn't know about)
+        markdown = FullShaInCorerunPath().Replace(markdown, m => m.Groups[1].Value[..7]);
+        markdown = FullShaInTableCell().Replace(markdown, m => m.Groups[1].Value[..7]);
+
         return markdown;
     }
+
+    [GeneratedRegex(@"[^\s|`]*[/\\]([0-9a-f]{40})[/\\]corerun(\.exe)?", RegexOptions.IgnoreCase)]
+    private static partial Regex FullShaInCorerunPath();
+
+    [GeneratedRegex(@"(?<=\|[^|]*)([0-9a-f]{40})(?=[^|]*\|)", RegexOptions.IgnoreCase)]
+    private static partial Regex FullShaInTableCell();
 }
