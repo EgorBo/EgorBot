@@ -105,7 +105,13 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
         markdown = FullShaInCorerunPath().Replace(markdown, m => m.Groups[1].Value[..7]);
         markdown = FullShaInTableCell().Replace(markdown, m => m.Groups[1].Value[..7]);
 
-        return markdown;
+        // 5. Remove useless "  Job-XXXX : ..." lines from the BDN header block
+        markdown = JobHeaderLine().Replace(markdown, "");
+
+        // 6. Collapse multiple consecutive blank lines into at most one
+        markdown = ConsecutiveBlankLines().Replace(markdown, "\n\n");
+
+        return markdown.Trim();
     }
 
     [GeneratedRegex(@"[^\s|`]*[/\\]([0-9a-f]{40})[/\\]corerun(\.exe)?", RegexOptions.IgnoreCase)]
@@ -113,4 +119,10 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
 
     [GeneratedRegex(@"(?<=\|[^|]*)([0-9a-f]{40})(?=[^|]*\|)", RegexOptions.IgnoreCase)]
     private static partial Regex FullShaInTableCell();
+
+    [GeneratedRegex(@"^[ \t]*Job-\S+.*$\r?\n?", RegexOptions.Multiline)]
+    private static partial Regex JobHeaderLine();
+
+    [GeneratedRegex(@"\n{3,}")]
+    private static partial Regex ConsecutiveBlankLines();
 }
