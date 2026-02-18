@@ -243,17 +243,34 @@ def _install_ninja_standalone():
 
 def _ensure_python_on_path():
     """
-    Make sure 'python' or 'python3' is discoverable on PATH.
-    The embeddable Python that runs the agent (downloaded by the bootstrap script)
-    may not be on PATH — add its directory so that dotnet/runtime's CMake build
-    can find it for native code generation steps.
+    Make sure 'python' or 'python3' is discoverable on PATH and that the
+    embeddable distribution's restricted sys.path is disabled.
+
+    The embeddable Python ships a ``python3XX._pth`` file that locks down
+    sys.path to only the entries listed in it, preventing Python from adding
+    the script's directory on startup.  Scripts in dotnet/runtime (e.g.
+    genEventPipe.py) rely on sibling imports (``from genEventing import *``)
+    which fail under that restriction.  Renaming the ._pth file restores
+    normal path behaviour.
     """
     import sys as _sys
+    import glob as _glob
+
+    # ── 1. Fix the ._pth lockdown in embeddable Python ──────────────────
+    py_dir = os.path.dirname(_sys.executable)
+    if py_dir and os.path.isdir(py_dir):
+        for pth in _glob.glob(os.path.join(py_dir, "python*._pth")):
+            renamed = pth + ".bak"
+            try:
+                os.rename(pth, renamed)
+                common.post_log(f"Renamed embeddable ._pth file: {pth} → {renamed}")
+            except OSError as ex:
+                common.post_log(f"WARNING: Could not rename {pth}: {ex}")
+
+    # ── 2. Add Python to PATH if needed ─────────────────────────────────
     if shutil.which("python") or shutil.which("python3"):
         common.post_log(f"Python on PATH: {shutil.which('python') or shutil.which('python3')}")
         return
-    # Add the directory of the currently-running Python executable to PATH
-    py_dir = os.path.dirname(_sys.executable)
     if py_dir and os.path.isdir(py_dir):
         os.environ["PATH"] = py_dir + os.pathsep + os.environ.get("PATH", "")
         common.post_log(f"Added running Python to PATH: {py_dir} ({_sys.executable})")

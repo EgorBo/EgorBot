@@ -147,7 +147,7 @@ public sealed class JobTrackerService(
             var title = $"Benchmarks for {sourceRef} (for @{tracked.Source.Author})";
 
             var logsLinks = string.Join("\n", tracked.Jobs.Select(j =>
-                $"- **{j.Platform}**: [logs]({botClient.GetLogsUrl(j.Id)})"));
+                $"- **{j.Platform}**: [live logs]({botClient.GetLogsUrl(j.Id)})"));
 
             var body = $"""
                 Processing benchmark request from [{sourceType} {sourceRef}]({tracked.Source.HtmlUrl}).
@@ -422,7 +422,7 @@ public sealed class JobTrackerService(
             ```
             ```
 
-            **Targets** (default: `-azure_genoa`):
+            **Targets** (default: `macos26_helix_arm64`):
             `-arm` `-intel` `-amd` `-x64`
             `-azure_genoa` `-azure_cobalt100` `-azure_cascadelake` `-azure_milano` `-azure_ampere`
             `-aws_graviton4` `-aws_graviton3` `-aws_sapphirelake` `-aws_icelake` `-aws_genoa` `-aws_turin`
