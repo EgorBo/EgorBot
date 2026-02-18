@@ -23,10 +23,6 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
 
     public string Name => "Azure";
 
-    // ── Default ARM template URLs (Linux / Windows) ──────────────────────
-    private const string DefaultLinuxArmTemplateUrl =
-        "https://gist.githubusercontent.com/EgorBo/ce5ca672bf1f4d502cb19f50db4c7b92/raw";
-
     // ── Default Ubuntu image ─────────────────────────────────────────────
     private const string DefaultOffer = "ubuntu-24_04-lts";
     private const string DefaultSkuX64  = "server";
@@ -88,7 +84,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     /// </summary>
     private async Task<string> DownloadArmTemplateAsync(CancellationToken ct)
     {
-        var url = config["Azure:ArmTemplateUrl"] ?? DefaultLinuxArmTemplateUrl;
+        var url = config["Azure:ArmTemplateUrl"] ?? throw new InvalidOperationException("Azure ARM template URL not configured (Azure:ArmTemplateUrl).");
         using var http = new HttpClient();
         return await http.GetStringAsync(url, ct);
     }
