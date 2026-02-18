@@ -113,7 +113,7 @@ public static class TargetCatalog
 
     private static readonly HashSet<string> KnownClouds = new(StringComparer.OrdinalIgnoreCase)
     {
-        "azure", "aws", "helix", "local"
+        "azure", "aws", "helix", "local", "docker"
     };
 
     // ── CPU → vendor shorthands ──────────────────────────────────────────
@@ -278,6 +278,7 @@ public static class TargetCatalog
             "azure" => "Azure",
             "aws"   => "AWS",
             "helix" => "Helix",
+            "docker" => "Docker",
             "local" => "Local",
             _ => throw new InvalidOperationException($"Unknown cloud in target name: '{targetName}'")
         };

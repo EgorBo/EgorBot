@@ -45,8 +45,21 @@ def install_platform_deps():
         # Install perf if enabled and not already available
         if common.CFG.perf_enabled and not shutil.which("perf"):
             common.post_log("perf not found, installing linux-tools...")
-            common.run("sudo apt install -y linux-tools-common linux-tools-generic linux-cloud-tools-generic",
-                       check=False)
+            # Detect kernel flavour (e.g. "azure", "aws", "generic") to install
+            # the matching linux-tools package.  uname -r returns something like
+            # "6.14.0-1017-azure" → flavour = "azure".
+            uname_r = subprocess.check_output(["uname", "-r"], text=True).strip()
+            parts = uname_r.split("-")
+            flavour = parts[-1] if len(parts) >= 3 and not parts[-1][0].isdigit() else "generic"
+            common.post_log(f"Kernel: {uname_r}, flavour: {flavour}")
+            common.run(
+                f"sudo apt install -y linux-tools-common linux-tools-{flavour} linux-cloud-tools-{flavour}",
+                check=False,
+            )
+            # Fallback: try the exact kernel version package
+            if not shutil.which("perf"):
+                common.run(f"sudo apt install -y linux-tools-{uname_r}", check=False)
+            # Symlink fallback if the version directory doesn't match exactly
             common.run(
                 "bash -c 'ln -s /usr/lib/linux-tools/$(ls /usr/lib/linux-tools/ "
                 "| grep -v common | head -n 1) /usr/lib/linux-tools/$(uname -r) || true'",
