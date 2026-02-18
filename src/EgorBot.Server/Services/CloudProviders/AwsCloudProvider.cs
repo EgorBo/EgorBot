@@ -19,8 +19,9 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
     public string Name => "AWS";
 
     // ── AMI catalog (us-east-1) ──────────────────────────────────────────
-    private const string Ubuntu2404X64  = "ami-0b6c6ebed2801a5cb";
-    private const string Ubuntu2404Arm64 = "ami-096ea6a12ea24a797";
+    private const string Ubuntu2404X64      = "ami-0b6c6ebed2801a5cb";
+    private const string Ubuntu2404Arm64    = "ami-096ea6a12ea24a797";
+    private const string WindowsServer2025  = "ami-031283482dcfced88";
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -68,6 +69,8 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
     /// </summary>
     private static string ResolveAmi(string platform)
     {
+        if (Platform.IsWindows(platform))
+            return WindowsServer2025;
         return Platform.GetArch(platform) == "arm64"
             ? Ubuntu2404Arm64
             : Ubuntu2404X64;
@@ -113,7 +116,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
                 [
                     new BlockDeviceMapping
                     {
-                        DeviceName = "/dev/sda1",
+                        DeviceName = Platform.IsWindows(request.Platform) ? "/dev/sda1" : "/dev/sda1",
                         Ebs = new EbsBlockDevice
                         {
                             VolumeSize = diskSize,

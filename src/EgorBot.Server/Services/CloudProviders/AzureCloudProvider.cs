@@ -28,6 +28,11 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     private const string DefaultSkuX64  = "server";
     private const string DefaultSkuArm64 = "server-arm64";
 
+    // ── Default Windows Server image ─────────────────────────────────────
+    private const string WindowsOffer = "WindowsServer";
+    private const string WindowsSkuX64 = "2025-datacenter-g2";
+    private const string WindowsSkuArm64 = "2025-datacenter-g2";
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     /// <summary>
@@ -82,9 +87,11 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     /// <summary>
     /// Download the ARM template JSON from a gist URL.
     /// </summary>
-    private async Task<string> DownloadArmTemplateAsync(CancellationToken ct)
+    private async Task<string> DownloadArmTemplateAsync(bool isWindows, CancellationToken ct)
     {
-        var url = config["Azure:ArmTemplateUrl"] ?? throw new InvalidOperationException("Azure ARM template URL not configured (Azure:ArmTemplateUrl).");
+        var configKey = isWindows ? "Azure:WindowsArmTemplateUrl" : "Azure:ArmTemplateUrl";
+        var url = config[configKey]
+            ?? throw new InvalidOperationException($"{configKey} not configured.");
         using var http = new HttpClient();
         return await http.GetStringAsync(url, ct);
     }
@@ -112,6 +119,42 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
                 value = new
                 {
                     publisher = "canonical",
+                    offer,
+                    sku,
+                    version = "latest"
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Build the ARM template parameters for a Windows VM deployment.
+    /// The PowerShell bootstrap script is passed as base64-encoded customData,
+    /// and executed via the Custom Script Extension in the ARM template.
+    /// </summary>
+    private BinaryData BuildWindowsParameters(string jobId, string vmSize, string cloudInitScript, int diskSizeGb, string platform)
+    {
+        var isArm64 = Platform.GetArch(platform) == "arm64";
+        var offer = WindowsOffer;
+        var sku = isArm64 ? WindowsSkuArm64 : WindowsSkuX64;
+
+        var password = config["Azure:AdminPassword"] ?? "EgorBot_Bench_2025!";
+
+        // Encode the PowerShell script as base64 for customData
+        var scriptBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(cloudInitScript));
+
+        return BinaryData.FromObjectAsJson(new
+        {
+            runnerId = new { value = jobId },
+            osDiskSizeGiB = new { value = Math.Max(diskSizeGb, 128) },
+            virtualMachineSize = new { value = vmSize },
+            adminPassword = new { value = password },
+            customData = new { value = scriptBase64 },
+            imageReference = new
+            {
+                value = new
+                {
+                    publisher = "MicrosoftWindowsServer",
                     offer,
                     sku,
                     version = "latest"
@@ -188,12 +231,14 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             logger.LogInformation("[{JobId}] Resource group '{RG}' created in {Location}",
                 request.JobId, resourceGroupName, location);
 
-            // 2. Download ARM template
-            var template = await DownloadArmTemplateAsync(ct);
+            // 2. Download ARM template (separate templates for Linux vs Windows)
+            var isWindows = Platform.IsWindows(request.Platform);
+            var template = await DownloadArmTemplateAsync(isWindows, ct);
 
             // 3. Build deployment parameters
-            var parameters = BuildLinuxParameters(
-                request.JobId, vmSize, request.CloudInitScript, diskSize, request.Platform);
+            var parameters = isWindows
+                ? BuildWindowsParameters(request.JobId, vmSize, request.CloudInitScript, diskSize, request.Platform)
+                : BuildLinuxParameters(request.JobId, vmSize, request.CloudInitScript, diskSize, request.Platform);
 
             var deploymentContent = new ArmDeploymentContent(
                 new ArmDeploymentProperties(ArmDeploymentMode.Incremental)

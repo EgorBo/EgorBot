@@ -73,6 +73,8 @@ public static class TargetCatalog
         ["ubuntu24_aws_graviton2"]     = new("ubuntu24_aws_graviton2",        VmArch.Arm64, "c6g",                         "us-east-1",  VmCpuVendor.Arm,   false),
         ["ubuntu24_aws_graviton3"]     = new("ubuntu24_aws_graviton3",        VmArch.Arm64, "c7g",                         "us-east-1",  VmCpuVendor.Arm,   false),
         ["ubuntu24_aws_graviton4"]     = new("ubuntu24_aws_graviton4",        VmArch.Arm64, "c8g",                         "us-east-1",  VmCpuVendor.Arm,   true),
+        ["windows_aws_icelake"]        = new("windows_aws_icelake",           VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, false),
+        ["windows_aws_genoa"]          = new("windows_aws_genoa",             VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   false),
 
         // ── Helix ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
         ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.26.arm64.open",           null,         VmCpuVendor.Arm,   true),
