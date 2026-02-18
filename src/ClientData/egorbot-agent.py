@@ -26,7 +26,7 @@ from typing import List, NoReturn, Optional
 # ═══════════════════════════════════════════════════════════════════════════════
 # Example usage:
 #   (1) With custom benchmark snippet:
-#       python egorbot-agent.py --job_tag my_test1 --gh_commits_and_prs "PR_12345;main" --bench_code_file ./MyBenchmark.cs --bench_add_entrypoint 1
+#       python egorbot-agent.py --job_tag my_test1 --gh_commits_and_prs "PR_12345;main" --bench_code_file ./MyBenchmark.cs
 #
 #   (2) With dotnet/performance benchmarks for a27de4a and its previous commits:
 #       python egorbot-agent.py --job_tag my_test2 --gh_commits_and_prs "a27de4a;a27de4a~1;a27de4a~2"
@@ -41,7 +41,6 @@ class Config:
     gh_commits_and_prs: List[str]
     bench_code_file: str
     bench_csproj_file: str
-    bench_add_entrypoint: bool
     bench_tfm: str
     runtime_build_args: str
     bdn_args_file: str
@@ -79,9 +78,6 @@ class Config:
         p.add_argument("--bench_csproj_file",
                         default="",
                         help="Local path to .csproj template for custom benchmarks")
-        p.add_argument("--bench_add_entrypoint", type=int, choices=[0, 1],
-                        default=1,
-                        help="1 = add Program.cs with BenchmarkSwitcher, 0 = don't (default: 1)")
         p.add_argument("--bench_tfm", default="net10.0",
                         help="Target framework moniker (default: net10.0)")
         p.add_argument("--runtime_build_args", default="/p:NoPgoOptimize=true",
@@ -109,7 +105,6 @@ class Config:
             gh_commits_and_prs=[s.strip() for s in args.gh_commits_and_prs.split(";") if s.strip()],
             bench_code_file=args.bench_code_file,
             bench_csproj_file=args.bench_csproj_file,
-            bench_add_entrypoint=bool(args.bench_add_entrypoint),
             bench_tfm=args.bench_tfm,
             runtime_build_args=args.runtime_build_args,
             bdn_args_file=args.bdn_args_file,
@@ -917,7 +912,9 @@ def build_core_roots():
                 run("git checkout main", cwd=runtime_dir)
                 run("git pull origin main", cwd=runtime_dir)
             else:
-                run(f"git fetch origin {commit}", cwd=runtime_dir)
+                # Short commit hashes can't be fetched as refs — fetch full
+                # history (unshallow if needed) then checkout locally.
+                run("git fetch --unshallow origin || git fetch origin", cwd=runtime_dir, check=False)
                 run(f"git checkout {commit}", cwd=runtime_dir)
 
         # Install deps via runtime's own script (most deps come from here)
