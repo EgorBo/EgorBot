@@ -844,7 +844,16 @@ def _build_custom_benchmarks(bench_args: List[str]):
         )
         csproj.write_text(csproj_text, encoding="utf-8")
 
-        if CFG.bench_add_entrypoint:
+        # Auto-detect whether the snippet already has an entrypoint
+        snippet_text = (DIR_BENCHAPP / "Program.cs").read_text(encoding="utf-8")
+        has_entrypoint = (
+            re_mod.search(r'\bstatic\s+(?:async\s+)?(?:void|int|Task(?:<int>)?)\s+Main\s*\(', snippet_text)
+            or re_mod.search(r'\b(?:BenchmarkSwitcher|BenchmarkRunner)\b', snippet_text)
+        )
+        if has_entrypoint:
+            post_log("Detected entrypoint in benchmark snippet, skipping Entrypoint.cs generation")
+        else:
+            post_log("No entrypoint detected in benchmark snippet, adding Entrypoint.cs")
             (DIR_BENCHAPP / "Entrypoint.cs").write_text(
                 'BenchmarkDotNet.Running.BenchmarkSwitcher.FromAssembly('
                 'typeof(ThisAsmType).Assembly).Run(args); class ThisAsmType {}\n',
