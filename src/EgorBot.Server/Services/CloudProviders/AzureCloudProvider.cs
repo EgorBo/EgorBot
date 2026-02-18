@@ -53,8 +53,8 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
 
         if (string.IsNullOrEmpty(template))
         {
-            template = target.VmSizeTemplate
-                ?? throw new InvalidOperationException($"Target '{target.Name}' has no Azure VM size template defined.");
+            template = target.InstanceName
+                ?? throw new InvalidOperationException($"Target '{target.Name}' has no Azure VM size (InstanceName) defined.");
         }
 
         return string.Format(template, cores);
@@ -72,8 +72,8 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
         if (!string.IsNullOrEmpty(locationStr))
             return new AzureLocation(locationStr);
 
-        if (!string.IsNullOrEmpty(target.DefaultLocation))
-            return new AzureLocation(target.DefaultLocation);
+        if (!string.IsNullOrEmpty(target.Region))
+            return new AzureLocation(target.Region);
 
         // Final fallback
         return Platform.IsWindows(platform) ? AzureLocation.WestEurope : AzureLocation.EastUS;

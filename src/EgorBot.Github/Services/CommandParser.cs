@@ -84,16 +84,20 @@ public static class CommandParser
             var raw = tokens[i];
             var normalized = raw.TrimStart('-').ToLowerInvariant();
 
-            // Strip OS prefix (e.g. "linux_arm" → "arm", "windows_intel" → "intel")
-            var withoutOs = TargetCatalog.StripOsPrefix(normalized);
-
-            switch (withoutOs)
+            switch (normalized)
             {
                 // Profiler
                 case "profiler" or "profile" or "perf":
                     useProfiler = true;
                     consumed[i] = true;
                     break;
+
+                case "perf_events":
+
+                    return new BotCommand
+                    {
+                        ErrorMessage = "`-perf_events` option is not currently supported (WIP).",
+                    };
 
                 // Help
                 case "help":
@@ -135,38 +139,35 @@ public static class CommandParser
                             + "For `previous` you can use ~ syntax, e.g. `-commits SHA~1` to get 1 commit before SHA.",
                     };
 
-                default:
-                    // Check if user requested a Windows target — not currently supported
-                    if (normalized.StartsWith("windows", StringComparison.OrdinalIgnoreCase) ||
-                        normalized == "win" || normalized == "win64")
+                // Obsolete: -commit (singular) — guide users to -commits
+                case "mono":
+                    return new BotCommand
                     {
-                        return new BotCommand
-                        {
-                            ErrorMessage = "Windows is not currently available as a target for EgorBot jobs. "
-                                + "Please choose a different target or run the agent on a non-Windows machine.",
-                        };
-                    }
+                        ErrorMessage = "`-mono` option is currently disabled.",
+                    };
 
-                    // Check if it's a known target (with or without OS prefix)
-                    if (TargetCatalog.IsKnownTarget(normalized))
+                case "use32bit":
+                    return new BotCommand
+                    {
+                        ErrorMessage = "`-use32bit` option is currently disabled.",
+                    };
+
+                case "codesafety":
+                    return new BotCommand
+                    {
+                        ErrorMessage = "`-codesafety` option is currently disabled.",
+                    };
+
+                case "nonativepgo":
+                    // it's currently enabled by default as is.
+                    break;
+
+                default:
+                    // Check if it's a resolvable target
+                    if (TargetCatalog.TryResolve(normalized, out var resolvedTarget))
                     {
                         consumed[i] = true;
-
-                        // First, try resolving the full name as an alias (e.g. "windows_x64" → "helix_windows_x64")
-                        var fullResolved = TargetCatalog.ResolveAlias(normalized);
-                        if (fullResolved != normalized)
-                        {
-                            // The full name (including OS prefix) was an alias — use it directly
-                            targets.Add(fullResolved);
-                        }
-                        else
-                        {
-                            // Fallback: re-add OS prefix if it was there (for windows_ support)
-                            var hasOsPrefix = normalized != withoutOs;
-                            var osPrefix = hasOsPrefix ? normalized[..normalized.IndexOf('_')] : null;
-                            var targetName = TargetCatalog.ResolveAlias(withoutOs);
-                            targets.Add(osPrefix != null ? $"{osPrefix}_{targetName}" : targetName);
-                        }
+                        targets.Add(resolvedTarget!);
                     }
                     // else: not consumed — will be included in BDN args
                     break;
@@ -185,7 +186,7 @@ public static class CommandParser
 
         // Default target if none specified
         if (targets.Count == 0)
-            targets.Add("helix_osx_arm64");
+            targets.Add("macos26_helix_arm64");
 
         // If we're in a PR context and no commits specified, use the PR itself + main
         if (commits.Count == 0 && contextPrNumber.HasValue)

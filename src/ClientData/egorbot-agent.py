@@ -608,6 +608,89 @@ def _activate_vs_environment(vs_path: str):
     post_log(f"VS environment activated (VisualStudioVersion={os.environ.get('VisualStudioVersion', '?')})")
 
 
+def _install_windows_deps():
+    """
+    Install all Windows build dependencies via winget, then activate VS environment.
+    Packages: Git, CMake, Ninja, Python 3.11, VS 2022 Community with C++ workload.
+    winget is pre-installed on Windows 10 1709+ and Windows 11.
+    """
+    if not shutil.which("winget"):
+        post_log("WARNING: winget not found — falling back to legacy VS Build Tools installer")
+        _ensure_vs_build_tools()
+        return
+
+    post_log("Installing Windows build dependencies via winget...")
+
+    # Simple packages — idempotent, winget skips if already installed
+    for pkg in ["Git.Git", "Kitware.CMake", "Ninja-build.Ninja", "Python.Python.3.11"]:
+        run(f'winget install -e --id {pkg} --accept-source-agreements --accept-package-agreements',
+            check=False)
+
+    # Refresh PATH so newly installed tools are visible
+    _refresh_windows_path()
+
+    # VS 2022 Community with C++ workload (NativeDesktop).
+    # --override replaces ALL default installer args, so we must include --quiet --wait.
+    # --quiet = no UI, --wait = synchronous, --norestart = don't reboot.
+    post_log("Installing Visual Studio 2022 Community with C++ workload (this may take 10-20 min)...")
+    run(
+        'winget install -e --id Microsoft.VisualStudio.2022.Community '
+        '--accept-source-agreements --accept-package-agreements '
+        '--override "'
+        '--quiet --wait --norestart '
+        '--add Microsoft.VisualStudio.Workload.NativeDesktop '
+        '--includeRecommended'
+        '"',
+        check=False,
+    )
+
+    # Locate and activate VS environment
+    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    vswhere_exe = os.path.join(pf86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
+
+    # winget VS install puts vswhere in the Installer dir; also check PATH
+    if not os.path.isfile(vswhere_exe) and shutil.which("vswhere"):
+        vswhere_exe = shutil.which("vswhere")
+
+    if os.path.isfile(vswhere_exe):
+        result = subprocess.run(
+            [vswhere_exe, "-latest", "-prerelease", "-products", "*",
+             "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+             "-property", "installationPath"],
+            capture_output=True, text=True
+        )
+        vs_path = result.stdout.strip()
+        if vs_path and os.path.isdir(vs_path):
+            post_log(f"VS 2022 found at {vs_path}")
+            _activate_vs_environment(vs_path)
+        else:
+            post_log("WARNING: VS installed but vswhere can't find VC tools — build.cmd may fail")
+    else:
+        post_log("WARNING: vswhere not found after VS install — build.cmd may fail")
+
+
+def _refresh_windows_path():
+    """
+    Re-read Machine and User PATH from the registry so that tools installed
+    by winget (which modify the registry but not the current process) become visible.
+    """
+    import winreg
+    parts = []
+    for hive, subkey in [
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (winreg.HKEY_CURRENT_USER, r"Environment"),
+    ]:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                val, _ = winreg.QueryValueEx(key, "Path")
+                parts.append(val)
+        except OSError:
+            pass
+    if parts:
+        os.environ["PATH"] = os.pathsep.join(parts)
+        post_log("Refreshed PATH from registry")
+
+
 def install_dependencies():
     # On local runs (callback to localhost), don't kill dotnet — it would kill the web server!
     if not CFG.callback_url or "localhost" not in CFG.callback_url:
@@ -653,42 +736,7 @@ def install_dependencies():
         marker.touch()
 
     elif TARGET_OS == "windows":
-        # Ensure VS Build Tools are available (needed for building dotnet/runtime native code)
-        _ensure_vs_build_tools()
-
-        # Try to find git: check PATH, then common install locations, then download portable git
-        if not shutil.which("git"):
-            post_log("git not found on PATH, searching common locations...")
-            git_found = False
-            for candidate in [
-                r"C:\Program Files\Git\cmd",
-                r"C:\Program Files (x86)\Git\cmd",
-                r"C:\Git\cmd",
-                r"C:\git\cmd",
-            ]:
-                if os.path.isfile(os.path.join(candidate, "git.exe")):
-                    os.environ["PATH"] = candidate + os.pathsep + os.environ.get("PATH", "")
-                    post_log(f"Found git at {candidate}")
-                    git_found = True
-                    break
-
-            if not git_found:
-                # Download MinGit (portable) — ~50 MB
-                mingit_arch = "arm64" if TARGET_ARCH == "arm64" else "64-bit"
-                post_log(f"Downloading MinGit (portable, {mingit_arch})...")
-                mingit_url = f"https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/MinGit-2.47.1.2-{mingit_arch}.zip"
-                mingit_zip = WORK_DIR / "mingit.zip"
-                mingit_dir = WORK_DIR / "mingit"
-                try:
-                    download(mingit_url, mingit_zip)
-                    import zipfile as zf
-                    with zf.ZipFile(mingit_zip, "r") as z:
-                        z.extractall(mingit_dir)
-                    git_cmd_dir = str(mingit_dir / "cmd")
-                    os.environ["PATH"] = git_cmd_dir + os.pathsep + os.environ.get("PATH", "")
-                    post_log(f"MinGit installed to {mingit_dir}")
-                except Exception as e:
-                    post_log(f"WARNING: Failed to download MinGit: {e} — runtime clone will fail")
+        _install_windows_deps()
         marker.touch()
 
     else:

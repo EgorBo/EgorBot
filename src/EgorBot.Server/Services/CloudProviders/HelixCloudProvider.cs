@@ -24,9 +24,9 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
     public async Task<ProvisionResult> ProvisionAsync(ProvisionRequest request, CancellationToken ct = default)
     {
         var target = Platform.Resolve(request.Platform);
-        var queueId = target.VmSizeTemplate
+        var queueId = target.InstanceName
                       ?? throw new InvalidOperationException(
-                          $"Helix target '{target.Name}' has no queue ID (VmSizeTemplate is null).");
+                          $"Helix target '{target.Name}' has no queue ID (InstanceName is null).");
 
         var isWindows = Platform.IsWindows(request.Platform);
         var isMacOs = Platform.GetOs(request.Platform).Equals("osx", StringComparison.OrdinalIgnoreCase);

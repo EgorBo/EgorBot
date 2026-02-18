@@ -45,8 +45,8 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
     private static string ResolveInstanceType(string platform, int cores)
     {
         var target = Platform.Resolve(platform);
-        var family = target.InstanceFamily
-            ?? throw new InvalidOperationException($"Target '{target.Name}' has no EC2 instance family defined.");
+        var family = target.InstanceName
+            ?? throw new InvalidOperationException($"Target '{target.Name}' has no EC2 instance family (InstanceName) defined.");
 
         var suffix = cores switch
         {

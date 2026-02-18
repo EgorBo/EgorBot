@@ -2,210 +2,355 @@ using System.Runtime.InteropServices;
 
 namespace EgorBot.Shared;
 
+public enum VmArch { X64, Arm64, Arm32 }
+
+public enum VmCpuVendor { Amd, Intel, Arm }
+
 /// <summary>
-/// Describes a hardware target (cloud + CPU + architecture).
+/// Describes a hardware target (OS + cloud + CPU).
+/// Target names follow the convention {OsDistro}_{Cloud}_{Cpu}, e.g. "ubuntu24_azure_genoa".
+/// OS family and cloud provider are inferred from the name.
 /// </summary>
 public sealed record TargetInfo(
     string Name,
-    string CloudProvider,
-    string Arch,
-    string DefaultOs,
-    bool SupportsWindows,
-    string? VmSizeTemplate,
-    string? InstanceFamily,
-    string? DefaultLocation,
-    string? CpuName);
+    VmArch Arch,
+    string? InstanceName,
+    string? Region,
+    VmCpuVendor CpuVendor,
+    bool PreferredDefault)
+{
+    /// <summary>OS family derived from the target name: "linux", "windows", or "osx".</summary>
+    public string OsFamily => TargetCatalog.InferOsFamily(Name);
+
+    /// <summary>Cloud provider derived from the target name: "Azure", "AWS", "Helix", or "Local".</summary>
+    public string CloudProvider => TargetCatalog.InferCloudProvider(Name);
+}
 
 /// <summary>
-/// Single source of truth for all supported target names, aliases, and OS prefixes.
-/// Referenced by both EgorBot.Server (cloud provisioning) and EgorBot.Github (command parsing).
+/// Single source of truth for all supported targets, with smart resolution from user input.
+///
+/// Target names: {OsDistro}_{Cloud}_{Cpu}
+///   - OsDistro: ubuntu24, macos26, windows
+///   - Cloud:    azure, aws, helix
+///   - Cpu:      genoa, cascadelake, graviton4, arm64, x64, etc.
+///
+/// Resolution from user input:
+///   1. Exact match
+///   2. Parse segments, normalize OS (linux→ubuntu24, osx→macos26, etc.), fill defaults
+///   3. Try full {os}_{cloud}_{cpu} match
+///   4. CPU as vendor shorthand (amd, intel, arm, x64, arm64) → find preferred default
+///   5. Search by CPU suffix across all targets
+///   6. OS-only → find preferred default for that OS
 /// </summary>
 public static class TargetCatalog
 {
+    // ── Helix queue IDs (long container-image strings) ─────────────────
+
+    private const string HelixQueueLinuxX64   = "(Ubuntu.2604.Amd64.Open)AzureLinux.3.Amd64.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-26.04-helix-amd64";
+    private const string HelixQueueLinuxArm64 = "(Ubuntu.2404.Arm64.Open)Ubuntu.2204.Armarch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-helix-arm64v8";
+    private const string HelixQueueLinuxArm32 = "(Debian.12.Arm32.Open)Ubuntu.2204.ArmArch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:debian-12-helix-arm32v7";
+
     // ── Target catalog ───────────────────────────────────────────────────
 
     private static readonly Dictionary<string, TargetInfo> Targets = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Azure x64
-        ["azure_genoa"]       = new("azure_genoa",       "Azure", "x64",   "linux", false, "Standard_D{0}ads_v6", null, "eastus",      "AMD EPYC 9V74"),
-        ["azure_genoasmt1"]   = new("azure_genoasmt1",   "Azure", "x64",   "linux", false, "Standard_F{0}ams_v6", null, "eastus",      "AMD EPYC 9V74 SMT1"),
-        ["azure_milano"]      = new("azure_milano",      "Azure", "x64",   "linux", true,  "Standard_D{0}ads_v5", null, "westeurope",  "AMD EPYC 7763"),
-        ["azure_cascadelake"] = new("azure_cascadelake",  "Azure", "x64",   "linux", true,  "Standard_D{0}ds_v5",  null, "westeurope",  "Intel Cascade Lake"),
+        //                                                                    Arch          InstanceName                   Region        CpuVendor          Default
+        // ── Azure ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        ["ubuntu24_azure_genoa"]       = new("ubuntu24_azure_genoa",          VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   true),
+        ["ubuntu24_azure_milano"]      = new("ubuntu24_azure_milano",         VmArch.X64,   "Standard_D{0}ads_v5",         "westeurope", VmCpuVendor.Amd,   false),
+        ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, true),
+        ["ubuntu24_azure_cobalt100"]   = new("ubuntu24_azure_cobalt100",      VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true),
+        ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false),
+        ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, true),
+        ["windows_azure_genoa"]        = new("windows_azure_genoa",           VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Amd,   true),
 
-        // Azure arm64
-        ["azure_cobalt100"]   = new("azure_cobalt100",   "Azure", "arm64", "linux", true,  "Standard_D{0}pds_v6", null, "eastus",      "Cobalt 100 (Neoverse-N2)"),
-        ["azure_ampere"]      = new("azure_ampere",      "Azure", "arm64", "linux", true,  "Standard_D{0}pds_v5", null, "eastus",      "Neoverse-N1"),
+        // ── AWS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        ["ubuntu24_aws_sapphirelake"]  = new("ubuntu24_aws_sapphirelake",     VmArch.X64,   "c7i",                         "us-east-1",  VmCpuVendor.Intel, false),
+        ["ubuntu24_aws_icelake"]       = new("ubuntu24_aws_icelake",          VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, true),
+        ["ubuntu24_aws_genoa"]         = new("ubuntu24_aws_genoa",            VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   true),
+        ["ubuntu24_aws_turin"]         = new("ubuntu24_aws_turin",            VmArch.X64,   "m8a",                         "us-east-1",  VmCpuVendor.Amd,   false),
+        ["ubuntu24_aws_milano"]        = new("ubuntu24_aws_milano",           VmArch.X64,   "c6a",                         "us-east-1",  VmCpuVendor.Amd,   false),
+        ["ubuntu24_aws_graviton2"]     = new("ubuntu24_aws_graviton2",        VmArch.Arm64, "c6g",                         "us-east-1",  VmCpuVendor.Arm,   false),
+        ["ubuntu24_aws_graviton3"]     = new("ubuntu24_aws_graviton3",        VmArch.Arm64, "c7g",                         "us-east-1",  VmCpuVendor.Arm,   false),
+        ["ubuntu24_aws_graviton4"]     = new("ubuntu24_aws_graviton4",        VmArch.Arm64, "c8g",                         "us-east-1",  VmCpuVendor.Arm,   true),
 
-        // AWS x64
-        ["aws_sapphirelake"]  = new("aws_sapphirelake",  "AWS",   "x64",   "linux", false, null, "c7i", null, "Intel Sapphire Lake"),
-        ["aws_icelake"]       = new("aws_icelake",       "AWS",   "x64",   "linux", false, null, "c6i", null, "Intel Ice Lake"),
-        ["aws_genoa"]         = new("aws_genoa",         "AWS",   "x64",   "linux", false, null, "c7a", null, "AMD EPYC 9R14"),
-        ["aws_turin"]         = new("aws_turin",         "AWS",   "x64",   "linux", false, null, "m8a", null, "AMD EPYC 9R45"),
-        ["aws_milano"]        = new("aws_milano",        "AWS",   "x64",   "linux", false, null, "c6a", null, "AMD EPYC Milan"),
+        // ── Helix ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.26.arm64.open",           null,         VmCpuVendor.Arm,   true),
+        ["macos26_helix_x64"]          = new("macos26_helix_x64",             VmArch.X64,   "OSX.15.Amd64.Open",           null,         VmCpuVendor.Intel, true),
+        ["ubuntu24_helix_x64"]         = new("ubuntu24_helix_x64",            VmArch.X64,   HelixQueueLinuxX64,            null,         VmCpuVendor.Amd,   false),
+        ["ubuntu24_helix_arm64"]       = new("ubuntu24_helix_arm64",          VmArch.Arm64, HelixQueueLinuxArm64,          null,         VmCpuVendor.Arm,   false),
+        ["ubuntu24_helix_arm32"]       = new("ubuntu24_helix_arm32",          VmArch.Arm32, HelixQueueLinuxArm32,          null,         VmCpuVendor.Arm,   true),
+        ["windows_helix_x64"]          = new("windows_helix_x64",             VmArch.X64,   "windows.amd64.vs2022.pre.open", null,       VmCpuVendor.Intel, false),
+        ["windows_helix_arm64"]        = new("windows_helix_arm64",           VmArch.Arm64, "Windows.11.Arm64.Open",       null,         VmCpuVendor.Arm,   false),
 
-        // AWS arm64
-        ["aws_graviton2"]     = new("aws_graviton2",     "AWS",   "arm64", "linux", false, null, "c6g", null, "Graviton2 (Neoverse-N1)"),
-        ["aws_graviton3"]     = new("aws_graviton3",     "AWS",   "arm64", "linux", false, null, "c7g", null, "Graviton3 (Neoverse-V1)"),
-        ["aws_graviton4"]     = new("aws_graviton4",     "AWS",   "arm64", "linux", false, null, "c8g", null, "Graviton4 (Neoverse-V2)"),
-
-        // Helix — managed infrastructure, VmSizeTemplate stores the Helix queue ID
-        // macOS
-        ["helix_osx_arm64"]     = new("helix_osx_arm64",     "Helix", "arm64", "osx",     false, "osx.26.arm64.open",           null, null, "Apple Silicon (macOS 15)"),
-        ["helix_osx_x64"]       = new("helix_osx_x64",       "Helix", "x64",   "osx",     false, "OSX.15.Amd64.Open",           null, null, "Intel Mac (macOS 15)"),
-        // Linux
-        ["helix_linux_x64"]     = new("helix_linux_x64",     "Helix", "x64",   "linux",   false, "(Ubuntu.2604.Amd64.Open)AzureLinux.3.Amd64.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-26.04-helix-amd64",     null, null, "Azure Linux 3 x64"),
-        ["helix_linux_arm64"]   = new("helix_linux_arm64",    "Helix", "arm64", "linux",   false, "(Ubuntu.2404.Arm64.Open)Ubuntu.2204.Armarch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-helix-arm64v8", null, null, "Ubuntu 24.04 ARM64 (container)"),
-        ["helix_linux_arm32"]   = new("helix_linux_arm32",    "Helix", "arm32", "linux",   false, "(Debian.12.Arm32.Open)Ubuntu.2204.ArmArch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:debian-12-helix-arm32v7",       null, null, "Debian 12 ARM32 (container)"),
-        // Windows
-        ["helix_windows_x64"]   = new("helix_windows_x64",    "Helix", "x64",   "windows", true, "windows.amd64.vs2022.pre.open",       null, null, "Windows 11 x64"),
-        ["helix_windows_arm64"] = new("helix_windows_arm64",  "Helix", "arm64", "windows", true,  "Windows.11.Arm64.Open",       null, null, "Windows 11 ARM64"),
-
-        // Local (testing) — supports any OS
-        ["local"]             = new("local",             "Local", DetectLocalArch(), DetectLocalOs(), true,  null, null, null, "Local machine"),
+        // ── Local (testing) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        ["local"]                      = new("local",                         DetectLocalArch(), null,                      null,         DetectLocalCpuVendor(), false),
     };
 
-    // ── Aliases ──────────────────────────────────────────────────────────
+    // ── OS distro → OS family ────────────────────────────────────────────
 
-    private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string> OsDistroToFamily = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Short-hand → canonical target name
-        ["arm"]       = "helix_osx_arm64",
-        ["arm64"]     = "helix_osx_arm64",
-        ["intel"]     = "aws_sapphirelake",
-        ["x64"]       = "aws_sapphirelake",
-        ["amd"]       = "aws_genoa",
-
-        // CPU-specific shortcuts
-        ["cobalt"]      = "azure_cobalt100",
-        ["cobalt100"]   = "azure_cobalt100",
-        ["ampere"]      = "azure_ampere",
-        ["cascadelake"] = "azure_cascadelake",
-        ["genoa"]       = "azure_genoa",
-        ["milano"]      = "azure_milano",
-        ["graviton2"]   = "aws_graviton2",
-        ["graviton3"]   = "aws_graviton3",
-        ["graviton4"]   = "aws_graviton4",
-        ["sapphirelake"] = "aws_sapphirelake",
-        ["icelake"]     = "aws_icelake",
-        ["turin"]       = "aws_turin",
-
-        // Cloud-vendor shortcuts
-
-        // AWS shortcuts
-        ["aws_arm"]   = "aws_graviton4",
-        ["aws_arm64"] = "aws_graviton4",
-        ["aws_x64"]   = "aws_sapphirelake",
-        ["aws_amd"]   = "aws_genoa",
-        ["aws_intel"] = "aws_sapphirelake",
-
-        // Azure shortcuts
-        ["azure_arm"] = "azure_cobalt100",
-        ["azure_x64"] = "azure_genoa",
-        ["azure_intel"] = "azure_cascadelake",
-        ["azure_amd"] = "azure_genoa",
-
-        // Linux shortcuts (resolve to AWS)
-        ["linux_arm"]   = "aws_graviton4",
-        ["linux_arm64"] = "aws_graviton4",
-        ["linux_x64"]   = "aws_sapphirelake",
-        ["linux_amd"]   = "aws_genoa",
-        ["linux_intel"] = "aws_sapphirelake",
-
-        // Local shortcuts
-        ["local_x64"]   = "local",
-        ["local_arm64"] = "local",
-
-        // OSX shortcuts (Helix)
-        ["osx"]         = "helix_osx_arm64",
-        ["osx_arm64"]   = "helix_osx_arm64",
-        ["osx_x64"]     = "helix_osx_x64",
-
-        // Windows shortcuts (Helix)
-        ["windows_x64"]   = "helix_windows_x64",
-        ["windows_arm64"] = "helix_windows_arm64",
-        ["windows_arm"]   = "helix_windows_arm64",
-        ["windows_intel"] = "helix_windows_x64",
-        ["windows_amd"]   = "helix_windows_x64",
-
-        // Helix shortcuts
-        ["helix_arm64"] = "helix_linux_arm64",
-        ["helix_arm"]   = "helix_linux_arm64",
-        ["helix_x64"]   = "helix_linux_x64",
-        ["helix_arm32"] = "helix_linux_arm32",
-        ["helix_win_x64"]   = "helix_windows_x64",
-        ["helix_win_arm64"] = "helix_windows_arm64",
+        ["ubuntu24"] = "linux",
+        ["macos26"]  = "osx",
+        ["windows"]  = "windows",
     };
 
-    // ── OS prefixes ─────────────────────────────────────────────────────
+    // ── OS input normalization ───────────────────────────────────────────
 
-    private static readonly HashSet<string> OsPrefixes = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string> OsNormalization = new(StringComparer.OrdinalIgnoreCase)
     {
-        "linux", "windows", "osx",
+        ["linux"]  = "ubuntu24",
+        ["ubuntu"] = "ubuntu24",
+        ["osx"]    = "macos26",
+        ["macos"]  = "macos26",
+        ["win"]    = "windows",
+    };
+
+    // ── Known cloud identifiers ──────────────────────────────────────────
+
+    private static readonly HashSet<string> KnownClouds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "azure", "aws", "helix", "local"
+    };
+
+    // ── CPU → vendor shorthands ──────────────────────────────────────────
+
+    private static readonly Dictionary<string, VmCpuVendor> VendorShorthands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["amd"]   = VmCpuVendor.Amd,
+        ["x64"]   = VmCpuVendor.Amd,
+        ["intel"] = VmCpuVendor.Intel,
+        ["arm"]   = VmCpuVendor.Arm,
+        ["arm64"] = VmCpuVendor.Arm,
+        ["arm32"] = VmCpuVendor.Arm,
     };
 
     // ── Public API ───────────────────────────────────────────────────────
 
-    /// <summary>All canonical target names (no aliases).</summary>
+    /// <summary>All canonical target names.</summary>
     public static IEnumerable<string> GetAllTargetNames() => Targets.Keys;
 
-    /// <summary>All aliases.</summary>
-    public static IReadOnlyDictionary<string, string> GetAliases() => Aliases;
+    /// <summary>Try to get a <see cref="TargetInfo"/> by exact canonical name.</summary>
+    public static bool TryGetTarget(string name, out TargetInfo? info) =>
+        Targets.TryGetValue(name, out info);
 
-    /// <summary>All recognized OS prefixes.</summary>
-    public static IReadOnlySet<string> GetOsPrefixes() => OsPrefixes;
-
-    /// <summary>Try to get a <see cref="TargetInfo"/> by canonical name.</summary>
-    public static bool TryGetTarget(string canonicalName, out TargetInfo? info) =>
-        Targets.TryGetValue(canonicalName, out info);
-
-    /// <summary>Get the <see cref="TargetInfo"/> for a canonical target name. Throws if not found.</summary>
-    public static TargetInfo GetTarget(string canonicalName)
+    /// <summary>Get the <see cref="TargetInfo"/> by exact canonical name. Throws if not found.</summary>
+    public static TargetInfo GetTarget(string name)
     {
-        if (Targets.TryGetValue(canonicalName, out var info))
-            return info;
+        if (Targets.TryGetValue(name, out var info)) return info;
         throw new ArgumentException(
-            $"Unknown target: '{canonicalName}'. Valid targets: {string.Join(", ", GetAllTargetNames())}");
+            $"Unknown target: '{name}'. Valid targets: {string.Join(", ", GetAllTargetNames())}");
     }
 
     /// <summary>
-    /// Resolve an alias (e.g. "arm", "x64", "graviton3") to its canonical target name.
-    /// Returns the input unchanged if it's already canonical or unrecognized.
+    /// Resolve user input (e.g. "arm", "genoa", "aws_graviton4", "windows_cascadelake")
+    /// to a canonical target name.
     /// </summary>
-    public static string ResolveAlias(string name) =>
-        Aliases.TryGetValue(name, out var canonical) ? canonical : name;
+    public static string Resolve(string input) =>
+        TryResolve(input, out var name)
+            ? name!
+            : throw new ArgumentException(
+                $"Cannot resolve target: '{input}'. Valid targets: {string.Join(", ", GetAllTargetNames())}");
 
     /// <summary>
-    /// Check whether <paramref name="name"/> is a known target — either canonical or alias,
-    /// with or without an OS prefix (e.g. "windows_arm").
+    /// Try to resolve user input to a canonical target name.
     /// </summary>
-    public static bool IsKnownTarget(string name)
+    public static bool TryResolve(string input, out string? canonicalName)
     {
-        var stripped = StripOsPrefix(name);
-        var resolved = ResolveAlias(stripped);
-        return Targets.ContainsKey(resolved);
+        canonicalName = null;
+        var clean = input.ToLowerInvariant().TrimStart('-').Trim();
+        if (string.IsNullOrEmpty(clean)) return false;
+
+        // 1. Exact match (handles full canonical names like "ubuntu24_azure_genoa")
+        if (Targets.TryGetValue(clean, out var exact))
+        {
+            canonicalName = exact.Name;
+            return true;
+        }
+
+        // 2. Parse into (os?, cloud?, cpu?) with normalization
+        var (userOs, userCloud, cpu) = ParseSegments(clean);
+
+        // 3. Apply defaults: OS → ubuntu24, Cloud → azure (macos26 → helix)
+        var os = userOs ?? "ubuntu24";
+        var cloud = userCloud ?? (os == "macos26" ? "helix" : "azure");
+
+        // 4. Try full {os}_{cloud}_{cpu} match
+        if (cpu != null)
+        {
+            var fullName = $"{os}_{cloud}_{cpu}";
+            if (Targets.TryGetValue(fullName, out var t))
+            {
+                canonicalName = t.Name;
+                return true;
+            }
+        }
+
+        // 5. CPU as vendor shorthand → find preferred default
+        if (cpu != null && VendorShorthands.TryGetValue(cpu, out var vendor))
+        {
+            var osFamily = OsDistroToFamily.GetValueOrDefault(os, "linux");
+            var match = FindPreferredByVendor(vendor, osFamily, userCloud);
+            if (match != null)
+            {
+                canonicalName = match.Name;
+                return true;
+            }
+        }
+
+        // 6. Search by CPU suffix across all targets (e.g. "graviton4" → ubuntu24_aws_graviton4)
+        if (cpu != null)
+        {
+            var suffix = "_" + cpu;
+            var matches = Targets.Values
+                .Where(t => t.Name != "local" && t.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (matches.Count > 0)
+            {
+                var osFamily = OsDistroToFamily.GetValueOrDefault(os, "linux");
+                var best = matches.FirstOrDefault(t => t.OsFamily.Equals(osFamily, StringComparison.OrdinalIgnoreCase))
+                           ?? matches[0];
+                canonicalName = best.Name;
+                return true;
+            }
+        }
+
+        // 7. OS-only (no CPU specified) → find preferred default for that OS
+        if (cpu == null)
+        {
+            var osFamily = OsDistroToFamily.GetValueOrDefault(os, "linux");
+            var candidates = Targets.Values
+                .Where(t => t.Name != "local")
+                .Where(t => t.OsFamily.Equals(osFamily, StringComparison.OrdinalIgnoreCase))
+                .Where(t => t.PreferredDefault);
+
+            if (userCloud != null)
+            {
+                var withCloud = candidates
+                    .Where(t => ExtractCloudSegment(t.Name).Equals(userCloud, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (withCloud.Count > 0)
+                {
+                    canonicalName = withCloud[0].Name;
+                    return true;
+                }
+            }
+
+            var any = candidates.ToList();
+            if (any.Count > 0)
+            {
+                canonicalName = any[0].Name;
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    /// <summary>
-    /// Strip a leading OS prefix (e.g. "linux_arm" → "arm", "windows_intel" → "intel").
-    /// Returns the input unchanged if there is no recognized OS prefix.
-    /// </summary>
-    public static string StripOsPrefix(string name)
+    // ── Inference helpers (used by TargetInfo computed properties) ────────
+
+    internal static string InferOsFamily(string targetName)
     {
-        var underscoreIdx = name.IndexOf('_');
-        if (underscoreIdx < 0) return name;
-
-        var prefix = name[..underscoreIdx];
-        if (OsPrefixes.Contains(prefix))
-            return name[(underscoreIdx + 1)..];
-        return name;
+        if (targetName.Equals("local", StringComparison.OrdinalIgnoreCase))
+            return DetectLocalOs();
+        var firstSeg = targetName.Split('_')[0];
+        return OsDistroToFamily.GetValueOrDefault(firstSeg, "linux");
     }
 
-    // ── Internal helpers ─────────────────────────────────────────────────
+    internal static string InferCloudProvider(string targetName)
+    {
+        if (targetName.Equals("local", StringComparison.OrdinalIgnoreCase))
+            return "Local";
+        var cloudSeg = ExtractCloudSegment(targetName);
+        return cloudSeg.ToLowerInvariant() switch
+        {
+            "azure" => "Azure",
+            "aws"   => "AWS",
+            "helix" => "Helix",
+            "local" => "Local",
+            _ => throw new InvalidOperationException($"Unknown cloud in target name: '{targetName}'")
+        };
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────
+
+    private static string ExtractCloudSegment(string targetName)
+    {
+        var parts = targetName.Split('_');
+        return parts.Length >= 2 ? parts[1] : targetName;
+    }
+
+    private static (string? Os, string? Cloud, string? Cpu) ParseSegments(string input)
+    {
+        var parts = input.Split('_');
+        int idx = 0;
+        string? os = null, cloud = null, cpu = null;
+
+        if (idx < parts.Length && IsOsToken(parts[idx]))
+        {
+            os = NormalizeOs(parts[idx]);
+            idx++;
+        }
+
+        if (idx < parts.Length && KnownClouds.Contains(parts[idx]))
+        {
+            cloud = parts[idx];
+            idx++;
+        }
+
+        if (idx < parts.Length)
+        {
+            cpu = string.Join("_", parts[idx..]);
+        }
+
+        return (os, cloud, cpu);
+    }
+
+    private static bool IsOsToken(string s) =>
+        OsDistroToFamily.ContainsKey(s) || OsNormalization.ContainsKey(s);
+
+    private static string NormalizeOs(string s) =>
+        OsNormalization.TryGetValue(s, out var n) ? n : s;
+
+    private static TargetInfo? FindPreferredByVendor(VmCpuVendor vendor, string osFamily, string? cloudHint)
+    {
+        var candidates = Targets.Values
+            .Where(t => t.Name != "local")
+            .Where(t => t.CpuVendor == vendor)
+            .Where(t => t.OsFamily.Equals(osFamily, StringComparison.OrdinalIgnoreCase))
+            .Where(t => t.PreferredDefault)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            // Relax OS constraint
+            candidates = Targets.Values
+                .Where(t => t.Name != "local")
+                .Where(t => t.CpuVendor == vendor)
+                .Where(t => t.PreferredDefault)
+                .ToList();
+        }
+
+        if (candidates.Count == 0) return null;
+
+        if (cloudHint != null)
+        {
+            var withCloud = candidates.FirstOrDefault(t =>
+                ExtractCloudSegment(t.Name).Equals(cloudHint, StringComparison.OrdinalIgnoreCase));
+            if (withCloud != null) return withCloud;
+        }
+
+        return candidates[0];
+    }
 
     private static string DetectLocalOs() =>
         OperatingSystem.IsWindows() ? "windows" :
         OperatingSystem.IsMacOS() ? "osx" : "linux";
 
-    private static string DetectLocalArch() =>
-        RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "arm64" : "x64";
+    private static VmArch DetectLocalArch() =>
+        RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? VmArch.Arm64 : VmArch.X64;
+
+    private static VmCpuVendor DetectLocalCpuVendor() =>
+        RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? VmCpuVendor.Arm : VmCpuVendor.Amd;
 }

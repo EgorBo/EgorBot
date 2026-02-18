@@ -108,8 +108,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             log.LogWarning("Validation failed: unknown target '{Target}'", raw);
             return Results.BadRequest(new
             {
-                error = $"Unknown target: '{raw}'. Valid targets: {string.Join(", ", Platform.GetAllTargetNames())}. " +
-                        $"Aliases: {string.Join(", ", Platform.GetAliases().Select(a => $"{a.Key}={a.Value}"))}."
+                error = $"Unknown target: '{raw}'. Valid targets: {string.Join(", ", Platform.GetAllTargetNames())}."
             });
         }
 
