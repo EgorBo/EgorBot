@@ -631,47 +631,24 @@ def _activate_vs_environment(vs_path: str):
 
 def _ensure_winget():
     """
-    Make sure winget is available.  On Windows Server 2025 winget ships as an
-    MSIX but its path is not in the SYSTEM account's PATH.  We first look in
-    the well-known WindowsApps folder.  If that fails we download the latest
-    release from GitHub and install it (with its VCLibs/UI.Xaml dependencies).
-    Returns True if winget is usable, False otherwise.
+    Check if winget is usable.  Returns True only if winget is already on PATH
+    and can actually execute.  On Windows Server, cloud-init scripts run as
+    SYSTEM which cannot execute MSIX apps like winget — so we don't bother
+    scanning WindowsApps folders (they'll always fail with Access Denied).
     """
-    def _try_run_winget() -> bool:
-        """Return True if winget can actually execute (not just exist on disk)."""
+    if shutil.which("winget"):
         try:
             r = subprocess.run(
                 ["winget", "--version"],
                 capture_output=True, text=True, timeout=15,
             )
-            return r.returncode == 0
-        except Exception:
-            return False
-
-    if shutil.which("winget") and _try_run_winget():
-        return True
-
-    # Try the well-known WindowsApps locations (MSIX)
-    search_dirs: list[str] = []
-    local_apps = os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                              "Microsoft", "WindowsApps")
-    if os.path.isdir(local_apps):
-        search_dirs.append(local_apps)
-    sys_apps = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
-                            "WindowsApps")
-    if os.path.isdir(sys_apps):
-        for entry in os.listdir(sys_apps):
-            if entry.startswith("Microsoft.DesktopAppInstaller_"):
-                search_dirs.append(os.path.join(sys_apps, entry))
-
-    for d in search_dirs:
-        candidate = os.path.join(d, "winget.exe")
-        if os.path.isfile(candidate):
-            os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
-            post_log(f"Found winget at {candidate}")
-            if _try_run_winget():
+            if r.returncode == 0:
+                post_log(f"winget available: {r.stdout.strip()}")
                 return True
-            post_log(f"winget exists at {candidate} but Access Denied (MSIX not registered for this user)")
+        except Exception:
+            pass
+    post_log("winget not usable (SYSTEM account cannot run MSIX apps)")
+    return False
 
     return False
 
