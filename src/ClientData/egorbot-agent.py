@@ -676,40 +676,107 @@ def _ensure_winget():
     return False
 
 
+def _install_git_standalone():
+    """Download and silently install Git for Windows (portable) if not already available."""
+    if shutil.which("git"):
+        post_log(f"Git already available: {shutil.which('git')}")
+        return
+    post_log("Installing Git for Windows (portable)...")
+    git_ver = "2.47.1"
+    git_url = f"https://github.com/git-for-windows/git/releases/download/v{git_ver}.windows.1/PortableGit-{git_ver}-64-bit.7z.exe"
+    git_dir = WORK_DIR / "PortableGit"
+    git_archive = WORK_DIR / "PortableGit.exe"
+    try:
+        download(git_url, git_archive)
+        # PortableGit self-extracting 7z: -y = yes to all, -o = output dir
+        run(f'"{git_archive}" -y -o"{git_dir}"', check=False)
+        git_bin = git_dir / "cmd"
+        if git_bin.is_dir():
+            os.environ["PATH"] = str(git_bin) + os.pathsep + os.environ["PATH"]
+            post_log(f"Git installed at {git_bin}")
+        else:
+            post_log("WARNING: Git extraction may have failed")
+    except Exception as e:
+        post_log(f"WARNING: Failed to install Git: {e}")
+
+
+def _install_cmake_standalone():
+    """Download and install CMake if not already available."""
+    if shutil.which("cmake"):
+        post_log(f"CMake already available: {shutil.which('cmake')}")
+        return
+    post_log("Installing CMake...")
+    cmake_ver = "3.31.4"
+    cmake_url = f"https://github.com/Kitware/CMake/releases/download/v{cmake_ver}/cmake-{cmake_ver}-windows-x86_64.zip"
+    cmake_zip = WORK_DIR / "cmake.zip"
+    cmake_dir = WORK_DIR / "cmake"
+    try:
+        download(cmake_url, cmake_zip)
+        import zipfile
+        with zipfile.ZipFile(cmake_zip, 'r') as zf:
+            zf.extractall(cmake_dir)
+        # The zip contains cmake-ver-windows-x86_64/bin/cmake.exe
+        for d in cmake_dir.rglob("cmake.exe"):
+            bin_dir = str(d.parent)
+            os.environ["PATH"] = bin_dir + os.pathsep + os.environ["PATH"]
+            post_log(f"CMake installed at {bin_dir}")
+            break
+    except Exception as e:
+        post_log(f"WARNING: Failed to install CMake: {e}")
+
+
+def _install_ninja_standalone():
+    """Download and install Ninja if not already available."""
+    if shutil.which("ninja"):
+        post_log(f"Ninja already available: {shutil.which('ninja')}")
+        return
+    post_log("Installing Ninja...")
+    ninja_url = "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip"
+    ninja_zip = WORK_DIR / "ninja.zip"
+    ninja_dir = WORK_DIR / "ninja"
+    try:
+        download(ninja_url, ninja_zip)
+        import zipfile
+        with zipfile.ZipFile(ninja_zip, 'r') as zf:
+            zf.extractall(ninja_dir)
+        os.environ["PATH"] = str(ninja_dir) + os.pathsep + os.environ["PATH"]
+        post_log(f"Ninja installed at {ninja_dir}")
+    except Exception as e:
+        post_log(f"WARNING: Failed to install Ninja: {e}")
+
+
 def _install_windows_deps():
     """
-    Install all Windows build dependencies via winget, then activate VS environment.
-    Packages: Git, CMake, Ninja, Python 3.11, VS 2022 Community with C++ workload.
+    Install all Windows build dependencies, then activate VS environment.
+    Tools: Git, CMake, Ninja (standalone downloads), VS Build Tools (direct installer).
+    If winget is available, use it for everything; otherwise fall back to direct downloads.
     """
-    if not _ensure_winget():
-        post_log("WARNING: winget not available — falling back to legacy VS Build Tools installer")
+    use_winget = _ensure_winget()
+
+    if use_winget:
+        post_log("Installing Windows build dependencies via winget...")
+        for pkg in ["Git.Git", "Kitware.CMake", "Ninja-build.Ninja", "Python.Python.3.11"]:
+            run(f'winget install -e --id {pkg} --accept-source-agreements --accept-package-agreements',
+                check=False)
+        _refresh_windows_path()
+
+        post_log("Installing Visual Studio 2022 Community with C++ workload (this may take 10-20 min)...")
+        run(
+            'winget install -e --id Microsoft.VisualStudio.2022.Community '
+            '--accept-source-agreements --accept-package-agreements '
+            '--override "'
+            '--quiet --wait --norestart '
+            '--add Microsoft.VisualStudio.Workload.NativeDesktop '
+            '--includeRecommended'
+            '"',
+            check=False,
+        )
+    else:
+        post_log("winget not available — installing tools via direct download...")
+        _install_git_standalone()
+        _install_cmake_standalone()
+        _install_ninja_standalone()
         _ensure_vs_build_tools()
-        return
-
-    post_log("Installing Windows build dependencies via winget...")
-
-    # Simple packages — idempotent, winget skips if already installed
-    for pkg in ["Git.Git", "Kitware.CMake", "Ninja-build.Ninja", "Python.Python.3.11"]:
-        run(f'winget install -e --id {pkg} --accept-source-agreements --accept-package-agreements',
-            check=False)
-
-    # Refresh PATH so newly installed tools are visible
-    _refresh_windows_path()
-
-    # VS 2022 Community with C++ workload (NativeDesktop).
-    # --override replaces ALL default installer args, so we must include --quiet --wait.
-    # --quiet = no UI, --wait = synchronous, --norestart = don't reboot.
-    post_log("Installing Visual Studio 2022 Community with C++ workload (this may take 10-20 min)...")
-    run(
-        'winget install -e --id Microsoft.VisualStudio.2022.Community '
-        '--accept-source-agreements --accept-package-agreements '
-        '--override "'
-        '--quiet --wait --norestart '
-        '--add Microsoft.VisualStudio.Workload.NativeDesktop '
-        '--includeRecommended'
-        '"',
-        check=False,
-    )
 
     # Locate and activate VS environment
     pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
