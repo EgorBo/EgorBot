@@ -28,9 +28,6 @@ public static class Platform
     /// <summary>Get the <see cref="TargetInfo"/> for a stored platform string.</summary>
     public static TargetInfo Resolve(string platform) => TargetCatalog.GetTarget(platform);
 
-    public static bool IsLocal(string platform) =>
-        platform.StartsWith("local", StringComparison.OrdinalIgnoreCase);
-
     public static bool IsWindows(string platform) =>
         TargetCatalog.GetTarget(platform).OsFamily == "windows";
 

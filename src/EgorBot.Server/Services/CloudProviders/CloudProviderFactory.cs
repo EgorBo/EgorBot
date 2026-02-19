@@ -9,7 +9,7 @@ public sealed class CloudProviderFactory(IEnumerable<ICloudProvider> providers)
     public ICloudProvider GetProvider(string platform)
     {
         var target = Models.Platform.Resolve(platform);
-        var cloudName = target.CloudProvider; // "Azure", "AWS", "Local"
+        var cloudName = target.CloudProvider; // "Azure", "AWS", "Docker"
 
         return providers.FirstOrDefault(p =>
             p.Name.Equals(cloudName, StringComparison.OrdinalIgnoreCase))

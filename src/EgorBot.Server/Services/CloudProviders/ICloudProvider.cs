@@ -7,7 +7,7 @@ namespace EgorBot.Server.Services.CloudProviders;
 /// </summary>
 public interface ICloudProvider
 {
-    /// <summary>Human-readable name, e.g. "Azure", "AWS", "Local".</summary>
+    /// <summary>Human-readable name, e.g. "Azure", "AWS", "Docker".</summary>
     string Name { get; }
 
     /// <summary>Provision a VM (or local process) and return its instance identifier.</summary>

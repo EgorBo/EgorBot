@@ -22,7 +22,7 @@ public sealed record TargetInfo(
     /// <summary>OS family derived from the target name: "linux", "windows", or "osx".</summary>
     public string OsFamily => TargetCatalog.InferOsFamily(Name);
 
-    /// <summary>Cloud provider derived from the target name: "Azure", "AWS", "Helix", or "Local".</summary>
+    /// <summary>Cloud provider derived from the target name: "Azure", "AWS", "Helix", or "Docker".</summary>
     public string CloudProvider => TargetCatalog.InferCloudProvider(Name);
 }
 
@@ -85,13 +85,9 @@ public static class TargetCatalog
         ["windows_helix_x64"]          = new("windows_helix_x64",             VmArch.X64,   "windows.amd64.vs2022.pre.open", null,       VmCpuVendor.Intel, false),
         ["windows_helix_arm64"]        = new("windows_helix_arm64",           VmArch.Arm64, "Windows.11.Arm64.Open",       null,         VmCpuVendor.Arm,   false),
 
-        // ── Local (testing) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["local_x64"]                  = new("local_x64",                     VmArch.X64,   null,                          null,         VmCpuVendor.Amd,       false),
-        ["local_arm64"]                = new("local_arm64",                   VmArch.Arm64, null,                          null,         VmCpuVendor.Arm,       false),
-
-        // ── Docker (sandboxed local) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["ubuntu24_docker_x64"]        = new("ubuntu24_docker_x64",           VmArch.X64,   null,                          null,         VmCpuVendor.Amd,       false),
-        ["ubuntu24_docker_arm64"]      = new("ubuntu24_docker_arm64",         VmArch.Arm64, null,                          null,         VmCpuVendor.Arm,       false),
+        // ── Docker (local / sandboxed) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        ["ubuntu24_docker_x64"]        = new("ubuntu24_docker_x64",           VmArch.X64,   null,                          null,         VmCpuVendor.Amd, true),
+        ["ubuntu24_docker_arm64"]      = new("ubuntu24_docker_arm64",         VmArch.Arm64, null,                          null,         VmCpuVendor.Arm, true),
     };
 
     // ── OS distro → OS family ────────────────────────────────────────────
@@ -118,7 +114,7 @@ public static class TargetCatalog
 
     private static readonly HashSet<string> KnownClouds = new(StringComparer.OrdinalIgnoreCase)
     {
-        "azure", "aws", "helix", "local", "docker"
+        "azure", "aws", "helix", "docker"
     };
 
     // ── CPU → vendor shorthands ──────────────────────────────────────────
@@ -219,7 +215,7 @@ public static class TargetCatalog
         {
             var suffix = "_" + cpu;
             var matches = Targets.Values
-                .Where(t => t.Name != "local" && t.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                .Where(t => t.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             if (matches.Count > 0)
             {
@@ -236,7 +232,6 @@ public static class TargetCatalog
         {
             var osFamily = OsDistroToFamily.GetValueOrDefault(os, "linux");
             var candidates = Targets.Values
-                .Where(t => t.Name != "local")
                 .Where(t => t.OsFamily.Equals(osFamily, StringComparison.OrdinalIgnoreCase))
                 .Where(t => t.PreferredDefault);
 
@@ -248,6 +243,18 @@ public static class TargetCatalog
                 if (withCloud.Count > 0)
                 {
                     canonicalName = withCloud[0].Name;
+                    return true;
+                }
+
+                // No preferred target for this cloud — try non-preferred targets
+                // (e.g. docker, local targets that aren't marked as preferred defaults)
+                var nonPreferred = Targets.Values
+                    .Where(t => ExtractCloudSegment(t.Name).Equals(userCloud, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (nonPreferred.Count > 0)
+                {
+                    var hostArch = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? VmArch.Arm64 : VmArch.X64;
+                    canonicalName = (nonPreferred.FirstOrDefault(t => t.Arch == hostArch) ?? nonPreferred[0]).Name;
                     return true;
                 }
             }
@@ -267,16 +274,12 @@ public static class TargetCatalog
 
     internal static string InferOsFamily(string targetName)
     {
-        if (targetName.StartsWith("local", StringComparison.OrdinalIgnoreCase))
-            return DetectLocalOs();
         var firstSeg = targetName.Split('_')[0];
         return OsDistroToFamily.GetValueOrDefault(firstSeg, "linux");
     }
 
     internal static string InferCloudProvider(string targetName)
     {
-        if (targetName.StartsWith("local", StringComparison.OrdinalIgnoreCase))
-            return "Local";
         var cloudSeg = ExtractCloudSegment(targetName);
         return cloudSeg.ToLowerInvariant() switch
         {
@@ -284,7 +287,6 @@ public static class TargetCatalog
             "aws"   => "AWS",
             "helix" => "Helix",
             "docker" => "Docker",
-            "local" => "Local",
             _ => throw new InvalidOperationException($"Unknown cloud in target name: '{targetName}'")
         };
     }
@@ -332,7 +334,6 @@ public static class TargetCatalog
     private static TargetInfo? FindPreferredByVendor(VmCpuVendor vendor, string osFamily, string? cloudHint)
     {
         var candidates = Targets.Values
-            .Where(t => t.Name != "local")
             .Where(t => t.CpuVendor == vendor)
             .Where(t => t.OsFamily.Equals(osFamily, StringComparison.OrdinalIgnoreCase))
             .Where(t => t.PreferredDefault)
@@ -342,7 +343,6 @@ public static class TargetCatalog
         {
             // Relax OS constraint
             candidates = Targets.Values
-                .Where(t => t.Name != "local")
                 .Where(t => t.CpuVendor == vendor)
                 .Where(t => t.PreferredDefault)
                 .ToList();
@@ -360,7 +360,6 @@ public static class TargetCatalog
             // matching (vendor + OS + cloud), even if not preferred, rather than
             // returning a target from the wrong cloud.
             var anyWithCloud = Targets.Values
-                .Where(t => t.Name != "local")
                 .Where(t => t.CpuVendor == vendor)
                 .Where(t => t.OsFamily.Equals(osFamily, StringComparison.OrdinalIgnoreCase))
                 .FirstOrDefault(t => ExtractCloudSegment(t.Name).Equals(cloudHint, StringComparison.OrdinalIgnoreCase));
@@ -369,8 +368,4 @@ public static class TargetCatalog
 
         return candidates[0];
     }
-
-    private static string DetectLocalOs() =>
-        OperatingSystem.IsWindows() ? "windows" :
-        OperatingSystem.IsMacOS() ? "osx" : "linux";
 }

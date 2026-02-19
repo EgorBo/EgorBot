@@ -17,12 +17,12 @@ Content-Type: application/json
     "useProfiler": false
 }
 
-### Start a job (local, with commits to compare)
+### Start a job (docker, with commits to compare)
 POST {{baseUrl}}/api/jobs
 Content-Type: application/json
 
 {
-    "platforms": ["local"],
+    "platforms": ["docker"],
     "commitsAndPrs": "main",
     "benchmarkCode": "using System;\nusing BenchmarkDotNet.Attributes;\n\npublic class Benchmarks\n{\n    string _data = \"https://github.com/dotnet/runtime/pulls\";\n\n    [Benchmark]\n    public bool StartsWith() =>\n        _data.StartsWith(\"HTTPS://github.com/dotnet/runtime\",\n            StringComparison.OrdinalIgnoreCase);\n}",
     "useProfiler": false
