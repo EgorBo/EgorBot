@@ -32,5 +32,9 @@
   <ItemGroup>
     <ProjectReference Include="..\EgorBot.Shared\EgorBot.Shared.csproj" />
   </ItemGroup>
-
+	<ItemGroup>
+		<Content Update="@(Content)">
+			<Visible Condition="'%(NuGetItemType)' == 'Content'">false</Visible>
+		</Content>
+	</ItemGroup>
 </Project>

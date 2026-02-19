@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace EgorBot.Server.Tests;
@@ -22,10 +23,14 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
     [Fact]
     public async Task SubmitDockerJob_ReachesTerminalState()
     {
+        var currentArch = RuntimeInformation.OSArchitecture == Architecture.X64 ? "x64"
+            : RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "arm64"
+            : throw new PlatformNotSupportedException($"Unsupported architecture: {RuntimeInformation.OSArchitecture}");
+
         // ── 1. Submit job ────────────────────────────────────────────────
         var request = new
         {
-            platforms = new[] { "ubuntu24_docker_x64" },
+            platforms = new[] { $"ubuntu24_docker_{currentArch}" },
             commitsAndPrs = "",
             benchmarkCode = """
                 using System;
@@ -148,10 +153,8 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
             psi.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
             psi.Environment["ConnectionStrings__Default"] = $"Data Source={dbName}";
             psi.Environment["EgorBot__ServiceBaseUrl"] = BaseUrl;
-            psi.Environment["Telegram__BotToken"] = "";
             psi.Environment["Docker__MemoryLimitMb"] = "4096";
             psi.Environment["Docker__CpuLimit"] = "4";
-            // Override the Kestrel endpoint that takes priority over ASPNETCORE_URLS
             psi.Environment["Kestrel__Endpoints__Http__Url"] = BaseUrl;
 
             _process = Process.Start(psi)

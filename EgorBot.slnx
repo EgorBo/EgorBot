@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/tests/">
+    <File Path="src/EgorBot.Server/test-local.http" />
+    <Project Path="src/tests/EgorBot.Server.Tests/EgorBot.Server.Tests.csproj" />
+  </Folder>
+  <Project Path="src/EgorBot.Github/EgorBot.Github.csproj" />
+  <Project Path="src/EgorBot.Shared/EgorBot.Shared.csproj" />
+  <Project Path="src/EgorBot.Server/EgorBot.Server.csproj" />
+</Solution>
