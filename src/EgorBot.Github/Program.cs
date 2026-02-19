@@ -1,4 +1,5 @@
 using EgorBot.Github.Services;
+using ModelContextProtocol.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,11 +18,19 @@ builder.Services.AddHttpClient<EgorBotClient>(http =>
 builder.Services.AddSingleton<JobTrackerService>();
 builder.Services.AddHostedService<GitHubPollingService>();
 
+// ── MCP Server (Streamable HTTP transport) ──────────────────────────────────
+builder.Services.AddMcpServer()
+    .WithHttpTransport()
+    .WithToolsFromAssembly();
+
 var app = builder.Build();
 
 // ── Minimal API endpoints ───────────────────────────────────────────────────
 
 app.MapGet("/health", () => Results.Ok("healthy"));
+
+// ── MCP endpoint (Streamable HTTP at /mcp) ──────────────────────────────────
+app.MapMcp();
 
 // GET /status — show active tracked jobs
 app.MapGet("/status", (JobTrackerService tracker) =>
