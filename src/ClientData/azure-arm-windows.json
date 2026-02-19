@@ -19,10 +19,6 @@
         },
         "customData": {
             "type": "secureString"
-        },
-        "planInfo": {
-            "type": "object",
-            "defaultValue": {}
         }
     },
     "variables": {
@@ -161,7 +157,6 @@
             "dependsOn": [
                 "[concat('Microsoft.Network/networkInterfaces/', variables('networkInterfaceName'))]"
             ],
-            "plan": "[if(empty(parameters('planInfo')), json('null'), parameters('planInfo'))]",
             "properties": {
                 "hardwareProfile": {
                     "vmSize": "[parameters('virtualMachineSize')]"

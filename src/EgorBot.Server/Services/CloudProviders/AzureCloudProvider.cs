@@ -147,21 +147,18 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
 
         // Arm64 uses Windows 11 Desktop marketplace image; x64 uses Windows Server
         string publisher, offer, sku;
-        object planInfo;
 
         if (isArm64)
         {
             publisher = WindowsArm64Publisher;
             offer     = WindowsArm64Offer;
             sku       = WindowsArm64Sku;
-            planInfo  = new { name = WindowsArm64Sku, publisher = WindowsArm64Publisher, product = WindowsArm64Offer };
         }
         else
         {
             publisher = "MicrosoftWindowsServer";
             offer     = WindowsOffer;
             sku       = WindowsSkuX64;
-            planInfo  = new { };
         }
 
         return BinaryData.FromObjectAsJson(new
@@ -180,8 +177,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
                     sku,
                     version = "latest"
                 }
-            },
-            planInfo = new { value = planInfo }
+            }
         });
     }
 
