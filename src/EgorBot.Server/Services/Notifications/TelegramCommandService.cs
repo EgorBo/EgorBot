@@ -18,6 +18,7 @@ public sealed class TelegramCommandService(
     IConfiguration config,
     IServiceScopeFactory scopeFactory,
     JobOrchestrator orchestrator,
+    RuntimeSettings runtimeSettings,
     IHostApplicationLifetime appLifetime,
     IHttpClientFactory httpFactory,
     ILogger<TelegramCommandService> logger) : BackgroundService
@@ -129,11 +130,18 @@ public sealed class TelegramCommandService(
                 await SendReplyAsync(
                     "📋 *Available commands:*\n" +
                     "`jobs` — list active jobs\n" +
+                    "`cores` — show current default core count\n" +
+                    "`cores N` — set default core count (e.g. `cores 16`)\n" +
                     "`cancelall` — cancel all active jobs & deprovision VMs\n" +
                     "`quit` — shut down the service\n" +
                     "`help` — show this message");
                 break;
             default:
+                if (command.StartsWith("cores"))
+                {
+                    await HandleCoresCommandAsync(command);
+                    break;
+                }
                 await SendReplyAsync($"Unknown command: `{EscapeMarkdown(command)}`\nSend `help` for available commands.");
                 break;
         }
@@ -197,6 +205,29 @@ public sealed class TelegramCommandService(
         await SendReplyAsync(count > 0
             ? $"✅ Cancelled {count} job(s) and deprovisioned their VMs."
             : "No active jobs to cancel.");
+    }
+
+    private async Task HandleCoresCommandAsync(string command)
+    {
+        var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1)
+        {
+            // Just "cores" — show current value
+            await SendReplyAsync($"⚙️ Default cores: *{runtimeSettings.DefaultCores}*");
+            return;
+        }
+
+        if (int.TryParse(parts[1], out var newCores) && newCores is >= 1 and <= 64)
+        {
+            var old = runtimeSettings.DefaultCores;
+            runtimeSettings.DefaultCores = newCores;
+            logger.LogInformation("Admin changed DefaultCores: {Old} → {New}", old, newCores);
+            await SendReplyAsync($"✅ Default cores changed: {old} → *{newCores}*");
+        }
+        else
+        {
+            await SendReplyAsync("❌ Invalid value. Usage: `cores N` (1–64)");
+        }
     }
 
     private async Task SendReplyAsync(string text)

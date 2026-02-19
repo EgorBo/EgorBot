@@ -24,6 +24,7 @@ public sealed class JobOrchestrator(
     CloudInitBuilder cloudInitBuilder,
     LogUploadService logUploadService,
     IEnumerable<INotificationService> notifiers,
+    RuntimeSettings runtimeSettings,
     IConfiguration config,
     ILogger<JobOrchestrator> logger)
     : BackgroundService
@@ -202,7 +203,8 @@ public sealed class JobOrchestrator(
                 JobId: jobId.ToString(),
                 CloudInitScript: cloudInitScript,
                 Platform: job.Platform,
-                Job: job);
+                Job: job,
+                Cores: runtimeSettings.DefaultCores);
 
             var result = await provider.ProvisionAsync(request, ct);
             instanceId = result.InstanceId;

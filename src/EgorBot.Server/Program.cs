@@ -27,6 +27,7 @@ builder.Services.AddSingleton<CloudProviderFactory>();
 // ── Services ─────────────────────────────────────────────────────────────────
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<CloudInitBuilder>();
+builder.Services.AddSingleton<RuntimeSettings>();
 builder.Services.AddSingleton<ResultProcessor>();
 builder.Services.AddSingleton<LogUploadService>();
 builder.Services.AddSingleton<INotificationService, ConsoleNotificationService>();
