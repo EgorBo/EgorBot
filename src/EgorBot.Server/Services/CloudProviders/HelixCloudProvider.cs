@@ -1,4 +1,4 @@
-using EgorBot.Server.Models;
+using EgorBot.Shared;
 using Microsoft.DotNet.Helix.Client;
 using Microsoft.DotNet.Helix.Client.Models;
 
@@ -23,13 +23,13 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
 
     public async Task<ProvisionResult> ProvisionAsync(ProvisionRequest request, CancellationToken ct = default)
     {
-        var target = Platform.Resolve(request.Platform);
+        var target = TargetCatalog.GetTarget(request.Platform);
         var queueId = target.InstanceName
                       ?? throw new InvalidOperationException(
                           $"Helix target '{target.Name}' has no queue ID (InstanceName is null).");
 
-        var isWindows = Platform.IsWindows(request.Platform);
-        var isMacOs = Platform.GetOs(request.Platform).Equals("osx", StringComparison.OrdinalIgnoreCase);
+        var isWindows = target.OsFamily == "windows";
+        var isMacOs = target.OsFamily.Equals("osx", StringComparison.OrdinalIgnoreCase);
         var scriptFileName = isWindows ? "egorbot-run.ps1" : "egorbot-run.sh";
         var command = isWindows ? $"powershell -ExecutionPolicy Bypass -File {scriptFileName}"
                                 : $"bash {scriptFileName}";

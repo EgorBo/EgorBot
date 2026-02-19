@@ -1,3 +1,5 @@
+using EgorBot.Shared;
+
 namespace EgorBot.Server.Services.CloudProviders;
 
 /// <summary>
@@ -8,7 +10,7 @@ public sealed class CloudProviderFactory(IEnumerable<ICloudProvider> providers)
 {
     public ICloudProvider GetProvider(string platform)
     {
-        var target = Models.Platform.Resolve(platform);
+        var target = TargetCatalog.GetTarget(platform);
         var cloudName = target.CloudProvider; // "Azure", "AWS", "Docker"
 
         return providers.FirstOrDefault(p =>

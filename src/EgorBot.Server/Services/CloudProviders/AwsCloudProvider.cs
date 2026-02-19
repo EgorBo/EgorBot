@@ -3,7 +3,7 @@ using Amazon;
 using Amazon.EC2;
 using Amazon.EC2.Model;
 using Amazon.Runtime;
-using EgorBot.Server.Models;
+using EgorBot.Shared;
 
 namespace EgorBot.Server.Services.CloudProviders;
 
@@ -45,7 +45,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
     /// </summary>
     private static string ResolveInstanceType(string platform, int cores)
     {
-        var target = Platform.Resolve(platform);
+        var target = TargetCatalog.GetTarget(platform);
         var family = target.InstanceName
             ?? throw new InvalidOperationException($"Target '{target.Name}' has no EC2 instance family (InstanceName) defined.");
 
@@ -69,9 +69,10 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
     /// </summary>
     private static string ResolveAmi(string platform)
     {
-        if (Platform.IsWindows(platform))
+        var target = TargetCatalog.GetTarget(platform);
+        if (target.OsFamily == "windows")
             return WindowsServer2025;
-        return Platform.GetArch(platform) == "arm64"
+        return target.Arch == VmArch.Arm64
             ? Ubuntu2404Arm64
             : Ubuntu2404X64;
     }
@@ -103,7 +104,8 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
                 request.JobId, instanceType, imageId, diskSize, securityGroupId, subnetId);
 
             // AWS EC2Launch requires PowerShell UserData wrapped in <powershell> tags
-            var userData = Platform.IsWindows(request.Platform)
+            var isWindows = TargetCatalog.GetTarget(request.Platform).OsFamily == "windows";
+            var userData = isWindows
                 ? $"<powershell>\n{request.CloudInitScript}\n</powershell>"
                 : request.CloudInitScript;
 
@@ -121,7 +123,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
                 [
                     new BlockDeviceMapping
                     {
-                        DeviceName = Platform.IsWindows(request.Platform) ? "/dev/sda1" : "/dev/sda1",
+                        DeviceName = isWindows ? "/dev/sda1" : "/dev/sda1",
                         Ebs = new EbsBlockDevice
                         {
                             VolumeSize = diskSize,
@@ -165,7 +167,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
 
             if (!string.IsNullOrEmpty(publicIp))
             {
-                var sshUser = Platform.IsWindows(request.Platform) ? "Administrator" : "ubuntu";
+                var sshUser = isWindows ? "Administrator" : "ubuntu";
                 var pemPath = config["Aws:SshKeyPath"] ?? "<ssh-key-path-not-specified>";
                 logger.LogInformation(
                     "[{JobId}] Instance {InstanceId}\n\nssh {User}@{IP} -i {Pem}\n",

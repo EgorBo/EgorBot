@@ -7,7 +7,7 @@ using Azure.ResourceManager.Compute;
 using Azure.ResourceManager.Network;
 using Azure.ResourceManager.Resources;
 using Azure.ResourceManager.Resources.Models;
-using EgorBot.Server.Models;
+using EgorBot.Shared;
 
 namespace EgorBot.Server.Services.CloudProviders;
 
@@ -51,7 +51,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     /// </summary>
     private string ResolveVmSize(string platform, int cores)
     {
-        var target = Platform.Resolve(platform);
+        var target = TargetCatalog.GetTarget(platform);
 
         // Allow config override: Azure:VmSizeOverride:azure_genoa → "Standard_D{0}ads_v6"
         var template = config[$"Azure:VmSizeOverride:{target.Name}"];
@@ -70,7 +70,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     /// </summary>
     private AzureLocation ResolveLocation(string platform)
     {
-        var target = Platform.Resolve(platform);
+        var target = TargetCatalog.GetTarget(platform);
 
         // Allow config override: Azure:LocationOverride:azure_genoa → "westeurope"
         var locationStr = config[$"Azure:LocationOverride:{target.Name}"];
@@ -81,7 +81,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             return new AzureLocation(target.Region);
 
         // Final fallback
-        return Platform.IsWindows(platform) ? AzureLocation.WestEurope : AzureLocation.EastUS;
+        return target.OsFamily == "windows" ? AzureLocation.WestEurope : AzureLocation.EastUS;
     }
 
     /// <summary>
@@ -102,7 +102,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     /// </summary>
     private BinaryData BuildLinuxParameters(string jobId, string vmSize, string cloudInitScript, int diskSizeGb, string platform)
     {
-        var isArm64 = Platform.GetArch(platform) == "arm64";
+        var isArm64 = TargetCatalog.GetTarget(platform).Arch == VmArch.Arm64;
         var offer = DefaultOffer;
         var sku = isArm64 ? DefaultSkuArm64 : DefaultSkuX64;
 
@@ -135,7 +135,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     /// </summary>
     private BinaryData BuildWindowsParameters(string jobId, string vmSize, string cloudInitScript, int diskSizeGb, string platform)
     {
-        var isArm64 = Platform.GetArch(platform) == "arm64";
+        var isArm64 = TargetCatalog.GetTarget(platform).Arch == VmArch.Arm64;
         var offer = WindowsOffer;
         var sku = isArm64 ? WindowsSkuArm64 : WindowsSkuX64;
 
@@ -233,7 +233,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
                 request.JobId, resourceGroupName, location);
 
             // 2. Download ARM template (separate templates for Linux vs Windows)
-            var isWindows = Platform.IsWindows(request.Platform);
+            var isWindows = TargetCatalog.GetTarget(request.Platform).OsFamily == "windows";
             var template = await DownloadArmTemplateAsync(isWindows, ct);
 
             // 3. Build deployment parameters

@@ -1,5 +1,6 @@
 using System.Text;
 using EgorBot.Server.Models;
+using EgorBot.Shared;
 
 namespace EgorBot.Server.Services.CloudInit;
 
@@ -22,8 +23,9 @@ public sealed class CloudInitBuilder(IConfiguration config)
         var csprojUrl = config["EgorBot:DefaultCsprojUrl"] 
                         ?? throw new InvalidOperationException("EgorBot:DefaultCsprojUrl configuration is required");
 
-        var isWindows = Platform.IsWindows(job.Platform);
-        var isMacOs = Platform.GetOs(job.Platform).Equals("osx", StringComparison.OrdinalIgnoreCase);
+        var target = TargetCatalog.GetTarget(job.Platform);
+        var isWindows = target.OsFamily == "windows";
+        var isMacOs = target.OsFamily.Equals("osx", StringComparison.OrdinalIgnoreCase);
 
         var platformUrl = isWindows
             ? config["EgorBot:AgentScriptWindowsUrl"]

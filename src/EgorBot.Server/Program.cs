@@ -2,6 +2,7 @@ using System.Text.Json;
 using EgorBot.Server.Data;
 using EgorBot.Server.Models;
 using EgorBot.Server.Services;
+using EgorBot.Shared;
 using EgorBot.Server.Services.CloudInit;
 using EgorBot.Server.Services.CloudProviders;
 using EgorBot.Server.Services.Notifications;
@@ -102,16 +103,16 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
     var normalizedPlatforms = new List<string>();
     foreach (var raw in request.Platforms)
     {
-        if (!Platform.IsValid(raw))
+        if (!TargetCatalog.TryResolve(raw, out _))
         {
             log.LogWarning("Validation failed: unknown target '{Target}'", raw);
             return Results.BadRequest(new
             {
-                error = $"Unknown target: '{raw}'. Valid targets: {string.Join(", ", Platform.GetAllTargetNames())}."
+                error = $"Unknown target: '{raw}'. Valid targets: {string.Join(", ", TargetCatalog.GetAllTargetNames())}."
             });
         }
 
-        var normalized = Platform.Normalize(raw);
+        var normalized = TargetCatalog.Resolve(raw);
         normalizedPlatforms.Add(normalized);
     }
 

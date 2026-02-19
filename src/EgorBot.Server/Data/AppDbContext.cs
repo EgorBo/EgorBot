@@ -18,9 +18,6 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(j => j.Status).HasConversion<string>().HasMaxLength(32);
         });
 
-        modelBuilder.Entity<JobLogEntry>(e =>
-        {
-            e.HasIndex(l => new { l.JobId, l.Id });
-        });
+        modelBuilder.Entity<JobLogEntry>(e => e.HasIndex(l => new { l.JobId, l.Id }));
     }
 }
