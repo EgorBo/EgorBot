@@ -86,9 +86,12 @@ public static class TargetCatalog
         ["windows_helix_arm64"]        = new("windows_helix_arm64",           VmArch.Arm64, "Windows.11.Arm64.Open",       null,         VmCpuVendor.Arm,   false),
 
         // ── Local (testing) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["local"]                      = new("local",                         DetectLocalArch(), null,                      null,         DetectLocalCpuVendor(), false),
         ["local_x64"]                  = new("local_x64",                     VmArch.X64,   null,                          null,         VmCpuVendor.Amd,       false),
         ["local_arm64"]                = new("local_arm64",                   VmArch.Arm64, null,                          null,         VmCpuVendor.Arm,       false),
+
+        // ── Docker (sandboxed local) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        ["ubuntu24_docker_x64"]        = new("ubuntu24_docker_x64",           VmArch.X64,   null,                          null,         VmCpuVendor.Amd,       false),
+        ["ubuntu24_docker_arm64"]      = new("ubuntu24_docker_arm64",         VmArch.Arm64, null,                          null,         VmCpuVendor.Arm,       false),
     };
 
     // ── OS distro → OS family ────────────────────────────────────────────
@@ -370,10 +373,4 @@ public static class TargetCatalog
     private static string DetectLocalOs() =>
         OperatingSystem.IsWindows() ? "windows" :
         OperatingSystem.IsMacOS() ? "osx" : "linux";
-
-    private static VmArch DetectLocalArch() =>
-        RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? VmArch.Arm64 : VmArch.X64;
-
-    private static VmCpuVendor DetectLocalCpuVendor() =>
-        RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? VmCpuVendor.Arm : VmCpuVendor.Amd;
 }

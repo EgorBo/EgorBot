@@ -275,11 +275,6 @@ public sealed class JobOrchestrator(
                 if (logsBlobUrl is not null)
                 {
                     job.LogsBlobUrl = logsBlobUrl;
-
-                    // Append log link to the result markdown
-                    var logLine = $"\n\n[Full logs]({logsBlobUrl})\n";
-                    job.ResultMarkdown = (job.ResultMarkdown ?? "") + logLine;
-
                     await db.SaveChangesAsync(CancellationToken.None);
                 }
             }

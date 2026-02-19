@@ -199,13 +199,18 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
     }
 
     /// <summary>
-    /// Extract the label (e.g. "base", "diff", "PR_12345") from a perf artifact file name.
-    /// Examples: "base.asm" → "base", "base_flamegraph.svg" → "base",
-    /// "speedscope_base_xxx.speedscope" → "base"
+    /// Extract the label (e.g. "main", "12f45a03", "PR_124445") from a perf artifact file name.
+    /// File patterns produced by the agent:
+    ///   {label}_flamegraph.svg
+    ///   {label}_functions.txt
+    ///   {label}.asm
+    ///   {label}.stats
+    ///   speedscope_{label}_{jobid}.speedscope
+    /// Labels may contain underscores (e.g. "PR_124445"), so we strip known suffixes.
     /// </summary>
     private static string ExtractLabel(string fileName)
     {
-        // speedscope_{label}_{jobid}.speedscope
+        // speedscope_{label}_{jobid}.speedscope — strip prefix and last _segment (jobid)
         if (fileName.StartsWith("speedscope_", StringComparison.OrdinalIgnoreCase))
         {
             var rest = fileName["speedscope_".Length..];
@@ -213,13 +218,16 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
             return lastUnderscore > 0 ? rest[..lastUnderscore] : rest.Split('.')[0];
         }
 
-        // {label}_flamegraph.svg, {label}_functions.txt
-        if (fileName.Contains("_flamegraph.") || fileName.Contains("_functions."))
-        {
-            return fileName[..fileName.IndexOf('_')];
-        }
+        // {label}_flamegraph.svg — strip "_flamegraph.svg"
+        if (fileName.EndsWith("_flamegraph.svg", StringComparison.OrdinalIgnoreCase))
+            return fileName[..^"_flamegraph.svg".Length];
 
-        // {label}.asm, {label}.stats, {label}.perf_list.txt
-        return fileName.Split('.')[0];
+        // {label}_functions.txt — strip "_functions.txt"
+        if (fileName.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase))
+            return fileName[..^"_functions.txt".Length];
+
+        // {label}.asm, {label}.stats — strip extension
+        var dot = fileName.LastIndexOf('.');
+        return dot > 0 ? fileName[..dot] : fileName;
     }
 }

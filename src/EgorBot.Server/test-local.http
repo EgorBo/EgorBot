@@ -11,7 +11,7 @@ POST {{baseUrl}}/api/jobs
 Content-Type: application/json
 
 {
-    "platforms": ["local"],
+    "platforms": ["ubuntu24_docker_x64"],
     "commitsAndPrs": "",
     "benchmarkCode": "using System;\nusing BenchmarkDotNet.Attributes;\n\npublic class Benchmarks\n{\n    string _data = \"https://github.com/dotnet/runtime/pulls\";\n\n    [Benchmark]\n    public bool StartsWith() =>\n        _data.StartsWith(\"HTTPS://github.com/dotnet/runtime\",\n            StringComparison.OrdinalIgnoreCase);\n}",
     "useProfiler": false
