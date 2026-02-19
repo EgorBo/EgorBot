@@ -44,21 +44,16 @@ public sealed record TargetInfo(
 /// </summary>
 public static class TargetCatalog
 {
-    // ── Helix queue IDs (long container-image strings) ─────────────────
-
-    private const string HelixQueueLinuxX64   = "(Ubuntu.2604.Amd64.Open)AzureLinux.3.Amd64.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-26.04-helix-amd64";
-    private const string HelixQueueLinuxArm64 = "(Ubuntu.2404.Arm64.Open)Ubuntu.2204.Armarch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-helix-arm64v8";
-    private const string HelixQueueLinuxArm32 = "(Debian.12.Arm32.Open)Ubuntu.2204.ArmArch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:debian-12-helix-arm32v7";
-
-    // ── Target catalog ───────────────────────────────────────────────────
 
     private static readonly Dictionary<string, TargetInfo> Targets = new(StringComparer.OrdinalIgnoreCase)
     {
         //                                                                    Arch          InstanceName                   Region        CpuVendor          Default
         // ── Azure ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        ["ubuntu24_azure_turin"]       = new("ubuntu24_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",         "westeurope", VmCpuVendor.Amd,   false),
         ["ubuntu24_azure_genoa"]       = new("ubuntu24_azure_genoa",          VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   true),
         ["ubuntu24_azure_milano"]      = new("ubuntu24_azure_milano",         VmArch.X64,   "Standard_D{0}ads_v5",         "westeurope", VmCpuVendor.Amd,   false),
         ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, true),
+        ["ubuntu24_azure_emeraldrapids"] = new("ubuntu24_azure_emeraldrapids",VmArch.X64,   "Standard_D{0}ds_v6",          "westeurope", VmCpuVendor.Intel, false),
         ["ubuntu24_azure_cobalt100"]   = new("ubuntu24_azure_cobalt100",      VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true),
         ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false),
         ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, true),
@@ -91,6 +86,11 @@ public static class TargetCatalog
         ["ubuntu24_docker_x64"]        = new("ubuntu24_docker_x64",           VmArch.X64,   null,                          null,         VmCpuVendor.Amd, true),
         ["ubuntu24_docker_arm64"]      = new("ubuntu24_docker_arm64",         VmArch.Arm64, null,                          null,         VmCpuVendor.Arm, true),
     };
+
+    // Helix long names
+    private const string HelixQueueLinuxX64 = "(Ubuntu.2604.Amd64.Open)AzureLinux.3.Amd64.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-26.04-helix-amd64";
+    private const string HelixQueueLinuxArm64 = "(Ubuntu.2404.Arm64.Open)Ubuntu.2204.Armarch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-helix-arm64v8";
+    private const string HelixQueueLinuxArm32 = "(Debian.12.Arm32.Open)Ubuntu.2204.ArmArch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:debian-12-helix-arm32v7";
 
     // ── OS distro → OS family ────────────────────────────────────────────
 

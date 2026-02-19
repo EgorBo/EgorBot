@@ -89,16 +89,15 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     }
 
     /// <summary>
-    /// Download the ARM template JSON from a gist URL.
+    /// Load the ARM template JSON from an embedded resource.
     /// </summary>
-    private async Task<string> DownloadArmTemplateAsync(bool isWindows, CancellationToken ct)
+    private static string LoadArmTemplate(bool isWindows)
     {
-        var configKey = isWindows ? "Azure:WindowsArmTemplateUrl" : "Azure:ArmTemplateUrl";
-        var url = config[configKey];
-        if (string.IsNullOrEmpty(url))
-            throw new InvalidOperationException($"{configKey} not configured.");
-        using var http = new HttpClient();
-        return await http.GetStringAsync(url, ct);
+        var resourceName = isWindows ? "azure-arm-windows.json" : "azure-arm-linux.json";
+        using var stream = typeof(AzureCloudProvider).Assembly.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"Embedded ARM template '{resourceName}' not found.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     /// <summary>
@@ -254,9 +253,9 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             logger.LogInformation("[{JobId}] Resource group '{RG}' created in {Location}",
                 request.JobId, resourceGroupName, location);
 
-            // 2. Download ARM template (separate templates for Linux vs Windows)
+            // 2. Load ARM template (separate templates for Linux vs Windows)
             var isWindows = TargetCatalog.GetTarget(request.Platform).OsFamily == "windows";
-            var template = await DownloadArmTemplateAsync(isWindows, ct);
+            var template = LoadArmTemplate(isWindows);
 
             // 3. Build deployment parameters
             var parameters = isWindows

@@ -32,6 +32,11 @@
   <ItemGroup>
     <ProjectReference Include="..\EgorBot.Shared\EgorBot.Shared.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\ClientData\azure-arm-linux.json" LogicalName="azure-arm-linux.json" />
+    <EmbeddedResource Include="..\ClientData\azure-arm-windows.json" LogicalName="azure-arm-windows.json" />
+  </ItemGroup>
 	<ItemGroup>
 		<Content Update="@(Content)">
 			<Visible Condition="'%(NuGetItemType)' == 'Content'">false</Visible>
