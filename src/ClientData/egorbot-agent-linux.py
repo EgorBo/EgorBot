@@ -18,6 +18,9 @@ from pathlib import Path
 # ── Injected by common module's load_platform_module() ──────────────────────
 common = None  # type: ignore
 
+# Absolute path to the perf binary (resolved during install_platform_deps)
+PERF_BIN: str = ""
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  setup_platform (optional — Linux needs HOME set)
@@ -44,32 +47,63 @@ def install_platform_deps():
 
         # Install perf if enabled and not already available
         if common.CFG.perf_enabled and not shutil.which("perf"):
-            common.post_log("perf not found, installing linux-tools...")
-            # Detect kernel flavour (e.g. "azure", "aws", "generic") to install
-            # the matching linux-tools package.  uname -r returns something like
-            # "6.14.0-1017-azure" → flavour = "azure".
-            uname_r = subprocess.check_output(["uname", "-r"], text=True).strip()
-            parts = uname_r.split("-")
-            flavour = parts[-1] if len(parts) >= 3 and not parts[-1][0].isdigit() else "generic"
-            common.post_log(f"Kernel: {uname_r}, flavour: {flavour}")
-            common.run(
-                f"sudo apt install -y linux-tools-common linux-tools-{flavour} linux-cloud-tools-{flavour}",
-                check=False,
-            )
-            # Fallback: try the exact kernel version package
-            if not shutil.which("perf"):
-                common.run(f"sudo apt install -y linux-tools-{uname_r}", check=False)
-            # Symlink fallback if the version directory doesn't match exactly
-            common.run(
-                "bash -c 'ln -s /usr/lib/linux-tools/$(ls /usr/lib/linux-tools/ "
-                "| grep -v common | head -n 1) /usr/lib/linux-tools/$(uname -r) || true'",
-                check=False,
-            )
+            _build_perf_from_source()
     elif shutil.which("tdnf"):
         common.run("sudo tdnf install -y git zip ninja-build", check=chk)
         common.run("sudo tdnf update -y", check=chk)
     elif shutil.which("dnf"):
         common.run("sudo dnf install -y git zip ninja-build", check=chk)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Build perf from source
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _build_perf_from_source():
+    """Compile perf from the kernel source tree and set PERF_BIN."""
+    global PERF_BIN
+    common.post_log("perf not found, building from source...")
+
+    # Install build dependencies
+    common.run(
+        "sudo apt update && sudo apt install -y "
+        "build-essential git flex bison pkg-config "
+        "libelf-dev libdw-dev libtraceevent-dev "
+        "python3-dev libslang2-dev libperl-dev "
+        "libunwind-dev libcap-dev libzstd-dev "
+        "libnuma-dev libbabeltrace-dev binutils-dev "
+        "libiberty-dev libaudit-dev libdebuginfod-dev "
+        "systemtap-sdt-dev libbpf-dev libssl-dev",
+        check=False,
+    )
+
+    # Clone a shallow copy of the kernel tree
+    linux_src = common.WORK_DIR / "linux"
+    if not linux_src.is_dir():
+        common.run(
+            f'git clone --depth 1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git "{linux_src}"',
+        )
+
+    perf_src = linux_src / "tools" / "perf"
+    common.run("make clean || true", cwd=perf_src, check=False)
+    result = common.run(f"make -j$(nproc)", cwd=perf_src, check=False)
+    if result.returncode != 0:
+        common.post_log("WARNING: perf build failed")
+        return
+
+    built_perf = perf_src / "perf"
+    if built_perf.is_file():
+        PERF_BIN = str(built_perf)
+        common.run(f'"{PERF_BIN}" version --build-options', check=False)
+        common.post_log(f"perf built successfully: {PERF_BIN}")
+    else:
+        common.post_log("WARNING: perf binary not found after build")
+
+
+def _perf() -> str:
+    """Return a sudo-prefixed absolute path to the perf binary, or 'sudo perf' as fallback."""
+    bin_path = PERF_BIN if PERF_BIN else (shutil.which("perf") or "perf")
+    return f"sudo {bin_path}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -86,24 +120,12 @@ def run_perf_profiling():
     common.run("sudo sysctl -w kernel.perf_event_paranoid=-1", check=False)
     common.run("sudo sysctl -w kernel.kptr_restrict=0", check=False)
 
-    # Ensure perf is on PATH
-    if not shutil.which("perf"):
-        for p in sorted(Path("/usr/lib").glob("linux-tools-*/perf")):
-            parent = str(p.parent)
-            if parent not in os.environ.get("PATH", ""):
-                os.environ["PATH"] = parent + os.pathsep + os.environ["PATH"]
-            break
-        for p in sorted(Path("/usr/lib").glob("linux-tools/*/perf")):
-            parent = str(p.parent)
-            if parent not in os.environ.get("PATH", ""):
-                os.environ["PATH"] = parent + os.pathsep + os.environ["PATH"]
-            break
-
-    if not shutil.which("perf"):
-        common.post_log("[PERF] perf not found even after PATH fix, skipping profiling")
+    perf = _perf()
+    if not perf or (perf == "perf" and not shutil.which("perf")):
+        common.post_log("[PERF] perf not found, skipping profiling")
         return
 
-    common.post_log(f"[PERF] perf found at: {shutil.which('perf')}")
+    common.post_log(f"[PERF] using perf: {perf}")
 
     # Clone FlameGraph repo
     flamegraph_dir = common.DIR_BENCHAPP / "FlameGraph"
@@ -232,23 +254,23 @@ def run_perf_profiling():
 
             # High-frequency perf record
             common.post_log(f"[PERF]   Recording high-freq (-F {high_freq}) for 5s...")
-            common.run(f"perf record {perf_record_args} -k 1 -g -F {high_freq} -p {pid} -o {perf_data} sleep 5",
+            common.run(f"\"{perf}\" record {perf_record_args} -k 1 -g -F {high_freq} -p {pid} -o {perf_data} sleep 5",
                        check=False)
             time.sleep(2)
 
             # Low-frequency perf record (for speedscope)
             common.post_log(f"[PERF]   Recording low-freq (-F {low_freq}) for 3s...")
-            common.run(f"perf record {perf_record_args} -k 1 -g -F {low_freq} -p {pid} -o {perf_small} sleep 3",
+            common.run(f"\"{perf}\" record {perf_record_args} -k 1 -g -F {low_freq} -p {pid} -o {perf_small} sleep 3",
                        check=False)
             time.sleep(2)
 
             # Perf stat
             stats_file = bench_dir / f"{label}.stats"
-            common.run(f"perf stat -o {stats_file} -p {pid} sleep 6", check=False)
+            common.run(f"\"{perf}\" stat -o {stats_file} -p {pid} sleep 6", check=False)
 
             # List perf counters
             perf_list_file = bench_dir / f"{label}.perf_list.txt"
-            common.run("perf list", check=False, stdout_file=perf_list_file)
+            common.run(f"\"{perf}\" list", check=False, stdout_file=perf_list_file)
 
             # Kill the benchmark process
             common.post_log("[PERF]   Killing benchmark process...")
@@ -263,29 +285,29 @@ def run_perf_profiling():
             # Symbolize with perf inject
             perfjit = bench_dir / "perfjit.data"
             perfjit_small = bench_dir / "perfjit_small.data"
-            common.run(f"perf inject --input {perf_data} --jit --output {perfjit}", check=False)
-            common.run(f"perf inject --input {perf_small} --jit --output {perfjit_small}", check=False)
+            common.run(f"\"{perf}\" inject --input {perf_data} --jit --output {perfjit}", check=False)
+            common.run(f"\"{perf}\" inject --input {perf_small} --jit --output {perfjit_small}", check=False)
 
             # Function report
             functions_file = bench_dir / f"{label}_functions.txt"
-            common.run(f"perf report --input {perfjit} --no-children --percent-limit 2 --stdio",
+            common.run(f"\"{perf}\" report --input {perfjit} --no-children --percent-limit 2 --stdio",
                        check=False, stdout_file=functions_file)
 
             # Hot assembly annotation
             asm_file = bench_dir / f"{label}.asm"
-            common.run(f"perf annotate --stdio2 -i {perfjit} --percent-limit 2 -M intel",
+            common.run(f"\"{perf}\" annotate --stdio2 -i {perfjit} --percent-limit 2 -M intel",
                        check=False, stdout_file=asm_file)
 
             # Flamegraph (interactive SVG)
             svg_file = bench_dir / f"{label}_flamegraph.svg"
-            common.run(f"perf script -i {perfjit} | "
+            common.run(f"\"{perf}\" script -i {perfjit} | "
                        f"{flamegraph_dir}/stackcollapse-perf.pl | "
                        f"{flamegraph_dir}/flamegraph.pl",
                        check=False, stdout_file=svg_file)
 
             # Speedscope (collapsed stacks)
             speedscope_file = bench_dir / f"speedscope_{label}_{common.CFG.job_id}.speedscope"
-            common.run(f"perf script -i {perfjit_small} | "
+            common.run(f"\"{perf}\" script -i {perfjit_small} | "
                        f"{flamegraph_dir}/stackcollapse-perf.pl",
                        check=False, stdout_file=speedscope_file)
 

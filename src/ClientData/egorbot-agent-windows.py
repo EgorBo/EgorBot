@@ -94,6 +94,7 @@ def _ensure_vs_build_tools():
     common.run(f'"{vs_installer}" --quiet --wait --norestart '
         '--add Microsoft.VisualStudio.Workload.VCTools '
         '--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 '
+        '--add Microsoft.VisualStudio.Component.VC.Tools.ARM64 '
         '--add Microsoft.VisualStudio.Component.Windows11SDK.26100 '
         '--includeRecommended',
         check=False)
