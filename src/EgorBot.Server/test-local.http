@@ -16,26 +16,3 @@ Content-Type: application/json
     "benchmarkCode": "using System;\nusing BenchmarkDotNet.Attributes;\n\npublic class Benchmarks\n{\n    string _data = \"https://github.com/dotnet/runtime/pulls\";\n\n    [Benchmark]\n    public bool StartsWith() =>\n        _data.StartsWith(\"HTTPS://github.com/dotnet/runtime\",\n            StringComparison.OrdinalIgnoreCase);\n}",
     "useProfiler": false
 }
-
-### Start a job (docker, with commits to compare)
-POST {{baseUrl}}/api/jobs
-Content-Type: application/json
-
-{
-    "platforms": ["docker"],
-    "commitsAndPrs": "main",
-    "benchmarkCode": "using System;\nusing BenchmarkDotNet.Attributes;\n\npublic class Benchmarks\n{\n    string _data = \"https://github.com/dotnet/runtime/pulls\";\n\n    [Benchmark]\n    public bool StartsWith() =>\n        _data.StartsWith(\"HTTPS://github.com/dotnet/runtime\",\n            StringComparison.OrdinalIgnoreCase);\n}",
-    "useProfiler": false
-}
-
-### Get job status (replace {jobId} with actual ID)
-GET {{baseUrl}}/api/jobs/00000000-0000-0000-0000-000000000000/status
-
-### Get job result (replace {jobId} with actual ID)
-GET {{baseUrl}}/api/jobs/00000000-0000-0000-0000-000000000000/result
-
-### Get job logs (replace {jobId} with actual ID)
-GET {{baseUrl}}/api/jobs/00000000-0000-0000-0000-000000000000/logs
-
-### List all jobs
-GET {{baseUrl}}/api/jobs?page=1&pageSize=20

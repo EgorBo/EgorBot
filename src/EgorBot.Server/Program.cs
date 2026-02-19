@@ -419,3 +419,6 @@ app.MapGet("/jobs/{id:guid}", async (Guid id, HttpContext ctx) =>
 app.MapGet("/health", () => Results.Ok("healthy"));
 
 app.Run();
+
+/// <summary>Partial class to enable WebApplicationFactory&lt;Program&gt; in tests.</summary>
+public partial class Program { }

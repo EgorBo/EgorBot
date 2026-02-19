@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/EgorBot.Server.Tests/EgorBot.Server.Tests.csproj" />
+  </Folder>
   <Project Path="EgorBot.Github/EgorBot.Github.csproj" />
   <Project Path="EgorBot.Shared/EgorBot.Shared.csproj" />
   <Project Path="EgorBot.Server/EgorBot.Server.csproj" />
