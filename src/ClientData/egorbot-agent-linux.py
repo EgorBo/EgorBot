@@ -285,29 +285,29 @@ def run_perf_profiling():
             # Symbolize with perf inject
             perfjit = bench_dir / "perfjit.data"
             perfjit_small = bench_dir / "perfjit_small.data"
-            common.run(f"\"{perf}\" inject --input {perf_data} --jit --output {perfjit}", check=False)
-            common.run(f"\"{perf}\" inject --input {perf_small} --jit --output {perfjit_small}", check=False)
+            common.run(f"{perf} inject --input {perf_data} --jit --output {perfjit}", check=False)
+            common.run(f"{perf} inject --input {perf_small} --jit --output {perfjit_small}", check=False)
 
             # Function report
             functions_file = bench_dir / f"{label}_functions.txt"
-            common.run(f"\"{perf}\" report --input {perfjit} --no-children --percent-limit 2 --stdio",
+            common.run(f"{perf} report --input {perfjit} --no-children --percent-limit 2 --stdio",
                        check=False, stdout_file=functions_file)
 
             # Hot assembly annotation
             asm_file = bench_dir / f"{label}.asm"
-            common.run(f"\"{perf}\" annotate --stdio2 -i {perfjit} --percent-limit 2 -M intel",
+            common.run(f"{perf} annotate --stdio2 -i {perfjit} --percent-limit 2 -M intel",
                        check=False, stdout_file=asm_file)
 
             # Flamegraph (interactive SVG)
             svg_file = bench_dir / f"{label}_flamegraph.svg"
-            common.run(f"\"{perf}\" script -i {perfjit} | "
+            common.run(f"{perf} script -i {perfjit} | "
                        f"{flamegraph_dir}/stackcollapse-perf.pl | "
                        f"{flamegraph_dir}/flamegraph.pl",
                        check=False, stdout_file=svg_file)
 
             # Speedscope (collapsed stacks)
             speedscope_file = bench_dir / f"speedscope_{label}_{common.CFG.job_id}.speedscope"
-            common.run(f"\"{perf}\" script -i {perfjit_small} | "
+            common.run(f"{perf} script -i {perfjit_small} | "
                        f"{flamegraph_dir}/stackcollapse-perf.pl",
                        check=False, stdout_file=speedscope_file)
 
