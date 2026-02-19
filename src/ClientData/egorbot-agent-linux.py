@@ -46,7 +46,7 @@ def install_platform_deps():
         common.run("sudo apt install -y git zip ninja-build", check=chk)
 
         # Install perf if enabled and not already available
-        if common.CFG.perf_enabled and not shutil.which("perf"):
+        if common.CFG.perf_enabled:
             _build_perf_from_source()
     elif shutil.which("tdnf"):
         common.run("sudo tdnf install -y git zip ninja-build", check=chk)
@@ -121,8 +121,8 @@ def run_perf_profiling():
     common.run("sudo sysctl -w kernel.kptr_restrict=0", check=False)
 
     perf = _perf()
-    if not perf or (perf == "perf" and not shutil.which("perf")):
-        common.post_log("[PERF] perf not found, skipping profiling")
+    if not PERF_BIN:
+        common.post_log("[PERF] perf was not built from source, skipping profiling")
         return
 
     common.post_log(f"[PERF] using perf: {perf}")
@@ -254,23 +254,23 @@ def run_perf_profiling():
 
             # High-frequency perf record
             common.post_log(f"[PERF]   Recording high-freq (-F {high_freq}) for 5s...")
-            common.run(f"\"{perf}\" record {perf_record_args} -k 1 -g -F {high_freq} -p {pid} -o {perf_data} sleep 5",
+            common.run(f"{perf} record {perf_record_args} -k 1 -g -F {high_freq} -p {pid} -o {perf_data} sleep 5",
                        check=False)
             time.sleep(2)
 
             # Low-frequency perf record (for speedscope)
             common.post_log(f"[PERF]   Recording low-freq (-F {low_freq}) for 3s...")
-            common.run(f"\"{perf}\" record {perf_record_args} -k 1 -g -F {low_freq} -p {pid} -o {perf_small} sleep 3",
+            common.run(f"{perf} record {perf_record_args} -k 1 -g -F {low_freq} -p {pid} -o {perf_small} sleep 3",
                        check=False)
             time.sleep(2)
 
             # Perf stat
             stats_file = bench_dir / f"{label}.stats"
-            common.run(f"\"{perf}\" stat -o {stats_file} -p {pid} sleep 6", check=False)
+            common.run(f"{perf} stat -o {stats_file} -p {pid} sleep 6", check=False)
 
             # List perf counters
             perf_list_file = bench_dir / f"{label}.perf_list.txt"
-            common.run(f"\"{perf}\" list", check=False, stdout_file=perf_list_file)
+            common.run(f"{perf} list", check=False, stdout_file=perf_list_file)
 
             # Kill the benchmark process
             common.post_log("[PERF]   Killing benchmark process...")
