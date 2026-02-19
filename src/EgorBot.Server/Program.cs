@@ -17,7 +17,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=egorbot.db"));
 
 // ── Cloud providers ──────────────────────────────────────────────────────────
-if (builder.Configuration.GetValue<bool>("EgorBot:AllowLocalTarget"))
+if (builder.Configuration.GetValue<bool>("LocalRunner:Enabled"))
     builder.Services.AddSingleton<ICloudProvider, LocalRunnerProvider>();
 builder.Services.AddSingleton<ICloudProvider, AzureCloudProvider>();
 builder.Services.AddSingleton<ICloudProvider, AwsCloudProvider>();
@@ -101,7 +101,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
     }
 
     // Normalize & validate targets (resolve aliases, OS prefix)
-    var allowLocal = app.Configuration.GetValue<bool>("EgorBot:AllowLocalTarget");
+    var allowLocal = app.Configuration.GetValue<bool>("LocalRunner:Enabled");
     var normalizedPlatforms = new List<string>();
     foreach (var raw in request.Platforms)
     {

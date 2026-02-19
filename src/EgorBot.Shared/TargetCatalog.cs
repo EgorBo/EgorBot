@@ -87,6 +87,8 @@ public static class TargetCatalog
 
         // ── Local (testing) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
         ["local"]                      = new("local",                         DetectLocalArch(), null,                      null,         DetectLocalCpuVendor(), false),
+        ["local_x64"]                  = new("local_x64",                     VmArch.X64,   null,                          null,         VmCpuVendor.Amd,       false),
+        ["local_arm64"]                = new("local_arm64",                   VmArch.Arm64, null,                          null,         VmCpuVendor.Arm,       false),
     };
 
     // ── OS distro → OS family ────────────────────────────────────────────
@@ -262,7 +264,7 @@ public static class TargetCatalog
 
     internal static string InferOsFamily(string targetName)
     {
-        if (targetName.Equals("local", StringComparison.OrdinalIgnoreCase))
+        if (targetName.StartsWith("local", StringComparison.OrdinalIgnoreCase))
             return DetectLocalOs();
         var firstSeg = targetName.Split('_')[0];
         return OsDistroToFamily.GetValueOrDefault(firstSeg, "linux");
@@ -270,7 +272,7 @@ public static class TargetCatalog
 
     internal static string InferCloudProvider(string targetName)
     {
-        if (targetName.Equals("local", StringComparison.OrdinalIgnoreCase))
+        if (targetName.StartsWith("local", StringComparison.OrdinalIgnoreCase))
             return "Local";
         var cloudSeg = ExtractCloudSegment(targetName);
         return cloudSeg.ToLowerInvariant() switch

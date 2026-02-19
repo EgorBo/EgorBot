@@ -6,13 +6,24 @@
 ### Health check
 GET {{baseUrl}}/health
 
-### Start a job (local_x64, custom benchmark)
+### Start a job (local, custom benchmark, no commits = run with default SDK)
 POST {{baseUrl}}/api/jobs
 Content-Type: application/json
 
 {
-    "platforms": ["aws_arm"],
-    "commitsAndPrs": "PR_124445;main",
+    "platforms": ["local"],
+    "commitsAndPrs": "",
+    "benchmarkCode": "using System;\nusing BenchmarkDotNet.Attributes;\n\npublic class Benchmarks\n{\n    string _data = \"https://github.com/dotnet/runtime/pulls\";\n\n    [Benchmark]\n    public bool StartsWith() =>\n        _data.StartsWith(\"HTTPS://github.com/dotnet/runtime\",\n            StringComparison.OrdinalIgnoreCase);\n}",
+    "useProfiler": false
+}
+
+### Start a job (local, with commits to compare)
+POST {{baseUrl}}/api/jobs
+Content-Type: application/json
+
+{
+    "platforms": ["local"],
+    "commitsAndPrs": "main",
     "benchmarkCode": "using System;\nusing BenchmarkDotNet.Attributes;\n\npublic class Benchmarks\n{\n    string _data = \"https://github.com/dotnet/runtime/pulls\";\n\n    [Benchmark]\n    public bool StartsWith() =>\n        _data.StartsWith(\"HTTPS://github.com/dotnet/runtime\",\n            StringComparison.OrdinalIgnoreCase);\n}",
     "useProfiler": false
 }

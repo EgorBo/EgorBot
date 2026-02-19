@@ -29,7 +29,7 @@ public static class Platform
     public static TargetInfo Resolve(string platform) => TargetCatalog.GetTarget(platform);
 
     public static bool IsLocal(string platform) =>
-        platform.Equals("local", StringComparison.OrdinalIgnoreCase);
+        platform.StartsWith("local", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsWindows(string platform) =>
         TargetCatalog.GetTarget(platform).OsFamily == "windows";
