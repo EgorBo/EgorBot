@@ -31,7 +31,11 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     // ── Default Windows Server image ─────────────────────────────────────
     private const string WindowsOffer = "WindowsServer";
     private const string WindowsSkuX64 = "2025-datacenter-g2";
-    private const string WindowsSkuArm64 = "2025-datacenter-g2";
+
+    // ── Windows 11 Arm64 (marketplace desktop image) ─────────────────────
+    private const string WindowsArm64Publisher = "microsoftwindowsdesktop";
+    private const string WindowsArm64Offer     = "windows11preview-arm64";
+    private const string WindowsArm64Sku       = "win11-25h2-ent";
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -136,13 +140,30 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     private BinaryData BuildWindowsParameters(string jobId, string vmSize, string cloudInitScript, int diskSizeGb, string platform)
     {
         var isArm64 = TargetCatalog.GetTarget(platform).Arch == VmArch.Arm64;
-        var offer = WindowsOffer;
-        var sku = isArm64 ? WindowsSkuArm64 : WindowsSkuX64;
 
         var password = config["Azure:AdminPassword"] ?? "EgorBot_Bench_2025!";
 
         // Encode the PowerShell script as base64 for customData
         var scriptBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(cloudInitScript));
+
+        // Arm64 uses Windows 11 Desktop marketplace image; x64 uses Windows Server
+        string publisher, offer, sku;
+        object planInfo;
+
+        if (isArm64)
+        {
+            publisher = WindowsArm64Publisher;
+            offer     = WindowsArm64Offer;
+            sku       = WindowsArm64Sku;
+            planInfo  = new { name = WindowsArm64Sku, publisher = WindowsArm64Publisher, product = WindowsArm64Offer };
+        }
+        else
+        {
+            publisher = "MicrosoftWindowsServer";
+            offer     = WindowsOffer;
+            sku       = WindowsSkuX64;
+            planInfo  = new { };
+        }
 
         return BinaryData.FromObjectAsJson(new
         {
@@ -155,12 +176,13 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             {
                 value = new
                 {
-                    publisher = "MicrosoftWindowsServer",
+                    publisher,
                     offer,
                     sku,
                     version = "latest"
                 }
-            }
+            },
+            planInfo = new { value = planInfo }
         });
     }
 

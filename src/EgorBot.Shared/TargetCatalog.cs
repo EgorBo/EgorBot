@@ -63,6 +63,8 @@ public static class TargetCatalog
         ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false),
         ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, true),
         ["windows_azure_genoa"]        = new("windows_azure_genoa",           VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Amd,   true),
+        ["windows_azure_cobalt100"]    = new("windows_azure_cobalt100",       VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true),
+        ["windows_azure_ampere"]       = new("windows_azure_ampere",          VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false),
 
         // ── AWS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
         ["ubuntu24_aws_sapphirelake"]  = new("ubuntu24_aws_sapphirelake",     VmArch.X64,   "c7i",                         "us-east-1",  VmCpuVendor.Intel, false),
