@@ -28,8 +28,8 @@ public sealed class LocalRunnerProvider(
         Directory.CreateDirectory(workDir);
         logger.LogInformation("Work directory: {WorkDir}", workDir);
 
-        // Generate the same cloud-init script that VMs/containers use
-        var script = cloudInitBuilder.Build(job);
+        // Generate the same cloud-init script that VMs/containers use, but skip deps
+        var script = cloudInitBuilder.Build(job, skipDeps: true);
 
         // Write script to work dir and execute it
         ProcessStartInfo psi;

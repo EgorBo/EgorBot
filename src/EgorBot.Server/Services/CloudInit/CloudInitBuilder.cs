@@ -12,7 +12,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
     /// <summary>
     /// Build the cloud-init script for a given job.
     /// </summary>
-    public string Build(BenchmarkJob job)
+    public string Build(BenchmarkJob job, bool skipDeps = false)
     {
         var commonUrl = config["EgorBot:AgentScriptCommonUrl"]
             ?? throw new InvalidOperationException("EgorBot:AgentScriptCommonUrl configuration is required");
@@ -39,12 +39,12 @@ public sealed class CloudInitBuilder(IConfiguration config)
             : "egorbot-agent-linux.py";
 
         return isWindows
-            ? BuildWindowsScript(job, commonUrl, platformUrl, platformFileName, callbackUrl, csprojUrl)
-            : BuildLinuxScript(job, commonUrl, platformUrl, platformFileName, callbackUrl, csprojUrl);
+            ? BuildWindowsScript(job, commonUrl, platformUrl, platformFileName, callbackUrl, csprojUrl, skipDeps)
+            : BuildLinuxScript(job, commonUrl, platformUrl, platformFileName, callbackUrl, csprojUrl, skipDeps);
     }
 
     private static string BuildLinuxScript(BenchmarkJob job, string commonUrl, string platformUrl,
-        string platformFileName, string callbackUrl, string csprojUrl)
+        string platformFileName, string callbackUrl, string csprojUrl, bool skipDeps)
     {
         var sb = new StringBuilder();
         sb.AppendLine("#!/bin/bash");
@@ -90,7 +90,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         }
 
         // Compose the agent invocation — use HELIX_PYTHONPATH if set, else python3
-        var agentArgs = BuildAgentArgs(job, callbackUrl, hasBenchmarkFile: !string.IsNullOrWhiteSpace(job.BenchmarkCode));
+        var agentArgs = BuildAgentArgs(job, callbackUrl, hasBenchmarkFile: !string.IsNullOrWhiteSpace(job.BenchmarkCode), skipDeps: skipDeps);
 
         sb.AppendLine("# Resolve Python");
         sb.AppendLine("PYTHON=${HELIX_PYTHONPATH:-python3}");
@@ -103,7 +103,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
     }
 
     private static string BuildWindowsScript(BenchmarkJob job, string commonUrl, string platformUrl,
-        string platformFileName, string callbackUrl, string csprojUrl)
+        string platformFileName, string callbackUrl, string csprojUrl, bool skipDeps)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# PowerShell bootstrap for EgorBot agent");
@@ -126,10 +126,18 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine();
 
         // Find Python executable: HELIX_PYTHONPATH → python3 → python → py → download embeddable
+        // Must verify each candidate actually works (Windows Store stubs appear in Get-Command but fail)
         sb.AppendLine("Write-Host 'Searching for Python...'");
+        sb.AppendLine("$ProgressPreference = 'SilentlyContinue'");
         sb.AppendLine("$python = $null");
         sb.AppendLine("if ($env:HELIX_PYTHONPATH -and (Test-Path $env:HELIX_PYTHONPATH)) { $python = $env:HELIX_PYTHONPATH }");
-        sb.AppendLine("if (-not $python) { foreach ($cmd in @('python3', 'python', 'py')) { if (Get-Command $cmd -ErrorAction SilentlyContinue) { $python = $cmd; break } } }");
+        sb.AppendLine("if (-not $python) {");
+        sb.AppendLine("    foreach ($cmd in @('python3', 'python', 'py')) {");
+        sb.AppendLine("        if (Get-Command $cmd -ErrorAction SilentlyContinue) {");
+        sb.AppendLine("            try { $out = & $cmd --version 2>&1; if ($LASTEXITCODE -eq 0) { $python = $cmd; break } } catch {}");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
         sb.AppendLine("if (-not $python) {");
         sb.AppendLine("    Write-Host 'Python not found, downloading embeddable Python...'");
         sb.AppendLine("    Report-Error 'Python not found — downloading embeddable Python...'");
@@ -191,12 +199,12 @@ public sealed class CloudInitBuilder(IConfiguration config)
             sb.AppendLine();
         }
 
-        // Launch agent
-        var agentArgs = BuildAgentArgs(job, callbackUrl, hasBenchmarkFile: !string.IsNullOrWhiteSpace(job.BenchmarkCode));
+        // Launch agent — use direct invocation so stdout/stderr flow to the parent process
+        var agentArgs = BuildAgentArgs(job, callbackUrl, hasBenchmarkFile: !string.IsNullOrWhiteSpace(job.BenchmarkCode), skipDeps: skipDeps);
         sb.AppendLine("# Launch agent");
         sb.AppendLine("Write-Host 'Launching agent...'");
         sb.AppendLine("try {");
-        sb.AppendLine($"    Start-Process $python -ArgumentList 'egorbot-agent-common.py {agentArgs}' -NoNewWindow -RedirectStandardOutput agent.log -RedirectStandardError agent_err.log -Wait");
+        sb.AppendLine($"    & $python egorbot-agent-common.py {agentArgs} 2>&1 | Tee-Object -FilePath agent.log");
         sb.AppendLine("} catch {");
         sb.AppendLine("    Report-Error \"Agent process failed: $_\"");
         sb.AppendLine("    exit 1");
@@ -206,7 +214,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         return sb.ToString();
     }
 
-    private static string BuildAgentArgs(BenchmarkJob job, string callbackUrl, bool hasBenchmarkFile)
+    private static string BuildAgentArgs(BenchmarkJob job, string callbackUrl, bool hasBenchmarkFile, bool skipDeps = false)
     {
         var parts = new List<string>
         {
@@ -234,6 +242,11 @@ public sealed class CloudInitBuilder(IConfiguration config)
         if (!string.IsNullOrWhiteSpace(job.BdnArguments))
         {
             parts.Add("--bdn_args_file BDN_ARGS.rsp");
+        }
+
+        if (skipDeps)
+        {
+            parts.Add("--skip_deps 1");
         }
 
         return string.Join(" ", parts);

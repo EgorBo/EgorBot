@@ -54,6 +54,7 @@ class Config:
     perf_record_freq: str
     callback_url: str
     job_id: str
+    skip_deps: bool
 
     @property
     def bench_use_dotnet_performance(self) -> bool:
@@ -101,6 +102,9 @@ class Config:
                         help="Base URL of EgorBot service for posting logs/results (e.g. http://host:5000/api/internal)")
         p.add_argument("--job_id", default="",
                         help="Job ID assigned by the EgorBot service")
+        p.add_argument("--skip_deps", type=int, choices=[0, 1],
+                        default=0,
+                        help="1 = skip dependency and .NET SDK installation (default: 0)")
 
         args = p.parse_args(argv)
 
@@ -118,6 +122,7 @@ class Config:
             perf_record_freq=args.perf_record_freq,
             callback_url=args.callback_url,
             job_id=args.job_id,
+            skip_deps=bool(args.skip_deps),
         )
 
 
@@ -941,13 +946,17 @@ def main(cfg: Optional[Config] = None):
     bench_args = shlex.split(" ".join(bench_args), posix=True)
     post_log(f"  BDN args: {bench_args}")
 
-    post_log("[STAGE 2/6] Installing dependencies...")
-    install_dependencies()
-    post_log("[STAGE 2/6] Dependencies installed ✓")
+    if cfg.skip_deps:
+        post_log("[STAGE 2/6] Skipping dependency installation (--skip_deps)")
+        post_log("[STAGE 3/6] Skipping .NET SDK installation (--skip_deps)")
+    else:
+        post_log("[STAGE 2/6] Installing dependencies...")
+        install_dependencies()
+        post_log("[STAGE 2/6] Dependencies installed ✓")
 
-    post_log("[STAGE 3/6] Installing .NET SDKs...")
-    install_dotnet_sdks()
-    post_log("[STAGE 3/6] .NET SDKs installed ✓")
+        post_log("[STAGE 3/6] Installing .NET SDKs...")
+        install_dotnet_sdks()
+        post_log("[STAGE 3/6] .NET SDKs installed ✓")
 
     post_log("[STAGE 4/6] Building benchmarks...")
     build_benchmarks(bench_args)
