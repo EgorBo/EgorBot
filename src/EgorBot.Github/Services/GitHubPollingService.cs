@@ -27,6 +27,12 @@ public sealed class GitHubPollingService(
     /// </summary>
     private readonly ConcurrentDictionary<string, bool> _processed = new();
 
+    /// <summary>
+    /// Timestamp when this service instance started. Used to avoid re-processing
+    /// old issue bodies after app restarts (since <see cref="_processed"/> is in-memory only).
+    /// </summary>
+    private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
+
     private record RepoConfig(string Owner, string Name);
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -151,6 +157,15 @@ public sealed class GitHubPollingService(
         foreach (var issue in issues)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Only process issue bodies that were CREATED recently (within 2 minutes
+            // before this app instance started). The `since` filter returns issues
+            // that were merely UPDATED (e.g. by a new comment), but we must not
+            // re-process old issue bodies after an app restart when the in-memory
+            // _processed set is cleared.  New @EgorBot mentions in comments are
+            // handled separately by PollIssueCommentsAsync.
+            if (issue.CreatedAt < _startedAt - TimeSpan.FromMinutes(2))
+                continue;
 
             var key = $"{repo.Owner}/{repo.Name}/issue/{issue.Number}";
             if (_processed.ContainsKey(key)) continue;
