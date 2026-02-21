@@ -305,6 +305,15 @@ var internalApi = app.MapGroup("/api/internal");
 internalApi.MapPost("/jobs/{id:guid}/logs", async (Guid id, HttpContext ctx, AppDbContext db, ILoggerFactory loggerFactory) =>
 {
     var log = loggerFactory.CreateLogger("AgentLogs");
+
+    // Skip log persistence for validation-only (throwaway) jobs that aren't in the DB
+    var jobExists = await db.Jobs.AnyAsync(j => j.Id == id);
+    if (!jobExists)
+    {
+        log.LogDebug("[Job {JobId}] Job not found in DB (likely validation); discarding {Method} logs", id, ctx.Request.Method);
+        return Results.Ok();
+    }
+
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
 
