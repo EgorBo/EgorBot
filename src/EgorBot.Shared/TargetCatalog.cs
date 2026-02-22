@@ -211,7 +211,10 @@ public static class TargetCatalog
         {
             var osFamily = OsDistroToFamily.GetValueOrDefault(os, "linux");
             var match = FindPreferredByVendor(vendor, osFamily, userCloud);
-            if (match != null)
+            // Only accept the match if it actually belongs to the requested OS family.
+            // When the user explicitly specified an OS (e.g. "osx_x64"), don't silently
+            // resolve to a different OS just because no preferred default exists.
+            if (match != null && match.OsFamily.Equals(osFamily, StringComparison.OrdinalIgnoreCase))
             {
                 canonicalName = match.Name;
                 return true;

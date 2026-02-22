@@ -53,6 +53,13 @@ You don't have to spell out the full name — EgorBot resolves shorthands:
 | `-arm` or `-arm64` | `macos15_helix_arm64` | Apple Silicon via Helix |
 | `-amd` or `-x64` | `ubuntu24_azure_turin` | Preferred AMD x64 |
 | `-intel` | `ubuntu24_azure_emeraldrapids` | Preferred Intel x64 |
+| | | |
+| `-linux_x64` | `ubuntu24_azure_turin` | Linux AMD x64 |
+| `-linux_arm64` | `ubuntu24_azure_cobalt100` | Linux Arm64 |
+| `-windows_x64` | `windows_azure_turin` | Windows AMD x64 |
+| `-windows_arm64` | `windows_azure_cobalt100` | Windows Arm64 |
+| `-osx_arm64` | `macos26_helix_arm64` | macOS Apple Silicon |
+| `-osx_x64` | `macos15_helix_x64` | macOS Intel x64 |
 
 
 Full target list:
