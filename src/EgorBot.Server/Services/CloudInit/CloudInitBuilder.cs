@@ -6,49 +6,36 @@ namespace EgorBot.Server.Services.CloudInit;
 
 /// <summary>
 /// Composes the cloud-init / bootstrap script that will run on the provisioned VM.
-/// Downloads the agent script, writes benchmark files, and launches the agent with proper args.
+/// Downloads agent scripts from the EgorBot repo's ClientData folder and launches the agent.
 /// </summary>
 public sealed class CloudInitBuilder(IConfiguration config)
 {
+    // GitHub archive URL — downloads the entire repo as a tarball/zip so we can
+    // extract just the src/ClientData/ folder (all agent scripts + csproj template).
+    private const string RepoArchiveBase = "https://github.com/EgorBo/EgorBot/archive/refs/heads/main";
+    private const string TarballUrl = $"{RepoArchiveBase}.tar.gz";
+    private const string ZipUrl = $"{RepoArchiveBase}.zip";
+    // Inside the archive, files live under this prefix:
+    private const string ArchivePrefix = "EgorBot-main/src/ClientData";
+
     /// <summary>
     /// Build the cloud-init script for a given job.
     /// </summary>
     public string Build(BenchmarkJob job, bool skipDeps = false)
     {
-        var commonUrl = config["EgorBot:AgentScriptCommonUrl"]
-            ?? throw new InvalidOperationException("EgorBot:AgentScriptCommonUrl configuration is required");
-        var helpersUrl = config["EgorBot:AgentScriptHelpersUrl"]
-            ?? throw new InvalidOperationException("EgorBot:AgentScriptHelpersUrl configuration is required");
         var serviceBaseUrl = config["EgorBot:ServiceBaseUrl"]
                              ?? throw new InvalidOperationException("EgorBot:ServiceBaseUrl configuration is required");
         var callbackUrl = $"{serviceBaseUrl.TrimEnd('/')}/api/internal";
-        var csprojUrl = config["EgorBot:DefaultCsprojUrl"] 
-                        ?? throw new InvalidOperationException("EgorBot:DefaultCsprojUrl configuration is required");
 
         var target = TargetCatalog.GetTarget(job.Platform);
         var isWindows = target.OsFamily == "windows";
-        var isMacOs = target.OsFamily.Equals("osx", StringComparison.OrdinalIgnoreCase);
-
-        var platformUrl = isWindows
-            ? config["EgorBot:AgentScriptWindowsUrl"]
-              ?? throw new InvalidOperationException("EgorBot:AgentScriptWindowsUrl configuration is required")
-            : isMacOs
-                ? config["EgorBot:AgentScriptMacosUrl"]
-                  ?? throw new InvalidOperationException("EgorBot:AgentScriptMacosUrl configuration is required")
-                : config["EgorBot:AgentScriptLinuxUrl"]
-                  ?? throw new InvalidOperationException("EgorBot:AgentScriptLinuxUrl configuration is required");
-
-        var platformFileName = isWindows ? "egorbot-agent-windows.py"
-            : isMacOs ? "egorbot-agent-macos.py"
-            : "egorbot-agent-linux.py";
 
         return isWindows
-            ? BuildWindowsScript(job, commonUrl, helpersUrl, platformUrl, platformFileName, callbackUrl, csprojUrl, skipDeps)
-            : BuildLinuxScript(job, commonUrl, helpersUrl, platformUrl, platformFileName, callbackUrl, csprojUrl, skipDeps);
+            ? BuildWindowsScript(job, callbackUrl, skipDeps)
+            : BuildLinuxScript(job, callbackUrl, skipDeps);
     }
 
-    private static string BuildLinuxScript(BenchmarkJob job, string commonUrl, string helpersUrl, string platformUrl,
-        string platformFileName, string callbackUrl, string csprojUrl, bool skipDeps)
+    private static string BuildLinuxScript(BenchmarkJob job, string callbackUrl, bool skipDeps)
     {
         var sb = new StringBuilder();
         sb.AppendLine("#!/bin/bash");
@@ -59,13 +46,10 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("cd egorbot_work");
         sb.AppendLine();
 
-        // Download the agent scripts (common + helpers + platform-specific)
-        sb.AppendLine($"curl -sL -o egorbot-agent-common.py \"{commonUrl}\"");
-        sb.AppendLine($"curl -sL -o egorbot-agent-common-helpers.py \"{helpersUrl}\"");
-        sb.AppendLine($"curl -sL -o {platformFileName} \"{platformUrl}\"");
-        sb.AppendLine("chmod +x egorbot-agent-common.py");
-        sb.AppendLine("chmod +x egorbot-agent-common-helpers.py");
-        sb.AppendLine($"chmod +x {platformFileName}");
+        // Download all agent scripts from the repo's ClientData folder via tarball
+        sb.AppendLine("# Download agent scripts from GitHub repo");
+        sb.AppendLine($"curl -sL \"{TarballUrl}\" | tar xz --strip-components=3 \"{ArchivePrefix}/\"");
+        sb.AppendLine("chmod +x *.py");
         sb.AppendLine();
 
         // Write benchmark code file if provided
@@ -77,8 +61,8 @@ public sealed class CloudInitBuilder(IConfiguration config)
             sb.AppendLine("EGORBOT_BENCH_EOF");
             sb.AppendLine();
 
-            // Download the default csproj template
-            sb.AppendLine($"curl -sL -o bench.csproj \"{csprojUrl}\"");
+            // benchapp.csproj was already downloaded from the tarball
+            sb.AppendLine("cp benchapp.csproj bench.csproj");
             sb.AppendLine();
         }
 
@@ -108,8 +92,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         return sb.ToString().Replace("\r\n", "\n");
     }
 
-    private static string BuildWindowsScript(BenchmarkJob job, string commonUrl, string helpersUrl, string platformUrl,
-        string platformFileName, string callbackUrl, string csprojUrl, bool skipDeps)
+    private static string BuildWindowsScript(BenchmarkJob job, string callbackUrl, bool skipDeps)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# PowerShell bootstrap for EgorBot agent");
@@ -164,11 +147,13 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("Write-Host \"Using Python: $python\"");
         sb.AppendLine();
 
-        // Download agent scripts (common + helpers + platform-specific)
+        // Download all agent scripts from the repo's ClientData folder via zip
+        sb.AppendLine("# Download agent scripts from GitHub repo");
         sb.AppendLine("try {");
-        sb.AppendLine($"    Invoke-WebRequest -Uri '{commonUrl}' -OutFile 'egorbot-agent-common.py' -UseBasicParsing");
-        sb.AppendLine($"    Invoke-WebRequest -Uri '{helpersUrl}' -OutFile 'egorbot-agent-common-helpers.py' -UseBasicParsing");
-        sb.AppendLine($"    Invoke-WebRequest -Uri '{platformUrl}' -OutFile '{platformFileName}' -UseBasicParsing");
+        sb.AppendLine($"    Invoke-WebRequest -Uri '{ZipUrl}' -OutFile 'repo.zip' -UseBasicParsing");
+        sb.AppendLine("    Expand-Archive 'repo.zip' -DestinationPath 'repo-tmp' -Force");
+        sb.AppendLine($"    Copy-Item 'repo-tmp\\{ArchivePrefix.Replace('/', '\\')}\\*' -Destination . -Force");
+        sb.AppendLine("    Remove-Item 'repo.zip', 'repo-tmp' -Recurse -Force");
         sb.AppendLine("} catch {");
         sb.AppendLine("    Report-Error \"Failed to download agent scripts: $_\"");
         sb.AppendLine("    exit 1");
@@ -184,12 +169,8 @@ public sealed class CloudInitBuilder(IConfiguration config)
             sb.AppendLine("'@");
             sb.AppendLine();
 
-            sb.AppendLine("try {");
-            sb.AppendLine($"    Invoke-WebRequest -Uri '{csprojUrl}' -OutFile 'bench.csproj' -UseBasicParsing");
-            sb.AppendLine("} catch {");
-            sb.AppendLine("    Report-Error \"Failed to download csproj template: $_\"");
-            sb.AppendLine("    exit 1");
-            sb.AppendLine("}");
+            // benchapp.csproj was already downloaded from the zip
+            sb.AppendLine("Copy-Item 'benchapp.csproj' 'bench.csproj' -Force");
             sb.AppendLine();
         }
 
