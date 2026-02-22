@@ -191,8 +191,8 @@ public static class CommandParser
         // If we're in a PR context and no commits specified, use the PR itself + main
         if (commits.Count == 0 && contextPrNumber.HasValue)
         {
-            commits.Add($"PR_{contextPrNumber.Value}");
             commits.Add("main");
+            commits.Add($"PR_{contextPrNumber.Value}");
         }
 
         // If still no commits, leave empty — the agent will run benchmarks
