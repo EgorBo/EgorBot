@@ -269,11 +269,11 @@ public sealed class JobOrchestrator(
         {
             job.CompletedAt = DateTime.UtcNow;
 
-            // Upload full logs to Azure Blob Storage BEFORE saving status,
+            // Generate self-hosted log URL BEFORE saving status,
             // so LogsBlobUrl is set when the GitHub poller first sees the terminal status.
             try
             {
-                var logsBlobUrl = await logUploadService.UploadJobLogsAsync(db, jobId);
+                var logsBlobUrl = await logUploadService.UploadJobLogsAsync(jobId);
                 if (logsBlobUrl is not null)
                 {
                     job.LogsBlobUrl = logsBlobUrl;

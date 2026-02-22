@@ -230,6 +230,56 @@ api.MapGet("/jobs/{id:guid}/result", async (Guid id, AppDbContext db) =>
     return Results.Text(job.ResultMarkdown, "text/markdown");
 });
 
+// GET /api/jobs/{id}/logs/full — serve full job logs as plain text
+api.MapGet("/jobs/{id:guid}/logs/full", async (Guid id, AppDbContext db) =>
+{
+    var logs = await db.JobLogs
+        .Where(l => l.JobId == id)
+        .OrderBy(l => l.Id)
+        .Select(l => new { l.Timestamp, l.Message })
+        .ToListAsync();
+
+    if (logs.Count == 0)
+        return Results.NotFound(new { error = "No logs found for this job." });
+
+    var sb = new System.Text.StringBuilder(logs.Count * 120);
+    foreach (var log in logs)
+    {
+        sb.Append(log.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+        sb.Append("  ");
+        sb.AppendLine(log.Message);
+    }
+
+    return Results.Text(sb.ToString(), "text/plain");
+});
+
+// GET /api/jobs/{id}/artifacts/{**path} — serve locally-stored perf artifacts
+api.MapGet("/jobs/{id:guid}/artifacts/{**path}", async (Guid id, string path) =>
+{
+    if (string.IsNullOrEmpty(path))
+        return Results.BadRequest(new { error = "Artifact path required." });
+
+    // Prevent directory traversal
+    var artifactsBase = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "artifacts", id.ToString()));
+    var fullPath = Path.GetFullPath(Path.Combine(artifactsBase, path.Replace('/', Path.DirectorySeparatorChar)));
+
+    if (!fullPath.StartsWith(artifactsBase, StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "Invalid artifact path." });
+
+    if (!File.Exists(fullPath))
+        return Results.NotFound(new { error = "Artifact not found." });
+
+    var contentType = path switch
+    {
+        _ when path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) => "image/svg+xml",
+        _ when path.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase) => "application/json",
+        _ => "text/plain; charset=utf-8",
+    };
+
+    var bytes = await File.ReadAllBytesAsync(fullPath);
+    return Results.File(bytes, contentType);
+});
+
 // GET /api/jobs/{id}/logs — all log entries
 api.MapGet("/jobs/{id:guid}/logs", async (Guid id, int? tail, AppDbContext db) =>
 {
@@ -391,7 +441,7 @@ internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
             markdown = resultProcessor.ProcessArtifactsZip(ms, job?.CommitsAndPrs ?? "");
             log.LogInformation("[Job {JobId}] Result markdown length={Len}", id, markdown?.Length ?? 0);
 
-            // Upload profiling artifacts to Azure Blob Storage (if profiling was enabled)
+            // Extract and save profiling artifacts locally (if profiling was enabled)
             if (job?.UseProfiler == true)
             {
                 ms.Position = 0;
@@ -403,7 +453,7 @@ internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
                 }
                 else
                 {
-                    log.LogWarning("[Job {JobId}] Profiling was enabled but no perf artifacts found in zip (is Azure:BlobConnectionString configured?)", id);
+                    log.LogWarning("[Job {JobId}] Profiling was enabled but no perf artifacts found in zip", id);
                 }
             }
         }
