@@ -33,6 +33,9 @@ public class BenchmarkJob
     /// <summary>Whether to enable profiling (perf record).</summary>
     public bool UseProfiler { get; set; }
 
+    /// <summary>Number of times to run all benchmarks (default 1).</summary>
+    public int Attempts { get; set; } = 1;
+
     /// <summary>GitHub login (or display name) of the user who requested the job.</summary>
     [MaxLength(128)]
     public string? RequestedBy { get; set; }

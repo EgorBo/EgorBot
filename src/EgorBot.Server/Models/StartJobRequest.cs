@@ -20,6 +20,9 @@ public sealed class StartJobRequest
     /// <summary>Enable perf profiler on the agent.</summary>
     public bool UseProfiler { get; init; }
 
+    /// <summary>Number of times to run all benchmarks (default 1).</summary>
+    public int Attempts { get; init; } = 1;
+
     /// <summary>GitHub login (or display name) of the user who requested the job.</summary>
     public string? RequestedBy { get; init; }
 

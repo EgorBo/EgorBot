@@ -148,6 +148,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             BdnArguments = request.BdnArguments,
             BenchmarkCode = request.BenchmarkCode,
             UseProfiler = request.UseProfiler,
+            Attempts = request.Attempts,
             RequestedBy = request.RequestedBy,
             SourceUrl = request.SourceUrl,
         };

@@ -246,6 +246,11 @@ public sealed class CloudInitBuilder(IConfiguration config)
             parts.Add("--perf_enabled 1");
         }
 
+        if (job.Attempts > 1)
+        {
+            parts.Add($"--attempts {job.Attempts}");
+        }
+
         if (!string.IsNullOrWhiteSpace(job.BdnArguments))
         {
             parts.Add("--bdn_args_file BDN_ARGS.rsp");

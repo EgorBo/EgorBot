@@ -20,6 +20,9 @@ public sealed class BotCommand
     /// <summary>Enable perf profiler.</summary>
     public bool UseProfiler { get; init; }
 
+    /// <summary>Number of times to run all benchmarks (default 1).</summary>
+    public int Attempts { get; init; } = 1;
+
     /// <summary>Show help text instead of running a job.</summary>
     public bool IsHelp { get; init; }
 

@@ -72,6 +72,7 @@ public static class CommandParser
         var commits = new List<string>();
         bool useProfiler = false;
         bool isHelp = false;
+        int attempts = 1;
 
         var tokens = Tokenize(commandLine);
 
@@ -103,6 +104,17 @@ public static class CommandParser
                 case "help":
                     isHelp = true;
                     consumed[i] = true;
+                    break;
+
+                // Attempts: -attempts 3
+                case "attempts":
+                    consumed[i] = true;
+                    if (i + 1 < tokens.Count && int.TryParse(tokens[i + 1], out var parsedAttempts) && parsedAttempts >= 1 && parsedAttempts <= 10)
+                    {
+                        i++;
+                        consumed[i] = true;
+                        attempts = parsedAttempts;
+                    }
                     break;
 
                 // PR reference: -pr 12345
@@ -205,6 +217,7 @@ public static class CommandParser
             BdnArguments = string.IsNullOrWhiteSpace(bdnArgs) ? null : bdnArgs,
             BenchmarkCode = benchmarkCode,
             UseProfiler = useProfiler,
+            Attempts = attempts,
             IsHelp = isHelp,
         };
     }

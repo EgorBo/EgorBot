@@ -100,6 +100,7 @@ class Config:
     callback_url: str
     job_id: str
     skip_deps: bool
+    attempts: int
 
     @property
     def bench_use_dotnet_performance(self) -> bool:
@@ -150,6 +151,8 @@ class Config:
         p.add_argument("--skip_deps", type=int, choices=[0, 1],
                         default=0,
                         help="1 = skip dependency and .NET SDK installation (default: 0)")
+        p.add_argument("--attempts", type=int, default=1,
+                        help="Number of times to run all benchmarks (default: 1)")
 
         args = p.parse_args(argv)
 
@@ -168,6 +171,7 @@ class Config:
             callback_url=args.callback_url,
             job_id=args.job_id,
             skip_deps=bool(args.skip_deps),
+            attempts=max(1, args.attempts),
         )
 
 
@@ -539,8 +543,10 @@ def build_core_roots():
 #  Stage 6 -- Run benchmarks
 # =============================================================================
 
-def run_benchmarks(bench_args: List[str]):
-    """Run BDN benchmarks using all built core_roots (or without --corerun if none)."""
+def run_benchmarks(bench_args: List[str], attempt: int = 1, total_attempts: int = 1):
+    """Run BDN benchmarks using all built core_roots (or without --corerun if none).
+    When total_attempts > 1, result files are suffixed with the attempt number
+    so that multiple runs don't overwrite each other."""
     # Gather all corerun paths (one per commit/PR)
     corerun_paths = sorted(globmod.glob(
         str(CORE_ROOTS_DIR / "*" / make_exe("corerun"))
@@ -558,20 +564,35 @@ def run_benchmarks(bench_args: List[str]):
                      / "MicroBenchmarks" / "Release" / CFG.bench_tfm / "MicroBenchmarks")
         run([str(micro_bin)] + bench_args + corerun_args + hide_columns,
             cwd=micro_dir, shell=False)
-        results_pattern = str(
+        results_dir = (
             WORK_DIR / "performance" / "artifacts" / "bin" / "MicroBenchmarks"
-            / "Release" / CFG.bench_tfm / "BenchmarkDotNet.Artifacts" / "results" / "*.*"
+            / "Release" / CFG.bench_tfm / "BenchmarkDotNet.Artifacts" / "results"
         )
     else:
         # Run custom benchmarks
         run(["dotnet", "run", "-c", "Release", "-f", CFG.bench_tfm, "--"] +
             corerun_args + bench_args + hide_columns,
             cwd=DIR_BENCHAPP, shell=False)
-        results_pattern = str(
-            DIR_BENCHAPP / "BenchmarkDotNet.Artifacts" / "results" / "*.*"
-        )
+        results_dir = DIR_BENCHAPP / "BenchmarkDotNet.Artifacts" / "results"
 
-    copy_glob(results_pattern, ARTIFACTS_DIR)
+    results_pattern = str(results_dir / "*.*")
+
+    if total_attempts > 1:
+        # Rename result files with attempt suffix before copying to ARTIFACTS_DIR,
+        # so multiple attempts don't overwrite each other.
+        # e.g. "MyBench-report-github.md" → "MyBench-attempt2-report-github.md"
+        for f in globmod.glob(results_pattern):
+            p = Path(f)
+            stem = p.stem   # e.g. "MyBench-report-github"
+            suffix = p.suffix  # e.g. ".md"
+            new_name = f"{stem}-attempt{attempt}{suffix}"
+            dest = ARTIFACTS_DIR / new_name
+            shutil.copy2(str(p), str(dest))
+        # Also clean BDN results dir so next attempt starts fresh
+        for f in globmod.glob(results_pattern):
+            os.remove(f)
+    else:
+        copy_glob(results_pattern, ARTIFACTS_DIR)
 
 
 # =============================================================================
@@ -633,7 +654,10 @@ def main(cfg: Optional[Config] = None):
         post_log("[STAGE 5/6] No commits/PRs specified -- skipping core_root build")
 
     post_log("[STAGE 6/6] Running benchmarks...")
-    run_benchmarks(bench_args)
+    for attempt in range(1, cfg.attempts + 1):
+        if cfg.attempts > 1:
+            post_log(f"[STAGE 6/6] Attempt {attempt}/{cfg.attempts}")
+        run_benchmarks(bench_args, attempt=attempt, total_attempts=cfg.attempts)
     post_log("[STAGE 6/6] Benchmarks completed ✓")
 
     # Run perf profiling if enabled (Linux only -- delegated to platform module)
