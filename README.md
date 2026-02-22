@@ -44,28 +44,34 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 
 ### Targets
 
-Targets specify where to run. Format: `{os}_{cloud}_{cpu}`. If `os` is omitted, defaults to `ubuntu24`. If `cloud` is omitted, defaults to `azure`. If no target is specified at all it defaults to `macos26_helix_arm64` (baremetal Apple Silicon via Helix).
+Targets specify where to run. Format: `{os}_{cloud}_{cpu}`. If `os` is omitted, defaults to `ubuntu24`. If `cloud` is omitted, defaults to `azure` (or `helix` for macOS). If no target is specified at all it defaults to `macos26_helix_arm64` (baremetal Apple Silicon via Helix).
 
 You don't have to spell out the full name — EgorBot resolves shorthands:
 
 | Shorthand | Resolves to | Notes |
 |---|---|---|
-| `-arm` or `-arm64` | `macos26_helix_arm64` | Apple Silicon via Helix |
-| `-amd` or `-x64` | `ubuntu24_azure_genoa` | Preferred AMD x64 |
-| `-intel` | `ubuntu24_azure_cascadelake` | Preferred Intel x64 |
+| `-arm` or `-arm64` | `macos15_helix_arm64` | Apple Silicon via Helix |
+| `-amd` or `-x64` | `ubuntu24_azure_turin` | Preferred AMD x64 |
+| `-intel` | `ubuntu24_azure_emeraldrapids` | Preferred Intel x64 |
 
 
 Full target list:
 
 | Target | Arch | Cloud | CPU |
 |---|---|---|---|
+| `ubuntu24_azure_turin` | x64 | Azure | AMD Turin |
 | `ubuntu24_azure_genoa` | x64 | Azure | AMD Genoa |
 | `ubuntu24_azure_milano` | x64 | Azure | AMD Milano |
+| `ubuntu24_azure_emeraldrapids` | x64 | Azure | Intel Emerald Rapids |
 | `ubuntu24_azure_cascadelake` | x64 | Azure | Intel Cascade Lake |
 | `ubuntu24_azure_cobalt100` | arm64 | Azure | Arm Cobalt 100 |
 | `ubuntu24_azure_ampere` | arm64 | Azure | Arm Ampere |
+| `windows_azure_emeraldrapids` | x64 | Azure | Intel Emerald Rapids |
 | `windows_azure_cascadelake` | x64 | Azure | Intel Cascade Lake |
+| `windows_azure_turin` | x64 | Azure | AMD Turin |
 | `windows_azure_genoa` | x64 | Azure | AMD Genoa |
+| `windows_azure_cobalt100` | arm64 | Azure | Arm Cobalt 100 |
+| `windows_azure_ampere` | arm64 | Azure | Arm Ampere |
 | | | | |
 | `ubuntu24_aws_sapphirelake` | x64 | AWS | Intel Sapphire Lake |
 | `ubuntu24_aws_icelake` | x64 | AWS | Intel Ice Lake |
@@ -78,8 +84,9 @@ Full target list:
 | `windows_aws_icelake` | x64 | AWS | Intel Ice Lake |
 | `windows_aws_genoa` | x64 | AWS | AMD Genoa |
 | | | | |
+| `macos15_helix_arm64` | arm64 | Helix | Apple Silicon |
+| `macos15_helix_x64` | x64 | Helix | Intel |
 | `macos26_helix_arm64` | arm64 | Helix | Apple Silicon |
-| `macos26_helix_x64` | x64 | Helix | Intel |
 | `ubuntu24_helix_x64` | x64 | Helix | — |
 | `ubuntu24_helix_arm64` | arm64 | Helix | Arm |
 | `ubuntu24_helix_arm32` | arm32 | Helix | Arm |
@@ -133,7 +140,7 @@ Compare a range of commits on Apple Silicon via Helix for a specific dotnet/perf
                │  VMs     │   │ Instances│   │ Work Items│
                └────┬─────┘   └────┬─────┘   └─────┬─────┘
                     └──────────────┼───────────────┘
-                     egorbot-agent-{platform}.py
+                           egorbot-agent-*.py
 ```
 
 ### Projects
