@@ -102,10 +102,15 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
             sb.AppendLine($"**{benchName}:**");
             sb.AppendLine();
 
+            // Collect links per label and artifact type for table rendering
+            // Key: label, Value: dict of artifactType -> markdown link
+            var tableData = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+            var allArtifactTypes = new List<string>();
+
             var byLabel = group.GroupBy(e => ExtractLabel(e.Name)).OrderBy(g => g.Key);
             foreach (var labelGroup in byLabel)
             {
-                var links = new List<string>();
+                var labelLinks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var entry in labelGroup.OrderBy(e => e.Name))
                 {
                     try
@@ -115,15 +120,46 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
                         File.WriteAllBytes(localPath, entry.Data);
                         savedCount++;
                         var url = $"{baseUrl.TrimEnd('/')}/api/jobs/{jobId}/artifacts/{entry.FullName}";
-                        AppendPerfLink(links, entry.Name, url);
+                        var (artifactType, markdownLink) = BuildPerfLink(entry.Name, url);
+                        labelLinks[artifactType] = markdownLink;
+                        if (!allArtifactTypes.Contains(artifactType))
+                            allArtifactTypes.Add(artifactType);
                     }
                     catch (Exception ex)
                     {
                         logger.LogWarning(ex, "Failed to save perf artifact '{Entry}' locally for job {JobId}", entry.FullName, jobId);
                     }
                 }
-                if (links.Count > 0)
-                    sb.AppendLine($"- {labelGroup.Key}: {string.Join(" · ", links)}");
+                if (labelLinks.Count > 0)
+                    tableData[labelGroup.Key] = labelLinks;
+            }
+
+            // Render as markdown table: rows = artifact types, columns = labels (runtimes)
+            if (tableData.Count > 0 && allArtifactTypes.Count > 0)
+            {
+                var labels = tableData.Keys.OrderBy(k => k).ToList();
+                sb.Append("| |");
+                foreach (var label in labels)
+                    sb.Append($" {label} |");
+                sb.AppendLine();
+
+                sb.Append("|---|");
+                foreach (var _ in labels)
+                    sb.Append("---|");
+                sb.AppendLine();
+
+                foreach (var artifactType in allArtifactTypes)
+                {
+                    sb.Append($"| {artifactType} |");
+                    foreach (var label in labels)
+                    {
+                        if (tableData[label].TryGetValue(artifactType, out var link))
+                            sb.Append($" {link} |");
+                        else
+                            sb.Append(" |");
+                    }
+                    sb.AppendLine();
+                }
             }
             sb.AppendLine();
         }
@@ -168,25 +204,24 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
         return dot > 0 ? fileName[..dot] : fileName;
     }
 
-    private static void AppendPerfLink(List<string> links, string fileName, string url)
+    private static (string ArtifactType, string MarkdownLink) BuildPerfLink(string fileName, string url)
     {
         if (fileName.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
-            links.Add($"[flamegraph]({url})");
-        else if (fileName.EndsWith(".asm", StringComparison.OrdinalIgnoreCase))
-            links.Add($"[asm]({url})");
-        else if (fileName.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase))
+            return ("flamegraph", $"[link]({url})");
+        if (fileName.EndsWith(".asm", StringComparison.OrdinalIgnoreCase))
+            return ("asm", $"[link]({url})");
+        if (fileName.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase))
         {
             // speedscope.app is HTTPS — it can only fetch HTTPS profile URLs (mixed content).
-            // When our URL is HTTP, link directly to the file for manual drag-drop.
             if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                links.Add($"[speedscope](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)})");
-            else
-                links.Add($"[speedscope]({url})");
+                return ("speedscope", $"[link](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)})");
+            return ("speedscope", $"[link]({url})");
         }
-        else if (fileName.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase))
-            links.Add($"[functions]({url})");
-        else if (fileName.EndsWith(".stats", StringComparison.OrdinalIgnoreCase))
-            links.Add($"[stats]({url})");
+        if (fileName.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase))
+            return ("functions", $"[link]({url})");
+        if (fileName.EndsWith(".stats", StringComparison.OrdinalIgnoreCase))
+            return ("stats", $"[link]({url})");
+        return ("other", $"[link]({url})");
     }
 
     private string? GetSelfHostedLogsUrl(Guid jobId)
