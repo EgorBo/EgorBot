@@ -116,7 +116,7 @@ public sealed class JobTrackerService(
                 return new BotCommand
                 {
                     Targets = command.Targets,
-                    CommitsAndPrs = $"PR_{prNumber};main",
+                    CommitsAndPrs = $"main;PR_{prNumber}",
                     BdnArguments = command.BdnArguments,
                     BenchmarkCode = command.BenchmarkCode,
                     UseProfiler = command.UseProfiler,
