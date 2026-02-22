@@ -175,7 +175,14 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
         else if (fileName.EndsWith(".asm", StringComparison.OrdinalIgnoreCase))
             links.Add($"[asm]({url})");
         else if (fileName.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase))
-            links.Add($"[speedscope](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)})");
+        {
+            // speedscope.app is HTTPS — it can only fetch HTTPS profile URLs (mixed content).
+            // When our URL is HTTP, link directly to the file for manual drag-drop.
+            if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                links.Add($"[speedscope](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)})");
+            else
+                links.Add($"[speedscope]({url})");
+        }
         else if (fileName.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase))
             links.Add($"[functions]({url})");
         else if (fileName.EndsWith(".stats", StringComparison.OrdinalIgnoreCase))
