@@ -177,7 +177,7 @@ public sealed class TelegramCommandService(
                 var cmdName = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries)[0];
                 if (_customCommands.TryGetValue(cmdName, out var bashCmd))
                 {
-                    await HandleCustomCommandAsync(cmdName, bashCmd, ct);
+                    _ = HandleCustomCommandAsync(cmdName, bashCmd, ct);
                     break;
                 }
                 await SendReplyAsync($"Unknown command: `{EscapeMarkdown(command)}`\nSend `help` for available commands.");
@@ -247,11 +247,11 @@ public sealed class TelegramCommandService(
 
     private async Task HandleCustomCommandAsync(string name, string bashCommand, CancellationToken ct)
     {
-        logger.LogInformation("Executing custom command '{Name}': {Cmd}", name, bashCommand);
-        await SendReplyAsync($"⏳ Running `{EscapeMarkdown(name)}`...");
-
         try
         {
+            logger.LogInformation("Executing custom command '{Name}': {Cmd}", name, bashCommand);
+            await SendReplyAsync($"⏳ Running `{EscapeMarkdown(name)}`...");
+
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromMinutes(5)); // safety timeout
 
