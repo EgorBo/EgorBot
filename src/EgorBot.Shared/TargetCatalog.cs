@@ -49,15 +49,17 @@ public static class TargetCatalog
     {
         //                                                                    Arch          InstanceName                   Region        CpuVendor          Default
         // ── Azure ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["ubuntu24_azure_turin"]       = new("ubuntu24_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",         "westeurope", VmCpuVendor.Amd,   false),
-        ["ubuntu24_azure_genoa"]       = new("ubuntu24_azure_genoa",          VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   true),
+        ["ubuntu24_azure_turin"]       = new("ubuntu24_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",         "westeurope", VmCpuVendor.Amd,   true),
+        ["ubuntu24_azure_genoa"]       = new("ubuntu24_azure_genoa",          VmArch.X64,   "Standard_D{0}ads_v6",         "westeurope", VmCpuVendor.Amd,   false),
         ["ubuntu24_azure_milano"]      = new("ubuntu24_azure_milano",         VmArch.X64,   "Standard_D{0}ads_v5",         "westeurope", VmCpuVendor.Amd,   false),
-        ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, false),
         ["ubuntu24_azure_emeraldrapids"] = new("ubuntu24_azure_emeraldrapids",VmArch.X64,   "Standard_D{0}ds_v6",          "westeurope", VmCpuVendor.Intel, true),
+        ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, false),
         ["ubuntu24_azure_cobalt100"]   = new("ubuntu24_azure_cobalt100",      VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true),
         ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false),
-        ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, true),
-        ["windows_azure_genoa"]        = new("windows_azure_genoa",           VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Amd,   true),
+        ["windows_azure_emeraldrapids"] = new("windows_azure_emeraldrapids", VmArch.X64,   "Standard_D{0}ds_v6",           "westeurope", VmCpuVendor.Intel, true),
+        ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, false),
+        ["windows_azure_turin"]        = new("windows_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",          "westeurope", VmCpuVendor.Amd,   true),
+        ["windows_azure_genoa"]        = new("windows_azure_genoa",           VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   false),
         ["windows_azure_cobalt100"]    = new("windows_azure_cobalt100",       VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true),
         ["windows_azure_ampere"]       = new("windows_azure_ampere",          VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false),
 
@@ -80,7 +82,7 @@ public static class TargetCatalog
         ["ubuntu24_helix_x64"]         = new("ubuntu24_helix_x64",            VmArch.X64,   HelixQueueLinuxX64,            null,         VmCpuVendor.Amd,   false),
         ["ubuntu24_helix_arm64"]       = new("ubuntu24_helix_arm64",          VmArch.Arm64, HelixQueueLinuxArm64,          null,         VmCpuVendor.Arm,   false),
         ["ubuntu24_helix_arm32"]       = new("ubuntu24_helix_arm32",          VmArch.Arm32, HelixQueueLinuxArm32,          null,         VmCpuVendor.Arm,   true),
-        ["windows_helix_x64"]          = new("windows_helix_x64",             VmArch.X64,   "windows.amd64.vs2022.pre.open", null,       VmCpuVendor.Intel, false),
+        ["windows_helix_x64"]          = new("windows_helix_x64",             VmArch.X64,   "windows.amd64.vs2022.pre.open",null,       VmCpuVendor.Intel,  false),
         ["windows_helix_arm64"]        = new("windows_helix_arm64",           VmArch.Arm64, "Windows.11.Arm64.Open",       null,         VmCpuVendor.Arm,   false),
 
         // ── Docker (local / sandboxed) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
