@@ -6,7 +6,7 @@ Loaded by ``egorbot-agent-common.py`` at startup.  Provides:
 
   * Process execution helpers  (run, kill_process_by_name)
   * File / IO utilities        (download, read_lines, zip_directory, …)
-  * Platform detection          (detect_platform, is_unix, sudo_prefix, …)
+  * Platform detection          (detect_platform, is_unix, …)
   * .NET tooling helpers        (dotnet_install_cmd)
   * Dynamic module loading      (load_platform_module)
   * Callback / logging          (TeeWriter, post_log, start/stop_callback_sender)
@@ -217,11 +217,6 @@ def detect_platform() -> tuple[str, str]:
 def is_unix() -> bool:
     """``True`` when running on Linux or macOS."""
     return TARGET_OS in ("linux", "osx")
-
-
-def sudo_prefix() -> List[str]:
-    """Return ``["sudo"]`` on Linux/macOS, empty list on Windows."""
-    return ["sudo"] if is_unix() else []
 
 
 def make_exe(name: str) -> str:
