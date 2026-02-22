@@ -58,6 +58,18 @@ using (var scope = app.Services.CreateScope())
 // ── Request logging middleware ───────────────────────────────────────────────
 app.Use(async (ctx, next) =>
 {
+    // Skip logging for high-frequency internal endpoints (heartbeat, logs, status)
+    var path = ctx.Request.Path.Value ?? "";
+    var isQuiet = path.EndsWith("/heartbeat", StringComparison.OrdinalIgnoreCase)
+               || path.EndsWith("/logs", StringComparison.OrdinalIgnoreCase)
+               || path.EndsWith("/status", StringComparison.OrdinalIgnoreCase);
+
+    if (isQuiet)
+    {
+        await next();
+        return;
+    }
+
     var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("HTTP");
     var sw = System.Diagnostics.Stopwatch.StartNew();
     logger.LogInformation("→ {Method} {Path}{Query}",
