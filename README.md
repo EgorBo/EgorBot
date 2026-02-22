@@ -38,7 +38,7 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 
 | Option | Description |
 |---|---|
-| `-commits SHA1,SHA2,...` | Commits to compare (comma or semicolon-separated). Supports `SHA~N` syntax and ranges. |
+| `-commits SHA1,SHA2,...` | Commits to compare (comma or semicolon-separated). Supports `SHA~N` syntax and ranges. Example: `530201,530201~1` (compare 530201 vs previous commit) or `07e1dc...530201` (range of commits) |
 | `-pr <number>` | Target a specific PR (this argument is implied when running in a PR context). |
 | `-profiler` | Enable perf profiler (Linux only). |
 
