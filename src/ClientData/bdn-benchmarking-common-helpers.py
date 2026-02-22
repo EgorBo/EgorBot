@@ -2,7 +2,7 @@
 """
 Utility functions and infrastructure shared by all EgorBot agent modules.
 
-Loaded by ``egorbot-agent-common.py`` at startup.  Provides:
+Loaded by ``bdn-benchmarking-common.py`` at startup.  Provides:
 
   * Process execution helpers  (run, kill_process_by_name)
   * File / IO utilities        (download, read_lines, zip_directory, …)
@@ -55,7 +55,7 @@ _log_sender_stop = threading.Event()
 
 
 def set_common_ref(common_module):
-    """Store a reference to ``egorbot-agent-common`` for platform injection."""
+    """Store a reference to ``bdn-benchmarking-common`` for platform injection."""
     global _common_ref
     _common_ref = common_module
 
@@ -260,17 +260,17 @@ def load_platform_module(target_os: str):
     Dynamically load the platform-specific module from the same directory.
 
     Maps:
-        ``"windows"`` → ``egorbot-agent-windows.py``
-        ``"linux"``   → ``egorbot-agent-linux.py``
-        ``"osx"``     → ``egorbot-agent-macos.py``
+        ``"windows"`` → ``bdn-benchmarking-windows.py``
+        ``"linux"``   → ``bdn-benchmarking-linux.py``
+        ``"osx"``     → ``bdn-benchmarking-macos.py``
 
     The loaded module receives a reference to the *common* module (not this
     helpers module) so that ``mod.common.run()`` etc. work correctly.
     """
     os_to_file = {
-        "windows": "egorbot-agent-windows.py",
-        "linux":   "egorbot-agent-linux.py",
-        "osx":     "egorbot-agent-macos.py",
+        "windows": "bdn-benchmarking-windows.py",
+        "linux":   "bdn-benchmarking-linux.py",
+        "osx":     "bdn-benchmarking-macos.py",
     }
     filename = os_to_file.get(target_os)
     if not filename:

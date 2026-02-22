@@ -152,7 +152,7 @@ Compare a range of commits on Apple Silicon via Helix for a specific dotnet/perf
                │  VMs     │   │ Instances│   │ Work Items│
                └────┬─────┘   └────┬─────┘   └─────┬─────┘
                     └──────────────┼───────────────┘
-                           egorbot-agent-*.py
+                           bdn-benchmarking-*.py
 ```
 
 ### Projects

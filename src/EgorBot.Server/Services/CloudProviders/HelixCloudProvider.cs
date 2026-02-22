@@ -125,7 +125,7 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
             // Use HELIX_WORKITEM_PAYLOAD as the work directory root
             .Replace("cd /home\n", "cd \"$HELIX_WORKITEM_PAYLOAD\"\n")
             // Run agent synchronously (not as background process)
-            .Replace("nohup $PYTHON egorbot-agent-common.py", "$PYTHON egorbot-agent-common.py")
+            .Replace("nohup $PYTHON bdn-benchmarking-common.py", "$PYTHON bdn-benchmarking-common.py")
             // Remove trailing '&' from agent launch (keep tee)
             .Replace("2>&1 | tee agent.log &", "2>&1 | tee agent.log");
 

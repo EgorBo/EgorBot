@@ -5,14 +5,16 @@ namespace EgorBot.Server.Services;
 
 /// <summary>
 /// Processes BDN artifacts uploaded by the agent: extracts the markdown report,
-/// replaces corerun paths with human-readable commit/PR labels.
+/// replaces corerun paths with human-readable commit/PR labels,
+/// and generates speedscope links for BDN profiler output.
 /// </summary>
-public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
+public sealed partial class ResultProcessor(IConfiguration config, ILogger<ResultProcessor> logger)
 {
     /// <summary>
     /// Extract and prettify the BDN markdown report from the uploaded artifacts zip.
+    /// Also detects BDN profiler output (.speedscope.json) and appends viewer links.
     /// </summary>
-    public string ProcessArtifactsZip(Stream zipStream, string commitsAndPrs)
+    public string ProcessArtifactsZip(Stream zipStream, string commitsAndPrs, Guid jobId)
     {
         using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
 
@@ -46,7 +48,89 @@ public sealed partial class ResultProcessor(ILogger<ResultProcessor> logger)
             parts.Add(markdown);
         }
 
-        return string.Join("\n\n---\n\n", parts);
+        var result = string.Join("\n\n---\n\n", parts);
+
+        // Detect BDN profiler output (.speedscope.json files) and append links
+        var speedscopeMarkdown = ProcessSpeedscopeFiles(archive, jobId, labels);
+        if (speedscopeMarkdown is not null)
+            result += speedscopeMarkdown;
+
+        return result;
+    }
+
+    /// <summary>
+    /// Find .speedscope.json files in the zip, save them locally, and return markdown links.
+    /// </summary>
+    private string? ProcessSpeedscopeFiles(ZipArchive archive, Guid jobId, Dictionary<string, string> labels)
+    {
+        var speedscopeEntries = archive.Entries
+            .Where(e => e.Name.EndsWith(".speedscope.json", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (speedscopeEntries.Count == 0)
+            return null;
+
+        var baseUrl = config["EgorBot:ServiceBaseUrl"];
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            logger.LogWarning("EgorBot:ServiceBaseUrl not configured — cannot serve speedscope files");
+            return null;
+        }
+
+        var artifactsDir = LogUploadService.GetLocalArtifactsDir(jobId);
+        var links = new List<string>();
+
+        foreach (var entry in speedscopeEntries.OrderBy(e => e.Name))
+        {
+            try
+            {
+                // Save to local filesystem under bdn-profiler/ subfolder
+                var localPath = Path.Combine(artifactsDir, "bdn-profiler", entry.Name);
+                Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
+                using (var entryStream = entry.Open())
+                using (var fs = File.Create(localPath))
+                    entryStream.CopyTo(fs);
+
+                var fileUrl = $"{baseUrl.TrimEnd('/')}/api/jobs/{jobId}/artifacts/bdn-profiler/{entry.Name}";
+
+                // Derive a display label from the filename 
+                // BDN names: BenchClass.MethodName-YYYYMMDD-HHMMSS.speedscope.json
+                var displayName = entry.Name.Replace(".speedscope.json", "", StringComparison.OrdinalIgnoreCase);
+
+                // Replace corerun-based labels in the filename if present
+                foreach (var (dirName, label) in labels)
+                {
+                    if (displayName.Contains(dirName, StringComparison.OrdinalIgnoreCase))
+                        displayName = displayName.Replace(dirName, label, StringComparison.OrdinalIgnoreCase);
+                }
+
+                // Generate speedscope.app link for HTTPS, direct download for HTTP
+                if (fileUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    links.Add($"[{displayName}](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(fileUrl)})");
+                else
+                    links.Add($"[{displayName}]({fileUrl})");
+
+                logger.LogInformation("Saved BDN speedscope file: {Entry} for job {JobId}", entry.Name, jobId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to save speedscope file {Entry} for job {JobId}", entry.Name, jobId);
+            }
+        }
+
+        if (links.Count == 0)
+            return null;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine("<details>");
+        sb.AppendLine("<summary>BDN profiler traces (speedscope)</summary>");
+        sb.AppendLine();
+        foreach (var link in links)
+            sb.AppendLine($"- {link}");
+        sb.AppendLine();
+        sb.AppendLine("</details>");
+        return sb.ToString();
     }
 
     /// <summary>

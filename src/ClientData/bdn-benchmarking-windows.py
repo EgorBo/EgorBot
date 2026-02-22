@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 # ── Injected by common module's load_platform_module() ──────────────────────
-# ``common`` is set to the egorbot-agent-common module before this file executes.
+# ``common`` is set to the bdn-benchmarking-common module before this file executes.
 common = None  # type: ignore
 
 

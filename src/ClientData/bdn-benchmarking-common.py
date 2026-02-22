@@ -5,8 +5,8 @@ Cross-platform agent for the EgorBot benchmark service.
 Builds dotnet/runtime core_roots for specified commits/PRs and runs BDN
 microbenchmarks against them.  Requires only the Python 3 standard library.
 
-Utility functions live in ``egorbot-agent-common-helpers.py``.
-Platform-specific helpers live in ``egorbot-agent-{windows,linux,macos}.py``.
+Utility functions live in ``bdn-benchmarking-common-helpers.py``.
+Platform-specific helpers live in ``bdn-benchmarking-{windows,linux,macos}.py``.
 """
 
 import argparse
@@ -29,8 +29,8 @@ from typing import List, Optional
 
 def _load_helpers():
     script_dir = Path(__file__).parent
-    mod_path = script_dir / "egorbot-agent-common-helpers.py"
-    spec = importlib.util.spec_from_file_location("egorbot_agent_helpers", mod_path)
+    mod_path = script_dir / "bdn-benchmarking-common-helpers.py"
+    spec = importlib.util.spec_from_file_location("bdn_benchmarking_helpers", mod_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -74,11 +74,11 @@ def __getattr__(name):
 # =============================================================================
 # Example usage:
 #   (1) With custom benchmark snippet:
-#       python egorbot-agent-common.py --job_tag my_test1 \
+#       python bdn-benchmarking-common.py --job_tag my_test1 \
 #           --gh_commits_and_prs "PR_12345;main" --bench_code_file ./MyBenchmark.cs
 #
 #   (2) With dotnet/performance benchmarks for a27de4a and its previous commits:
-#       python egorbot-agent-common.py --job_tag my_test2 \
+#       python bdn-benchmarking-common.py --job_tag my_test2 \
 #           --gh_commits_and_prs "a27de4a;a27de4a~1;a27de4a~2"
 #
 # BDN arguments are read from BDN_ARGS.rsp file from current dir.

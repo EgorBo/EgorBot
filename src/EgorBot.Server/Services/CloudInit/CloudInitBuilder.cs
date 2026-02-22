@@ -87,7 +87,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("echo \"Using Python: $PYTHON\"");
         sb.AppendLine();
         sb.AppendLine("# Launch agent in background (tee to both file and cloud-init log)");
-        sb.AppendLine($"nohup $PYTHON egorbot-agent-common.py {agentArgs} 2>&1 | tee agent.log &");
+        sb.AppendLine($"nohup $PYTHON bdn-benchmarking-common.py {agentArgs} 2>&1 | tee agent.log &");
 
         return sb.ToString().Replace("\r\n", "\n");
     }
@@ -192,7 +192,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("# Launch agent");
         sb.AppendLine("Write-Host 'Launching agent...'");
         sb.AppendLine("try {");
-        sb.AppendLine($"    & $python egorbot-agent-common.py {agentArgs} 2>&1 | Tee-Object -FilePath agent.log");
+        sb.AppendLine($"    & $python bdn-benchmarking-common.py {agentArgs} 2>&1 | Tee-Object -FilePath agent.log");
         sb.AppendLine("} catch {");
         sb.AppendLine("    Report-Error \"Agent process failed: $_\"");
         sb.AppendLine("    exit 1");

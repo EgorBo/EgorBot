@@ -439,7 +439,7 @@ internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
 
             // Extract BDN markdown report
             ms.Position = 0;
-            markdown = resultProcessor.ProcessArtifactsZip(ms, job?.CommitsAndPrs ?? "");
+            markdown = resultProcessor.ProcessArtifactsZip(ms, job?.CommitsAndPrs ?? "", id);
             log.LogInformation("[Job {JobId}] Result markdown length={Len}", id, markdown?.Length ?? 0);
 
             // Extract and save profiling artifacts locally (if profiling was enabled)

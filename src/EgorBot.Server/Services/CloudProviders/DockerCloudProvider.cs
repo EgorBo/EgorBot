@@ -148,8 +148,8 @@ public sealed class DockerCloudProvider(IConfiguration config, ILogger<DockerClo
 
         // Run agent in foreground — container must stay alive while the agent runs.
         script = script.Replace(
-            "nohup $PYTHON egorbot-agent-common.py",
-            "$PYTHON egorbot-agent-common.py");
+            "nohup $PYTHON bdn-benchmarking-common.py",
+            "$PYTHON bdn-benchmarking-common.py");
         script = script.Replace(
             "2>&1 | tee agent.log &",
             "2>&1 | tee agent.log");
