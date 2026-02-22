@@ -106,11 +106,29 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
                 .ToList();
 
             if (perfEntries.Count == 0)
+            {
+                logger.LogWarning("No perf entries found in artifacts zip for job {JobId}. Zip entries: [{Entries}]",
+                    jobId, string.Join(", ", archive.Entries.Select(e => e.FullName).Take(30)));
                 return null;
+            }
+
+            logger.LogInformation("Found {Count} perf entries in zip for job {JobId}: [{Entries}]",
+                perfEntries.Count, jobId, string.Join(", ", perfEntries.Select(e => e.FullName)));
 
             var blobClient = new BlobServiceClient(connectionString);
             var container = blobClient.GetBlobContainerClient(containerName);
-            await container.CreateIfNotExistsAsync(PublicAccessType.Blob, cancellationToken: ct);
+
+            // Try to create with public access; fall back to no public access if the storage
+            // account has BlobPublicAccess disabled (Azure default for new accounts).
+            try
+            {
+                await container.CreateIfNotExistsAsync(PublicAccessType.Blob, cancellationToken: ct);
+            }
+            catch (Azure.RequestFailedException ex) when (ex.ErrorCode == "PublicAccessNotPermitted")
+            {
+                logger.LogWarning("PublicAccessNotPermitted for container '{Container}', creating without public access", containerName);
+                await container.CreateIfNotExistsAsync(PublicAccessType.None, cancellationToken: ct);
+            }
 
             // Group entries by parent directory (benchmark name)
             var grouped = perfEntries
@@ -127,6 +145,7 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
             sb.AppendLine("<details>");
             sb.AppendLine("<summary>Profiling artifacts</summary>");
             sb.AppendLine();
+            int uploadedCount = 0;
 
             foreach (var group in grouped)
             {
@@ -149,34 +168,42 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
 
                     foreach (var entry in labelGroup.OrderBy(e => e.Name))
                     {
-                        var blobName = $"{jobId}/{entry.FullName}";
-                        var blob = container.GetBlobClient(blobName);
+                        try
+                        {
+                            var blobName = $"{jobId}/{entry.FullName}";
+                            var blob = container.GetBlobClient(blobName);
 
-                        using var entryStream = entry.Open();
-                        using var ms = new MemoryStream();
-                        await entryStream.CopyToAsync(ms, ct);
-                        ms.Position = 0;
+                            using var entryStream = entry.Open();
+                            using var ms = new MemoryStream();
+                            await entryStream.CopyToAsync(ms, ct);
+                            ms.Position = 0;
 
-                        var contentType = entry.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
-                            ? "image/svg+xml"
-                            : entry.Name.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase)
-                                ? "application/json"
-                                : "text/plain; charset=utf-8";
+                            var contentType = entry.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
+                                ? "image/svg+xml"
+                                : entry.Name.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase)
+                                    ? "application/json"
+                                    : "text/plain; charset=utf-8";
 
-                        await blob.UploadAsync(ms, new BlobHttpHeaders { ContentType = contentType }, cancellationToken: ct);
+                            await blob.UploadAsync(ms, new BlobHttpHeaders { ContentType = contentType }, cancellationToken: ct);
+                            uploadedCount++;
 
-                        var url = blob.Uri.ToString();
+                            var url = blob.Uri.ToString();
 
-                        if (entry.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
-                            links.Add($"[flamegraph]({url})");
-                        else if (entry.Name.EndsWith(".asm", StringComparison.OrdinalIgnoreCase))
-                            links.Add($"[asm]({url})");
-                        else if (entry.Name.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase))
-                            links.Add($"[speedscope](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)})");
-                        else if (entry.Name.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase))
-                            links.Add($"[functions]({url})");
-                        else if (entry.Name.EndsWith(".stats", StringComparison.OrdinalIgnoreCase))
-                            links.Add($"[stats]({url})");
+                            if (entry.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+                                links.Add($"[flamegraph]({url})");
+                            else if (entry.Name.EndsWith(".asm", StringComparison.OrdinalIgnoreCase))
+                                links.Add($"[asm]({url})");
+                            else if (entry.Name.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase))
+                                links.Add($"[speedscope](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)})");
+                            else if (entry.Name.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase))
+                                links.Add($"[functions]({url})");
+                            else if (entry.Name.EndsWith(".stats", StringComparison.OrdinalIgnoreCase))
+                                links.Add($"[stats]({url})");
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, "Failed to upload perf artifact '{Entry}' for job {JobId}", entry.FullName, jobId);
+                        }
                     }
 
                     if (links.Count > 0)
@@ -188,8 +215,8 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
 
             sb.AppendLine("</details>");
 
-            logger.LogInformation("Uploaded {Count} perf artifacts for job {JobId}", perfEntries.Count, jobId);
-            return sb.ToString();
+            logger.LogInformation("Uploaded {Count}/{Total} perf artifacts for job {JobId}", uploadedCount, perfEntries.Count, jobId);
+            return uploadedCount > 0 ? sb.ToString() : null;
         }
         catch (Exception ex)
         {

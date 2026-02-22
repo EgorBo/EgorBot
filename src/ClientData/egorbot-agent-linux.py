@@ -264,9 +264,10 @@ def run_perf_profiling():
                        check=False)
             time.sleep(2)
 
-            # Perf stat
+            # Perf stat — use explicit portable events to avoid "topdown" PMU errors on VMs/AMD
             stats_file = bench_dir / f"{label}.stats"
-            common.run(f"{perf} stat -o {stats_file} -p {pid} sleep 6", check=False)
+            stat_events = "task-clock,cycles,instructions,branches,branch-misses,cache-misses,cache-references,context-switches,cpu-migrations,page-faults"
+            common.run(f"{perf} stat -e {stat_events} -o {stats_file} -p {pid} sleep 6", check=False)
 
             # List perf counters
             perf_list_file = bench_dir / f"{label}.perf_list.txt"

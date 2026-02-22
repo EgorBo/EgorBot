@@ -401,6 +401,10 @@ internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
                     markdown += perfLinks;
                     log.LogInformation("[Job {JobId}] Appended perf artifact links to markdown", id);
                 }
+                else
+                {
+                    log.LogWarning("[Job {JobId}] Profiling was enabled but no perf artifacts found in zip (is Azure:BlobConnectionString configured?)", id);
+                }
             }
         }
         else
