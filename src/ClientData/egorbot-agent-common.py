@@ -885,12 +885,16 @@ def run_benchmarks(bench_args: List[str]):
     # Build the --corerun portion only when we actually have core_roots
     corerun_args = ["--corerun"] + corerun_paths if corerun_paths else []
 
+    # Use sudo on Linux/macOS for more stable benchmark results
+    # (reduces noise from CPU frequency scaling, perf counters, etc.)
+    sudo_prefix = ["sudo"] if TARGET_OS in ("linux", "osx") else []
+
     if CFG.bench_use_dotnet_performance:
         # Run benchmarks from dotnet/performance repo
         micro_dir = WORK_DIR / "performance" / "src" / "benchmarks" / "micro"
         micro_bin = (WORK_DIR / "performance" / "artifacts" / "bin"
                      / "MicroBenchmarks" / "Release" / CFG.bench_tfm / "MicroBenchmarks")
-        run([str(micro_bin)] + bench_args + corerun_args + hide_columns,
+        run(sudo_prefix + [str(micro_bin)] + bench_args + corerun_args + hide_columns,
             cwd=micro_dir, shell=False)
         # Copy performance/artifacts/.../BenchmarkDotNet.Artifacts/results to artifacts dir
         results_pattern = str(
@@ -899,7 +903,7 @@ def run_benchmarks(bench_args: List[str]):
         )
     else:
         # Run custom benchmarks
-        run(["dotnet", "run", "-c", "Release", "-f", CFG.bench_tfm, "--"] +
+        run(sudo_prefix + ["dotnet", "run", "-c", "Release", "-f", CFG.bench_tfm, "--"] +
             corerun_args + bench_args + hide_columns,
             cwd=DIR_BENCHAPP, shell=False)
         # Copy benchapp/BenchmarkDotNet.Artifacts/results/*.* to artifacts dir
