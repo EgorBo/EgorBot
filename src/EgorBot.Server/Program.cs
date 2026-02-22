@@ -138,14 +138,30 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
 
     foreach (var platform in normalizedPlatforms)
     {
+        // On Linux, UseProfiler triggers perf record via the platform agent module.
+        // On non-Linux, we use BDN's built-in EventPipeProfiler instead (--profiler EP).
+        var useProfiler = request.UseProfiler;
+        var bdnArgs = request.BdnArguments;
+        if (useProfiler)
+        {
+            var osFamily = TargetCatalog.GetTarget(platform).OsFamily;
+            if (!osFamily.Equals("linux", StringComparison.OrdinalIgnoreCase))
+            {
+                useProfiler = false;
+                bdnArgs = string.IsNullOrWhiteSpace(bdnArgs)
+                    ? "--profiler EP"
+                    : bdnArgs + " --profiler EP";
+            }
+        }
+
         var job = new BenchmarkJob
         {
             GroupId = groupId,
             Platform = platform,
             CommitsAndPrs = commitsAndPrs,
-            BdnArguments = request.BdnArguments,
+            BdnArguments = bdnArgs,
             BenchmarkCode = request.BenchmarkCode,
-            UseProfiler = request.UseProfiler,
+            UseProfiler = useProfiler,
             Attempts = request.Attempts,
             RequestedBy = request.RequestedBy,
             SourceUrl = request.SourceUrl,
