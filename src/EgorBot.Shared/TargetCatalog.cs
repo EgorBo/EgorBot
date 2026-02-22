@@ -52,8 +52,8 @@ public static class TargetCatalog
         ["ubuntu24_azure_turin"]       = new("ubuntu24_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",         "westeurope", VmCpuVendor.Amd,   false),
         ["ubuntu24_azure_genoa"]       = new("ubuntu24_azure_genoa",          VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   true),
         ["ubuntu24_azure_milano"]      = new("ubuntu24_azure_milano",         VmArch.X64,   "Standard_D{0}ads_v5",         "westeurope", VmCpuVendor.Amd,   false),
-        ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, true),
-        ["ubuntu24_azure_emeraldrapids"] = new("ubuntu24_azure_emeraldrapids",VmArch.X64,   "Standard_D{0}ds_v6",          "westeurope", VmCpuVendor.Intel, false),
+        ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, false),
+        ["ubuntu24_azure_emeraldrapids"] = new("ubuntu24_azure_emeraldrapids",VmArch.X64,   "Standard_D{0}ds_v6",          "westeurope", VmCpuVendor.Intel, true),
         ["ubuntu24_azure_cobalt100"]   = new("ubuntu24_azure_cobalt100",      VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true),
         ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false),
         ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, true),
@@ -74,9 +74,9 @@ public static class TargetCatalog
         ["windows_aws_genoa"]          = new("windows_aws_genoa",             VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   false),
 
         // ── Helix ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["macos15_helix_arm64"]        = new("macos15_helix_arm64",           VmArch.Arm64, "osx.15.arm64.open",           null,         VmCpuVendor.Arm,   false),
-        ["macos15_helix_x64"]          = new("macos15_helix_x64",             VmArch.X64,   "OSX.15.Amd64.Open",           null,         VmCpuVendor.Intel, false),
-        ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.26.arm64.open",           null,         VmCpuVendor.Arm,   true),
+        ["macos15_helix_arm64"]        = new("macos15_helix_arm64",           VmArch.Arm64, "osx.15.arm64.open",           null,         VmCpuVendor.Arm,   true),
+        ["macos15_helix_x64"]          = new("macos15_helix_x64",             VmArch.X64,   "OSX.15.Amd64.Open",           null,         VmCpuVendor.Intel, true),
+        ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.26.arm64.open",           null,         VmCpuVendor.Arm,   false),
         ["ubuntu24_helix_x64"]         = new("ubuntu24_helix_x64",            VmArch.X64,   HelixQueueLinuxX64,            null,         VmCpuVendor.Amd,   false),
         ["ubuntu24_helix_arm64"]       = new("ubuntu24_helix_arm64",          VmArch.Arm64, HelixQueueLinuxArm64,          null,         VmCpuVendor.Arm,   false),
         ["ubuntu24_helix_arm32"]       = new("ubuntu24_helix_arm32",          VmArch.Arm32, HelixQueueLinuxArm32,          null,         VmCpuVendor.Arm,   true),
@@ -184,7 +184,7 @@ public static class TargetCatalog
         if (userOs == null && userCloud == null
             && cpu is "arm" or "arm64")
         {
-            canonicalName = "macos26_helix_arm64";
+            canonicalName = "macos15_helix_arm64";
             return true;
         }
 
