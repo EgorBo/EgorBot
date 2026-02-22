@@ -28,7 +28,28 @@ public sealed class TelegramCommandService(
     private readonly string? _adminChatId = config["Telegram:AdminChatId"]
                                             ?? Environment.GetEnvironmentVariable("EGORBOT_TG_ADMINID");
 
+    /// <summary>
+    /// Custom commands loaded from Telegram:CustomCommands config section.
+    /// Key = command name (lowercase), Value = bash command to execute.
+    /// Only these pre-registered commands can be run — no arbitrary bash.
+    /// </summary>
+    private readonly Dictionary<string, string> _customCommands = LoadCustomCommands(config);
+
     private long _lastUpdateId;
+
+    private static Dictionary<string, string> LoadCustomCommands(IConfiguration cfg)
+    {
+        var section = cfg.GetSection("Telegram:CustomCommands");
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var child in section.GetChildren())
+        {
+            var name = child.Key.ToLowerInvariant();
+            var cmd = child.Value;
+            if (!string.IsNullOrWhiteSpace(cmd))
+                result[name] = cmd;
+        }
+        return result;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -127,19 +148,36 @@ public sealed class TelegramCommandService(
                 break;
             case "help":
             case "start":
-                await SendReplyAsync(
-                    "📋 *Available commands:*\n" +
-                    "`jobs` — list active jobs\n" +
-                    "`cores` — show current default core count\n" +
-                    "`cores N` — set default core count (e.g. `cores 16`)\n" +
-                    "`cancelall` — cancel all active jobs & deprovision VMs\n" +
-                    "`quit` — shut down the service\n" +
-                    "`help` — show this message");
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("📋 *Available commands:*");
+                sb.AppendLine("`jobs` — list active jobs");
+                sb.AppendLine("`cores` — show current default core count");
+                sb.AppendLine("`cores N` — set default core count (e.g. `cores 16`)");
+                sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
+                sb.AppendLine("`quit` — shut down the service");
+                sb.AppendLine("`help` — show this message");
+                if (_customCommands.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("🔧 *Custom commands:*");
+                    foreach (var (name, cmd) in _customCommands)
+                        sb.AppendLine($"`{name}` — `{EscapeMarkdown(cmd)}`);
+                }
+                await SendReplyAsync(sb.ToString());
                 break;
+            }
             default:
                 if (command.StartsWith("cores"))
                 {
                     await HandleCoresCommandAsync(command);
+                    break;
+                }
+                // Check custom commands (registered in config)
+                var cmdName = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries)[0];
+                if (_customCommands.TryGetValue(cmdName, out var bashCmd))
+                {
+                    await HandleCustomCommandAsync(cmdName, bashCmd, ct);
                     break;
                 }
                 await SendReplyAsync($"Unknown command: `{EscapeMarkdown(command)}`\nSend `help` for available commands.");
@@ -205,6 +243,66 @@ public sealed class TelegramCommandService(
         await SendReplyAsync(count > 0
             ? $"✅ Cancelled {count} job(s) and deprovisioned their VMs."
             : "No active jobs to cancel.");
+    }
+
+    private async Task HandleCustomCommandAsync(string name, string bashCommand, CancellationToken ct)
+    {
+        logger.LogInformation("Executing custom command '{Name}': {Cmd}", name, bashCommand);
+        await SendReplyAsync($"⏳ Running `{EscapeMarkdown(name)}`...");
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMinutes(5)); // safety timeout
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "/bin/bash",
+                Arguments = $"-c {bashCommand}",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null)
+            {
+                await SendReplyAsync($"❌ Failed to start process for `{EscapeMarkdown(name)}`");
+                return;
+            }
+
+            var stdout = await proc.StandardOutput.ReadToEndAsync(cts.Token);
+            var stderr = await proc.StandardError.ReadToEndAsync(cts.Token);
+            await proc.WaitForExitAsync(cts.Token);
+
+            var output = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(stdout))
+                output.AppendLine(stdout.TrimEnd());
+            if (!string.IsNullOrWhiteSpace(stderr))
+                output.AppendLine(stderr.TrimEnd());
+
+            var exitCode = proc.ExitCode;
+            var emoji = exitCode == 0 ? "✅" : "❌";
+            var result = output.Length > 0
+                ? output.ToString()
+                : "(no output)";
+
+            // Telegram message limit is ~4096 chars; truncate if needed
+            if (result.Length > 3500)
+                result = result[..3500] + "\n... (truncated)";
+
+            await SendReplyAsync($"{emoji} `{EscapeMarkdown(name)}` exited with code {exitCode}:\n```\n{result}\n```");
+        }
+        catch (OperationCanceledException)
+        {
+            await SendReplyAsync($"⏰ `{EscapeMarkdown(name)}` timed out (5 min limit)");
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Custom command '{Name}' failed", name);
+            await SendReplyAsync($"❌ `{EscapeMarkdown(name)}` failed: {EscapeMarkdown(ex.Message)}");
+        }
     }
 
     private async Task HandleCoresCommandAsync(string command)
