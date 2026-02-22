@@ -116,7 +116,7 @@ def run_perf_profiling():
         common.post_log("[PERF] Profiling is not supported for dotnet/performance benchmarks, skipping")
         return
 
-    # Relax perf restrictions (may fail on Helix without root)
+    # Relax perf restrictions
     common.run("sudo sysctl -w kernel.perf_event_paranoid=-1", check=False)
     common.run("sudo sysctl -w kernel.kptr_restrict=0", check=False)
 
@@ -241,8 +241,8 @@ def run_perf_profiling():
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
 
-            common.post_log(f"[PERF]   Waiting 40s for warmup (PID={proc.pid})...")
-            time.sleep(40)
+            common.post_log(f"[PERF]   Waiting 30s for warmup (PID={proc.pid})...")
+            time.sleep(30)
 
             if proc.poll() is not None:
                 common.post_log(f"[PERF]   Process exited early (code {proc.returncode}), skipping")
