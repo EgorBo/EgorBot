@@ -184,7 +184,8 @@ public static class TargetCatalog
         if (userOs == null && userCloud == null
             && cpu is "arm" or "arm64")
         {
-            canonicalName = "macos15_helix_arm64";
+            // our main workhorse, let's randomly pick one of the two Arm64 macOS targets to spread load (and also test both!)
+            canonicalName = Random.Shared.Next(0, 100) > 50 ? "macos15_helix_arm64" : "macos26_helix_arm64";
             return true;
         }
 
