@@ -20,8 +20,12 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
 
     public void Dispose() => _client.Dispose();
 
-    [Fact]
-    public async Task SubmitDockerJob_ReachesTerminalState()
+
+    // Run a benchmark without dotnet/runtime build.
+    [Theory]
+    [InlineData("")]        // no commits/PRs — just run the benchmark
+    [InlineData("main")]    // build dotnet/runtime main branch
+    public async Task RunMicrobenchmark(string commitsAndPrs)
     {
         var currentArch = RuntimeInformation.OSArchitecture == Architecture.X64 ? "x64"
             : RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "arm64"
@@ -31,7 +35,7 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
         var request = new
         {
             platforms = new[] { $"ubuntu24_docker_{currentArch}" },
-            commitsAndPrs = "",
+            commitsAndPrs,
             benchmarkCode = """
                 using System;
                 using BenchmarkDotNet.Attributes;
@@ -42,8 +46,7 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
 
                     [Benchmark]
                     public bool StartsWith() =>
-                        _data.StartsWith("HTTPS://github.com/dotnet/runtime",
-                            StringComparison.OrdinalIgnoreCase);
+                        _data.StartsWith("HTTPS://github.com/dotnet/runtime", StringComparison.OrdinalIgnoreCase);
                 }
                 """,
             useProfiler = false,
@@ -66,7 +69,7 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
 
         string? finalStatus = null;
         string? errorMessage = null;
-        var deadline = DateTime.UtcNow.AddMinutes(10);
+        var deadline = DateTime.UtcNow.AddHours(2);
 
         while (DateTime.UtcNow < deadline)
         {
@@ -93,7 +96,7 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
         // ── 3. Verify ────────────────────────────────────────────────────
         Assert.NotNull(finalStatus);
         Assert.True(terminalStates.Contains(finalStatus!),
-            $"Job did not reach a terminal state within 10 min. Last status: {finalStatus}");
+            $"Job did not reach a terminal state within 2 hours. Last status: {finalStatus}");
 
         // The job either completed with BDN results or failed (e.g. agent
         // couldn't install .NET SDK). Both are valid — the test verifies the
@@ -104,18 +107,28 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
             Assert.Equal(HttpStatusCode.OK, resultResp.StatusCode);
             var resultText = await resultResp.Content.ReadAsStringAsync();
             Assert.False(string.IsNullOrWhiteSpace(resultText), "Result should not be empty");
+
+            // ── Validate BDN markdown output structure ───────────────
+            // Header section: BenchmarkDotNet version, OS, CPU info
+            Assert.Contains("BenchmarkDotNet", resultText);
+            Assert.Contains(".NET SDK", resultText);
+
+            // Must contain a markdown table with header row and separator
+            Assert.Contains("| Method", resultText);
+            Assert.Contains("| Mean", resultText);
+            Assert.Matches(@"\|[-:\s]+\|", resultText);  // table separator row like |--- |
+
+            // The benchmark we submitted should appear in the results
+            Assert.Contains("StartsWith", resultText);
+
+            // Mean values should have units (ns, us, ms, etc.)
+            Assert.Matches(@"\d+[\.,]\d+\s*(ns|us|µs|ms|s)\s*\|", resultText);
         }
         else
         {
-            // Log the error for diagnostics but don't fail — agent-side errors
-            // (missing .NET SDK, network issues) aren't server bugs.
-            Assert.True(finalStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)
-                      || finalStatus.Equals("TimedOut", StringComparison.OrdinalIgnoreCase),
-                $"Unexpected terminal state: {finalStatus}, error: {errorMessage}");
+            throw new Exception($"Job failed with error: {errorMessage}, status is {finalStatus}");
         }
     }
-
-    // ── Server fixture: starts EgorBot.Server as a real process ─────────────
 
     /// <summary>
     /// Starts EgorBot.Server via <c>dotnet run</c> on a real TCP port so Docker
@@ -153,8 +166,6 @@ public class DockerIntegrationTest : IClassFixture<DockerIntegrationTest.EgorBot
             psi.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
             psi.Environment["ConnectionStrings__Default"] = $"Data Source={dbName}";
             psi.Environment["EgorBot__ServiceBaseUrl"] = BaseUrl;
-            psi.Environment["Docker__MemoryLimitMb"] = "4096";
-            psi.Environment["Docker__CpuLimit"] = "4";
             psi.Environment["Kestrel__Endpoints__Http__Url"] = BaseUrl;
 
             _process = Process.Start(psi)

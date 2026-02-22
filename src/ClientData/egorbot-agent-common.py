@@ -1,43 +1,89 @@
 #!/usr/bin/env python3
 """
-Cross-platform rewrite of run.sh — builds dotnet/runtime core_roots for
-specified commits/PRs and runs BDN microbenchmarks against them.
-Requires only the Python 3 standard library (no pip install needed).
+Cross-platform agent for the EgorBot benchmark service.
 
-This is the common module shared by all platforms.  Platform-specific
-helpers live in egorbot-agent-{windows,linux,macos}.py and are loaded
-at runtime via ``load_platform_module``.
+Builds dotnet/runtime core_roots for specified commits/PRs and runs BDN
+microbenchmarks against them.  Requires only the Python 3 standard library.
+
+Utility functions live in ``egorbot-agent-common-helpers.py``.
+Platform-specific helpers live in ``egorbot-agent-{windows,linux,macos}.py``.
 """
 
 import argparse
 import glob as globmod
 import importlib.util
-import io
-import json
 import os
-import platform
 import re as re_mod
+import shlex
 import shutil
 import subprocess
 import sys
-import threading
-import time
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, NoReturn, Optional
+from typing import List, Optional
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+#  Load the helpers module from the same directory
+# =============================================================================
+
+def _load_helpers():
+    script_dir = Path(__file__).parent
+    mod_path = script_dir / "egorbot-agent-common-helpers.py"
+    spec = importlib.util.spec_from_file_location("egorbot_agent_helpers", mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+_helpers = _load_helpers()
+_helpers.set_common_ref(sys.modules[__name__])
+
+# Re-export helper functions so that:
+#   1) Pipeline code in this module can call them without a prefix.
+#   2) Platform modules (which receive this module as ``common``) can call
+#      common.run(), common.post_log(), etc.
+run                   = _helpers.run
+post_log              = _helpers.post_log
+download              = _helpers.download
+read_lines            = _helpers.read_lines
+zip_directory         = _helpers.zip_directory
+sed_replace           = _helpers.sed_replace
+ensure_dirs           = _helpers.ensure_dirs
+copy_glob             = _helpers.copy_glob
+detect_platform       = _helpers.detect_platform
+is_unix               = _helpers.is_unix
+sudo_prefix           = _helpers.sudo_prefix
+make_exe              = _helpers.make_exe
+make_script           = _helpers.make_script
+dotnet_install_cmd    = _helpers.dotnet_install_cmd
+load_platform_module  = _helpers.load_platform_module
+kill_process_by_name  = _helpers.kill_process_by_name
+start_callback_sender = _helpers.start_callback_sender
+stop_callback_sender  = _helpers.stop_callback_sender
+send_results          = _helpers.send_results
+
+
+def __getattr__(name):
+    """Fall back to the helpers module for any attribute not explicitly
+    defined here (e.g. dynamic globals accessed by platform modules)."""
+    try:
+        return getattr(_helpers, name)
+    except AttributeError:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+
+
+# =============================================================================
 # Example usage:
 #   (1) With custom benchmark snippet:
-#       python egorbot-agent-common.py --job_tag my_test1 --gh_commits_and_prs "PR_12345;main" --bench_code_file ./MyBenchmark.cs
+#       python egorbot-agent-common.py --job_tag my_test1 \
+#           --gh_commits_and_prs "PR_12345;main" --bench_code_file ./MyBenchmark.cs
 #
 #   (2) With dotnet/performance benchmarks for a27de4a and its previous commits:
-#       python egorbot-agent-common.py --job_tag my_test2 --gh_commits_and_prs "a27de4a;a27de4a~1;a27de4a~2"
+#       python egorbot-agent-common.py --job_tag my_test2 \
+#           --gh_commits_and_prs "a27de4a;a27de4a~1;a27de4a~2"
 #
 # BDN arguments are read from BDN_ARGS.rsp file from current dir.
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 @dataclass
 class Config:
@@ -126,7 +172,7 @@ class Config:
         )
 
 
-# ── Derived paths & platform info (filled in setup_environment()) ───────────
+# -- Module-level globals (set in setup_environment) -------------------------
 WORK_DIR: Path
 ARTIFACTS_DIR: Path
 DIR_BENCHAPP: Path
@@ -134,407 +180,36 @@ CORE_ROOTS_DIR: Path
 TARGET_OS: str
 TARGET_ARCH: str
 CFG: Config
+_platform_mod = None
 
-# ── Platform module (loaded in setup_environment()) ─────────────────────────
-_platform_mod = None  # type: ignore
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Helpers
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def run(
-    cmd: str | List[str],
-    *,
-    cwd: Optional[Path] = None,
-    check: bool = True,
-    env: Optional[dict] = None,
-    shell: bool = True,
-    stdout_file: Optional[Path] = None,
-) -> subprocess.CompletedProcess:
-    """
-    Run *cmd* with live stdout/stderr streaming to the terminal.
-    If *stdout_file* is set, stdout is written to that file instead of the
-    terminal (cross-platform replacement for ``> file`` shell redirect).
-    If *check* is True (default) and the command exits non-zero,
-    ``send_results`` is called with the error code and the script exits.
-    """
-    merged_env = {**os.environ, **(env or {})}
-    label = cmd if isinstance(cmd, str) else " ".join(cmd)
-    if stdout_file:
-        print(f"\n▶ {label}  (→ {stdout_file})", flush=True)
-    else:
-        print(f"\n▶ {label}", flush=True)
-
-    if stdout_file:
-        with open(stdout_file, "w", encoding="utf-8") as fout:
-            result = subprocess.run(
-                cmd, cwd=cwd, env=merged_env, shell=shell,
-                stdout=fout,
-            )
-    else:
-        # Stream subprocess output line-by-line through Python's sys.stdout
-        # so TeeWriter captures it for the callback log sender.
-        proc = subprocess.Popen(
-            cmd, cwd=cwd, env=merged_env, shell=shell,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            bufsize=1, text=True, errors="replace",
-        )
-        for line in proc.stdout:
-            sys.stdout.write(line)
-            sys.stdout.flush()
-        proc.wait()
-        result = subprocess.CompletedProcess(cmd, proc.returncode)
-
-    if check and result.returncode != 0:
-        print(f"\n❌ Command failed (exit {result.returncode}): {label}")
-        send_results(success=False, exit_code=result.returncode)
-
-    return result
-
-
-def download(url: str, dest: Path):
-    """Download *url* to *dest* using urllib (no third-party deps)."""
-    import urllib.request
-    import ssl
-    print(f"  ⬇  {url} → {dest}", flush=True)
-    try:
-        urllib.request.urlretrieve(url, str(dest))
-    except urllib.error.URLError as e:
-        if "CERTIFICATE_VERIFY_FAILED" in str(e):
-            print("  ⚠  SSL verification failed, retrying with system cert store...", flush=True)
-            # Some Helix Windows machines lack a proper certifi bundle.
-            # Fall back to an unverified context for well-known hosts.
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            opener = urllib.request.build_opener(
-                urllib.request.HTTPSHandler(context=ctx)
-            )
-            with opener.open(url) as resp:
-                dest.write_bytes(resp.read())
-        else:
-            raise
-
-
-def read_lines(path: Path) -> List[str]:
-    """Read non-empty, non-comment lines from a file."""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [l.strip() for l in lines if l.strip() and not l.strip().startswith("#")]
-
-
-def zip_directory(src_dir: Path, zip_path: Path):
-    """Recursively zip *src_dir* into *zip_path*."""
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, _dirs, files in os.walk(src_dir):
-            for f in files:
-                full = Path(root) / f
-                zf.write(full, full.relative_to(src_dir))
-    print(f"  📦 Created {zip_path}")
-
-
-def kill_process_by_name(name: str):
-    """Best-effort kill of processes by name (cross-platform)."""
-    try:
-        if TARGET_OS == "windows":
-            subprocess.run(f"taskkill /F /IM {name}.exe", shell=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.run(f"pkill {name}", shell=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
-
-def sed_replace(filepath: Path, old: str, new: str):
-    """In-place text replacement in *filepath* (cross-platform sed)."""
-    text = filepath.read_text(encoding="utf-8")
-    text = text.replace(old, new)
-    filepath.write_text(text, encoding="utf-8")
-
-
-def detect_platform() -> tuple[str, str]:
-    """Return (target_os, target_arch)."""
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    if system == "linux":
-        target_os = "linux"
-    elif system == "darwin":
-        target_os = "osx"
-    elif system == "windows":
-        target_os = "windows"
-    else:
-        target_os = system
-    if machine in ("aarch64", "arm64"):
-        target_arch = "arm64"
-    else:
-        target_arch = "x64"
-    return target_os, target_arch
-
-
-def make_exe(name: str) -> str:
-    """Append .exe on Windows, nothing otherwise."""
-    return f"{name}.exe" if TARGET_OS == "windows" else name
-
-
-def make_script(name: str) -> str:
-    """Return name.cmd on Windows, ./name.sh otherwise (for direct execution)."""
-    return f"{name}.cmd" if TARGET_OS == "windows" else f"./{name}.sh"
-
-
-def dotnet_install_cmd(script: Path, *extra_args: str) -> str:
-    """Build the command to invoke dotnet-install.{ps1,sh}."""
-    if TARGET_OS == "windows":
-        ps_args = " ".join(_to_ps_arg(a) for a in extra_args)
-        ps = _platform_mod.POWERSHELL if _platform_mod else "powershell"
-        return (f'"{ps}" -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = '
-                f"[Net.SecurityProtocolType]::Tls12; & '{script}' {ps_args}\"")
-    args = " ".join(extra_args)
-    return f'bash "{script}" {args}'
-
-
-def _to_ps_arg(arg: str) -> str:
-    """Convert a bash-style ``--kebab-arg`` to PowerShell ``-PascalArg``."""
-    if arg.startswith("--"):
-        return "-" + "".join(part.capitalize() for part in arg[2:].split("-"))
-    return arg
-
-
-def load_platform_module(target_os: str):
-    """
-    Dynamically load the platform-specific module from the same directory.
-    Maps: "windows" → egorbot-agent-windows.py
-          "linux"   → egorbot-agent-linux.py
-          "osx"     → egorbot-agent-macos.py
-    """
-    os_to_file = {
-        "windows": "egorbot-agent-windows.py",
-        "linux":   "egorbot-agent-linux.py",
-        "osx":     "egorbot-agent-macos.py",
-    }
-    filename = os_to_file.get(target_os)
-    if not filename:
-        post_log(f"WARNING: No platform module for OS '{target_os}'")
-        return None
-
-    # Look next to this script
-    script_dir = Path(__file__).parent
-    mod_path = script_dir / filename
-    if not mod_path.exists():
-        post_log(f"WARNING: Platform module not found: {mod_path}")
-        return None
-
-    spec = importlib.util.spec_from_file_location(f"platform_{target_os}", mod_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    # Inject a reference to the common module AFTER exec so the module-level
-    # ``common = None`` placeholder doesn't overwrite our reference.
-    mod.common = sys.modules[__name__]
-    return mod
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Callback support: TeeWriter, background log sender, result upload
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TeeWriter:
-    """Wraps stdout/stderr to also accumulate lines for the background sender."""
-
-    def __init__(self, original_stream):
-        self._original = original_stream
-        self._lock = threading.Lock()
-        self._buffer: List[str] = []
-
-    def write(self, text: str):
-        try:
-            self._original.write(text)
-        except UnicodeEncodeError:
-            self._original.write(text.encode('ascii', 'replace').decode())
-        if text.strip():
-            with self._lock:
-                self._buffer.append(text.rstrip())
-
-    def flush(self):
-        self._original.flush()
-
-    def drain(self) -> List[str]:
-        """Return and clear buffered lines."""
-        with self._lock:
-            lines = self._buffer[:]
-            self._buffer.clear()
-        return lines
-
-    # Delegate everything else to the original stream
-    def __getattr__(self, name):
-        return getattr(self._original, name)
-
-
-_tee_stdout: Optional[TeeWriter] = None
-_log_sender_stop = threading.Event()
-
-
-def post_log(message: str):
-    """Immediately post a single log line to the callback endpoint (and print it)."""
-    try:
-        print(f">> {message}", flush=True)
-    except UnicodeEncodeError:
-        print(f">> {message.encode('ascii', 'replace').decode()}", flush=True)
-    if CFG.callback_url and CFG.job_id:
-        _post_json(f"{CFG.callback_url}/jobs/{CFG.job_id}/logs", [message])
-
-
-def _post_json(url: str, data) -> bool:
-    """POST JSON to url. Returns True on success."""
-    import urllib.request
-    try:
-        body = json.dumps(data).encode("utf-8")
-        req = urllib.request.Request(url, data=body,
-                                     headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10)
-        return True
-    except Exception:
-        return False
-
-
-def _post_multipart(url: str, fields: dict, files: dict) -> bool:
-    """POST multipart/form-data. fields: {name: value}, files: {name: (filename, bytes)}."""
-    import urllib.request
-    try:
-        boundary = "----EgorBotBoundary" + str(int(time.time()))
-        body = io.BytesIO()
-
-        for key, val in fields.items():
-            body.write(f"--{boundary}\r\n".encode())
-            body.write(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode())
-            body.write(f"{val}\r\n".encode())
-
-        for key, (filename, filedata) in files.items():
-            body.write(f"--{boundary}\r\n".encode())
-            body.write(f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'.encode())
-            body.write(b"Content-Type: application/octet-stream\r\n\r\n")
-            body.write(filedata)
-            body.write(b"\r\n")
-
-        body.write(f"--{boundary}--\r\n".encode())
-
-        req = urllib.request.Request(
-            url, data=body.getvalue(),
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
-        urllib.request.urlopen(req, timeout=120)
-        return True
-    except Exception as e:
-        print(f"  ⚠  Multipart upload failed: {e}")
-        return False
-
-
-def _log_sender_thread():
-    """Background thread that sends buffered log lines and heartbeats every 5 seconds."""
-    global _tee_stdout
-    while not _log_sender_stop.is_set():
-        _log_sender_stop.wait(5)
-        if _tee_stdout is None or not CFG.callback_url or not CFG.job_id:
-            continue
-        lines = _tee_stdout.drain()
-        if lines:
-            _post_json(f"{CFG.callback_url}/jobs/{CFG.job_id}/logs", lines)
-        # Heartbeat
-        _post_json(f"{CFG.callback_url}/jobs/{CFG.job_id}/heartbeat", {})
-
-
-def start_callback_sender():
-    """Install TeeWriter on stdout/stderr and start the background log sender."""
-    global _tee_stdout
-    if not CFG.callback_url or not CFG.job_id:
-        return
-    _tee_stdout = TeeWriter(sys.stdout)
-    sys.stdout = _tee_stdout  # type: ignore
-    sys.stderr = TeeWriter(sys.stderr)  # type: ignore
-    t = threading.Thread(target=_log_sender_thread, daemon=True)
-    t.start()
-
-
-def stop_callback_sender():
-    """Flush remaining logs and stop the background sender."""
-    global _tee_stdout
-    _log_sender_stop.set()
-    if _tee_stdout is not None and CFG.callback_url and CFG.job_id:
-        # Flush remaining lines
-        lines = _tee_stdout.drain()
-        if lines:
-            _post_json(f"{CFG.callback_url}/jobs/{CFG.job_id}/logs", lines)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SendResults — the single exit point on success *or* failure
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def send_results(*, success: bool, exit_code: int = 0) -> NoReturn:
-    """
-    Package artefacts into a zip and report the outcome.
-    Always terminates the process.
-    """
-    post_log(f"send_results called: success={success}, exit_code={exit_code}")
-    zip_path = WORK_DIR / f"artifacts_{CFG.job_tag}.zip"
-
-    # Try to copy the agent log (if present) before zipping
-    agent_log = WORK_DIR / "agent.log"
-    if agent_log.exists():
-        shutil.copy2(agent_log, ARTIFACTS_DIR)
-
-    if ARTIFACTS_DIR.exists() and any(ARTIFACTS_DIR.iterdir()):
-        zip_directory(ARTIFACTS_DIR, zip_path)
-    else:
-        print("  ⚠  No artefacts to zip.")
-
-    # Upload results to the EgorBot service if callback_url is configured
-    if CFG.callback_url and CFG.job_id:
-        stop_callback_sender()
-        complete_url = f"{CFG.callback_url}/jobs/{CFG.job_id}/complete"
-        fields = {"success": "true" if success else "false"}
-        if not success:
-            fields["error"] = f"Agent failed with exit code {exit_code}"
-        files = {}
-        if zip_path.exists():
-            files["artifacts"] = (zip_path.name, zip_path.read_bytes())
-        post_log(f"Uploading results to {complete_url} ({zip_path.stat().st_size if zip_path.exists() else 0} bytes)...")
-        if _post_multipart(complete_url, fields, files):
-            post_log("Upload successful.")
-        else:
-            post_log("WARNING: Upload to /complete failed — results are still available locally.")
-
-    if success:
-        print(f"\n✅ Finished successfully.  Artefacts: {zip_path}")
-    else:
-        print(f"\n❌ Failed (exit code {exit_code}).  Artefacts: {zip_path}")
-
-    sys.exit(0 if success else exit_code)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Main stages
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+#  Stage 1 -- Environment setup
+# =============================================================================
 
 def setup_environment(cfg: Config):
     """Detect platform, create working directories, set global .NET env vars."""
     global WORK_DIR, ARTIFACTS_DIR, DIR_BENCHAPP, CORE_ROOTS_DIR
     global TARGET_OS, TARGET_ARCH, CFG, _platform_mod
 
-    CFG = cfg
-    WORK_DIR = Path(cfg.work_dir).resolve()
+    CFG = _helpers.CFG = cfg
+    WORK_DIR = _helpers.WORK_DIR = Path(cfg.work_dir).resolve()
     os.chdir(WORK_DIR)
 
     TARGET_OS, TARGET_ARCH = detect_platform()
+    _helpers.TARGET_OS = TARGET_OS
+    _helpers.TARGET_ARCH = TARGET_ARCH
 
     # Load platform-specific module
     _platform_mod = load_platform_module(TARGET_OS)
+    _helpers._platform_mod = _platform_mod
     if _platform_mod and hasattr(_platform_mod, "setup_platform"):
         _platform_mod.setup_platform()
 
-    ARTIFACTS_DIR  = WORK_DIR / "artifacts"
-    DIR_BENCHAPP   = WORK_DIR / "benchapp"
-    CORE_ROOTS_DIR = WORK_DIR / "core_roots"
-    for d in (ARTIFACTS_DIR, DIR_BENCHAPP, CORE_ROOTS_DIR):
-        d.mkdir(parents=True, exist_ok=True)
+    ARTIFACTS_DIR  = _helpers.ARTIFACTS_DIR  = WORK_DIR / "artifacts"
+    DIR_BENCHAPP   = _helpers.DIR_BENCHAPP   = WORK_DIR / "benchapp"
+    CORE_ROOTS_DIR = _helpers.CORE_ROOTS_DIR = WORK_DIR / "core_roots"
+    ensure_dirs(ARTIFACTS_DIR, DIR_BENCHAPP, CORE_ROOTS_DIR)
 
     # Some global env vars for .NET
     os.environ["DOTNET_JitEnableOptionalRelocs"] = "0"  # Improve consistency of measurements
@@ -542,14 +217,12 @@ def setup_environment(cfg: Config):
     os.environ["PERFLAB_TARGET_FRAMEWORKS"]      = cfg.bench_tfm
 
 
-########################################################################################
-##
-## Install dependencies
-##
-########################################################################################
+# =============================================================================
+#  Stage 2 -- Install dependencies
+# =============================================================================
 
 def install_dependencies():
-    # On local runs (callback to localhost), don't kill dotnet — it would kill the web server!
+    # On local runs (callback to localhost), don't kill dotnet -- it would kill the web server!
     if not CFG.callback_url or "localhost" not in CFG.callback_url:
         kill_process_by_name("dotnet")
     else:
@@ -570,11 +243,9 @@ def install_dependencies():
     marker.touch()
 
 
-########################################################################################
-##
-## Install .NET SDKs
-##
-########################################################################################
+# =============================================================================
+#  Stage 3 -- Install .NET SDKs
+# =============================================================================
 
 def install_dotnet_sdks():
     script_name = "dotnet-install.ps1" if TARGET_OS == "windows" else "dotnet-install.sh"
@@ -629,11 +300,9 @@ def install_dotnet_sdks():
         post_log("Created nuget.config with dotnet CI feeds")
 
 
-########################################################################################
-##
-## Build & prepare benchmarks
-##
-########################################################################################
+# =============================================================================
+#  Stage 4 -- Build & prepare benchmarks
+# =============================================================================
 
 def build_benchmarks(bench_args: List[str]):
     if CFG.bench_use_dotnet_performance:
@@ -740,17 +409,15 @@ def _build_custom_benchmarks(bench_args: List[str]):
             cwd=DIR_BENCHAPP, stdout_file=all_benchmarks, shell=False)
 
 
-########################################################################################
-##
-## Build core-roots for all commits and PRs specified in GH_COMMITS_AND_PRS
-##
-########################################################################################
+# =============================================================================
+#  Stage 5 -- Build core_roots for all commits/PRs
+# =============================================================================
 
 def clone_runtime():
     runtime_dir = WORK_DIR / "runtime"
     if not runtime_dir.is_dir():
         post_log("Cloning dotnet/runtime...")
-        # Enable long paths on Windows — dotnet/runtime has files that exceed the 260-char limit
+        # Enable long paths on Windows -- dotnet/runtime has files that exceed the 260-char limit
         run('git config --global core.longpaths true')
         run(f'git clone --no-tags --single-branch '
                     f'https://github.com/dotnet/runtime.git "{runtime_dir}"', check=False)
@@ -823,7 +490,7 @@ def build_core_roots():
                 run("git checkout main", cwd=runtime_dir)
                 run("git pull origin main", cwd=runtime_dir)
             else:
-                # Short commit hashes can't be fetched as refs — fetch full
+                # Short commit hashes can't be fetched as refs -- fetch full
                 # history (unshallow if needed) then checkout locally.
                 run("git fetch --unshallow origin || git fetch origin", cwd=runtime_dir, check=False)
                 run(f"git checkout {commit}", cwd=runtime_dir)
@@ -851,9 +518,9 @@ def build_core_roots():
         run(f"{make_script('build')} clr+libs -c Release{arch_flag} {CFG.runtime_build_args}", cwd=runtime_dir)
 
         if TARGET_OS == "windows":
-            run(f"src\\tests\\build.cmd{arch_flag} Release generatelayoutonly", cwd=runtime_dir)
+            run(f"src\\tests\\build.cmd{arch_flag} Release generatelayoutonly /p:BuildNativeTests=false", cwd=runtime_dir)
         else:
-            run(f"./src/tests/build.sh{arch_flag} Release generatelayoutonly", cwd=runtime_dir)
+            run(f"./src/tests/build.sh{arch_flag} Release generatelayoutonly /p:BuildNativeTests=false", cwd=runtime_dir)
 
         print("Successfully built runtime")
         post_log(f"Core_root built for '{item}' ✓")
@@ -867,11 +534,9 @@ def build_core_roots():
         kill_process_by_name("dotnet")
 
 
-########################################################################################
-##
-## Run benchmarks
-##
-########################################################################################
+# =============================================================================
+#  Stage 6 -- Run benchmarks
+# =============================================================================
 
 def run_benchmarks(bench_args: List[str]):
     """Run BDN benchmarks using all built core_roots (or without --corerun if none)."""
@@ -887,37 +552,34 @@ def run_benchmarks(bench_args: List[str]):
 
     # Use sudo on Linux/macOS for more stable benchmark results
     # (reduces noise from CPU frequency scaling, perf counters, etc.)
-    sudo_prefix = ["sudo"] if TARGET_OS in ("linux", "osx") else []
+    prefix = sudo_prefix()
 
     if CFG.bench_use_dotnet_performance:
         # Run benchmarks from dotnet/performance repo
         micro_dir = WORK_DIR / "performance" / "src" / "benchmarks" / "micro"
         micro_bin = (WORK_DIR / "performance" / "artifacts" / "bin"
                      / "MicroBenchmarks" / "Release" / CFG.bench_tfm / "MicroBenchmarks")
-        run(sudo_prefix + [str(micro_bin)] + bench_args + corerun_args + hide_columns,
+        run(prefix + [str(micro_bin)] + bench_args + corerun_args + hide_columns,
             cwd=micro_dir, shell=False)
-        # Copy performance/artifacts/.../BenchmarkDotNet.Artifacts/results to artifacts dir
         results_pattern = str(
             WORK_DIR / "performance" / "artifacts" / "bin" / "MicroBenchmarks"
             / "Release" / CFG.bench_tfm / "BenchmarkDotNet.Artifacts" / "results" / "*.*"
         )
     else:
         # Run custom benchmarks
-        run(sudo_prefix + ["dotnet", "run", "-c", "Release", "-f", CFG.bench_tfm, "--"] +
+        run(prefix + ["dotnet", "run", "-c", "Release", "-f", CFG.bench_tfm, "--"] +
             corerun_args + bench_args + hide_columns,
             cwd=DIR_BENCHAPP, shell=False)
-        # Copy benchapp/BenchmarkDotNet.Artifacts/results/*.* to artifacts dir
         results_pattern = str(
             DIR_BENCHAPP / "BenchmarkDotNet.Artifacts" / "results" / "*.*"
         )
 
-    for src in globmod.glob(results_pattern):
-        shutil.copy2(src, ARTIFACTS_DIR)
+    copy_glob(results_pattern, ARTIFACTS_DIR)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 #  Entry point
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def main(cfg: Optional[Config] = None):
     """Run the full pipeline. Pass a Config directly, or leave as None
@@ -947,7 +609,6 @@ def main(cfg: Optional[Config] = None):
     # When passed as list elements to subprocess with shell=False, literal
     # quotes are NOT stripped, so BDN receives "Foo*" (with quotes) as the
     # filter value and matches nothing.  Use shlex.split to parse properly.
-    import shlex
     bench_args = shlex.split(" ".join(bench_args), posix=True)
     post_log(f"  BDN args: {bench_args}")
 
@@ -972,24 +633,19 @@ def main(cfg: Optional[Config] = None):
         build_core_roots()
         post_log("[STAGE 5/6] Core_roots built ✓")
     else:
-        post_log("[STAGE 5/6] No commits/PRs specified — skipping core_root build")
+        post_log("[STAGE 5/6] No commits/PRs specified -- skipping core_root build")
 
     post_log("[STAGE 6/6] Running benchmarks...")
     run_benchmarks(bench_args)
     post_log("[STAGE 6/6] Benchmarks completed ✓")
 
-    # Run perf profiling if enabled (Linux only — delegated to platform module)
+    # Run perf profiling if enabled (Linux only -- delegated to platform module)
     if cfg.perf_enabled and _platform_mod and hasattr(_platform_mod, "run_perf_profiling"):
         post_log("[PERF] Starting perf profiling stage...")
         _platform_mod.run_perf_profiling()
 
-    # Finalize: copy logs, zip artifacts, report success
-    post_log("Finalizing — packaging artifacts and uploading results...")
-    agent_log = WORK_DIR / "agent.log"
-    if agent_log.exists():
-        shutil.copy2(agent_log, ARTIFACTS_DIR)
-    zip_path = WORK_DIR / f"artifacts_{CFG.job_tag}.zip"
-    zip_directory(ARTIFACTS_DIR, zip_path)
+    # Finalize: package artifacts, upload results
+    post_log("Finalizing -- uploading results...")
     send_results(success=True)
 
 

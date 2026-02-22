@@ -60,7 +60,7 @@ def _ensure_vs_build_tools():
     # ── Step 1: ensure vswhere.exe exists ─────────────────────────────────
     if not os.path.isfile(vswhere_exe):
         common.post_log("vswhere.exe not found, downloading...")
-        os.makedirs(installer_dir, exist_ok=True)
+        common.ensure_dirs(Path(installer_dir))
         vswhere_url = "https://netcorenativeassets.blob.core.windows.net/resource-packages/external/windows/vswhere/3.1.7/vswhere.exe"
         try:
             common.download(vswhere_url, Path(vswhere_exe))

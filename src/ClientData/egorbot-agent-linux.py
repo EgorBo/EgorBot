@@ -188,13 +188,13 @@ def run_perf_profiling():
     low_freq = 299
 
     perf_out_dir = common.ARTIFACTS_DIR / "perf"
-    perf_out_dir.mkdir(parents=True, exist_ok=True)
+    common.ensure_dirs(perf_out_dir)
 
     for label, corerun_path in run_entries:
         for bdnline in benchmarks:
             bdnline_escaped = re_mod.sub(r'[^a-zA-Z0-9]', '_', bdnline)
             bench_dir = perf_out_dir / f"PerfBench__{bdnline_escaped}"
-            bench_dir.mkdir(parents=True, exist_ok=True)
+            common.ensure_dirs(bench_dir)
 
             common.post_log(f"[PERF] Profiling: {label} / {bdnline}")
 
