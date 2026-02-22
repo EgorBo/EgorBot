@@ -162,7 +162,7 @@ public sealed class TelegramCommandService(
                     sb.AppendLine();
                     sb.AppendLine("🔧 *Custom commands:*");
                     foreach (var (name, cmd) in _customCommands)
-                        sb.AppendLine($"`{name}` — `{EscapeMarkdown(cmd)}`);
+                        sb.AppendLine($"`{name}` — `{EscapeMarkdown(cmd)}`");
                 }
                 await SendReplyAsync(sb.ToString());
                 break;
