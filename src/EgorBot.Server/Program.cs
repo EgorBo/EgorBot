@@ -154,6 +154,14 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             }
         }
 
+        // Ensure --filter is always present so BDN doesn't prompt interactively
+        if (bdnArgs is null || !bdnArgs.Contains("--filter", StringComparison.OrdinalIgnoreCase))
+        {
+            bdnArgs = string.IsNullOrWhiteSpace(bdnArgs)
+                ? "--filter \"*\""
+                : bdnArgs + " --filter \"*\"";
+        }
+
         var job = new BenchmarkJob
         {
             GroupId = groupId,
