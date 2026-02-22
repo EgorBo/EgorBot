@@ -577,11 +577,16 @@ def run_benchmarks(bench_args: List[str], attempt: int = 1, total_attempts: int 
 
     results_pattern = str(results_dir / "*.*")
 
+    # BDN's EventPipeProfiler puts .speedscope.json files in the parent
+    # (BenchmarkDotNet.Artifacts/) not in results/, so copy those too.
+    bdn_artifacts_dir = results_dir.parent
+    speedscope_pattern = str(bdn_artifacts_dir / "*.speedscope.json")
+
     if total_attempts > 1:
         # Rename result files with attempt suffix before copying to ARTIFACTS_DIR,
         # so multiple attempts don't overwrite each other.
         # e.g. "MyBench-report-github.md" → "MyBench-attempt2-report-github.md"
-        for f in globmod.glob(results_pattern):
+        for f in globmod.glob(results_pattern) + globmod.glob(speedscope_pattern):
             p = Path(f)
             stem = p.stem   # e.g. "MyBench-report-github"
             suffix = p.suffix  # e.g. ".md"
@@ -589,10 +594,11 @@ def run_benchmarks(bench_args: List[str], attempt: int = 1, total_attempts: int 
             dest = ARTIFACTS_DIR / new_name
             shutil.copy2(str(p), str(dest))
         # Also clean BDN results dir so next attempt starts fresh
-        for f in globmod.glob(results_pattern):
+        for f in globmod.glob(results_pattern) + globmod.glob(speedscope_pattern):
             os.remove(f)
     else:
         copy_glob(results_pattern, ARTIFACTS_DIR)
+        copy_glob(speedscope_pattern, ARTIFACTS_DIR)
 
 
 # =============================================================================
