@@ -42,17 +42,17 @@ def install_platform_deps():
     chk = not is_helix  # check=False on Helix so failures don't abort
 
     if shutil.which("apt"):
-        common.run("sudo apt update", check=chk)
-        common.run("sudo apt install -y git zip ninja-build", check=chk)
+        common.run("apt update", check=chk)
+        common.run("apt install -y git zip ninja-build", check=chk)
 
         # Install perf if enabled and not already available
         if common.CFG.perf_enabled:
             _build_perf_from_source()
     elif shutil.which("tdnf"):
-        common.run("sudo tdnf install -y git zip ninja-build", check=chk)
-        common.run("sudo tdnf update -y", check=chk)
+        common.run("tdnf install -y git zip ninja-build", check=chk)
+        common.run("tdnf update -y", check=chk)
     elif shutil.which("dnf"):
-        common.run("sudo dnf install -y git zip ninja-build", check=chk)
+        common.run("dnf install -y git zip ninja-build", check=chk)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -66,7 +66,7 @@ def _build_perf_from_source():
 
     # Install build dependencies
     common.run(
-        "sudo apt update && sudo apt install -y "
+        "apt update && apt install -y "
         "build-essential git flex bison pkg-config "
         "libelf-dev libdw-dev libtraceevent-dev "
         "python3-dev libslang2-dev libperl-dev "
@@ -101,9 +101,8 @@ def _build_perf_from_source():
 
 
 def _perf() -> str:
-    """Return a sudo-prefixed absolute path to the perf binary, or 'sudo perf' as fallback."""
-    bin_path = PERF_BIN if PERF_BIN else (shutil.which("perf") or "perf")
-    return f"sudo {bin_path}"
+    """Return the absolute path to the perf binary, or 'perf' as fallback."""
+    return PERF_BIN if PERF_BIN else (shutil.which("perf") or "perf")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -117,8 +116,8 @@ def run_perf_profiling():
         return
 
     # Relax perf restrictions
-    common.run("sudo sysctl -w kernel.perf_event_paranoid=-1", check=False)
-    common.run("sudo sysctl -w kernel.kptr_restrict=0", check=False)
+    common.run("sysctl -w kernel.perf_event_paranoid=-1", check=False)
+    common.run("sysctl -w kernel.kptr_restrict=0", check=False)
 
     perf = _perf()
     if not PERF_BIN:

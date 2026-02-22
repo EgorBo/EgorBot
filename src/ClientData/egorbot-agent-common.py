@@ -498,7 +498,7 @@ def build_core_roots():
         if TARGET_OS == "osx":
             run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
         elif TARGET_OS != "windows":
-            run("sudo eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
+            run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
 
         # Make it more resilient to warnings in case if we build old commits
         dbp = runtime_dir / "Directory.Build.props"
