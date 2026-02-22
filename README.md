@@ -42,6 +42,10 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 | `-pr <number>` | Target a specific PR (this argument is implied when running in a PR context). |
 | `-profiler` | Enable perf profiler (Linux only). |
 
+**NOTE:** 32-bit arm and windows targets are currently not available (let me know if you need them).
+**NOTE:** mono runtime is not currently supported
+**NOTE:** NativeAOT (NAOT) runtime is not currently supported
+
 ### Targets
 
 Targets specify where to run. Format: `{os}_{cloud}_{cpu}`. If `os` is omitted, defaults to `ubuntu24`. If `cloud` is omitted, defaults to `azure` (or `helix` for macOS). If no target is specified at all it defaults to `macos26_helix_arm64` (baremetal Apple Silicon via Helix).
@@ -61,6 +65,7 @@ You don't have to spell out the full name — EgorBot resolves shorthands:
 | `-osx_arm64` | `macos26_helix_arm64` | macOS Apple Silicon |
 | `-osx_x64` | `macos15_helix_x64` | macOS Intel x64 |
 
+**NOTE:** 32-bit arm and windows targets are currently not available (let me know if you need them).
 
 Full target list:
 
