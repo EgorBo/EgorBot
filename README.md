@@ -42,8 +42,8 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 | `-pr <number>` | Target a specific PR (this argument is implied when running in a PR context). |
 | `-profiler` | Enable perf profiler (Linux only). |
 
-**NOTE:** 32-bit arm and windows targets are currently not available (let me know if you need them).
-**NOTE:** mono runtime is not currently supported
+**NOTE:** 32-bit arm and windows targets are currently not available (let me know if you need them).</br>
+**NOTE:** mono runtime is not currently supported</br>
 **NOTE:** NativeAOT (NAOT) runtime is not currently supported
 
 ### Targets
@@ -105,7 +105,7 @@ Full target list:
 | `windows_helix_x64` | x64 | Helix | — |
 | `windows_helix_arm64` | arm64 | Helix | Arm |
 
-Multiple targets can be specified in a single command.
+Multiple targets can be specified in a single command.</br>
 **NOTE:** Use AWS targets only when absolutely necessary since these targets are not free for me.
 
 ### Default behavior
