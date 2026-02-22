@@ -30,7 +30,7 @@ public sealed record TargetInfo(
 /// Single source of truth for all supported targets, with smart resolution from user input.
 ///
 /// Target names: {OsDistro}_{Cloud}_{Cpu}
-///   - OsDistro: ubuntu24, macos26, windows
+///   - OsDistro: ubuntu24, macos15, macos26, windows
 ///   - Cloud:    azure, aws, helix
 ///   - Cpu:      genoa, cascadelake, graviton4, arm64, x64, etc.
 ///
@@ -74,8 +74,9 @@ public static class TargetCatalog
         ["windows_aws_genoa"]          = new("windows_aws_genoa",             VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   false),
 
         // ── Helix ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+        ["macos15_helix_arm64"]        = new("macos15_helix_arm64",           VmArch.Arm64, "osx.15.arm64.open",           null,         VmCpuVendor.Arm,   false),
+        ["macos15_helix_x64"]          = new("macos15_helix_x64",             VmArch.X64,   "OSX.15.Amd64.Open",           null,         VmCpuVendor.Intel, false),
         ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.26.arm64.open",           null,         VmCpuVendor.Arm,   true),
-        ["macos26_helix_x64"]          = new("macos26_helix_x64",             VmArch.X64,   "OSX.15.Amd64.Open",           null,         VmCpuVendor.Intel, true),
         ["ubuntu24_helix_x64"]         = new("ubuntu24_helix_x64",            VmArch.X64,   HelixQueueLinuxX64,            null,         VmCpuVendor.Amd,   false),
         ["ubuntu24_helix_arm64"]       = new("ubuntu24_helix_arm64",          VmArch.Arm64, HelixQueueLinuxArm64,          null,         VmCpuVendor.Arm,   false),
         ["ubuntu24_helix_arm32"]       = new("ubuntu24_helix_arm32",          VmArch.Arm32, HelixQueueLinuxArm32,          null,         VmCpuVendor.Arm,   true),
@@ -97,6 +98,7 @@ public static class TargetCatalog
     private static readonly Dictionary<string, string> OsDistroToFamily = new(StringComparer.OrdinalIgnoreCase)
     {
         ["ubuntu24"] = "linux",
+        ["macos15"]  = "osx",
         ["macos26"]  = "osx",
         ["windows"]  = "windows",
     };
@@ -105,11 +107,12 @@ public static class TargetCatalog
 
     private static readonly Dictionary<string, string> OsNormalization = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["linux"]  = "ubuntu24",
-        ["ubuntu"] = "ubuntu24",
-        ["osx"]    = "macos26",
-        ["macos"]  = "macos26",
-        ["win"]    = "windows",
+        ["linux"]   = "ubuntu24",
+        ["ubuntu"]  = "ubuntu24",
+        ["osx"]     = "macos26",
+        ["macos"]   = "macos26",
+        ["macos15"] = "macos15",
+        ["win"]     = "windows",
     };
 
     // ── Known cloud identifiers ──────────────────────────────────────────
@@ -185,9 +188,9 @@ public static class TargetCatalog
             return true;
         }
 
-        // 3. Apply defaults: OS → ubuntu24, Cloud → azure (macos26 → helix)
+        // 3. Apply defaults: OS → ubuntu24, Cloud → azure (macos → helix)
         var os = userOs ?? "ubuntu24";
-        var cloud = userCloud ?? (os == "macos26" ? "helix" : "azure");
+        var cloud = userCloud ?? (os.StartsWith("macos", StringComparison.OrdinalIgnoreCase) ? "helix" : "azure");
 
         // 4. Try full {os}_{cloud}_{cpu} match
         if (cpu != null)
