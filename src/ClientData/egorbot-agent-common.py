@@ -847,12 +847,13 @@ def build_core_roots():
         print("=" * 82)
         print(f"  Building runtime for {item}...")
         print("=" * 82)
-        run(f"{make_script('build')} clr+libs -c Release {CFG.runtime_build_args}", cwd=runtime_dir)
+        arch_flag = f" -a {TARGET_ARCH}" if TARGET_ARCH != "x64" else ""
+        run(f"{make_script('build')} clr+libs -c Release{arch_flag} {CFG.runtime_build_args}", cwd=runtime_dir)
 
         if TARGET_OS == "windows":
-            run("src\\tests\\build.cmd Release generatelayoutonly", cwd=runtime_dir)
+            run(f"src\\tests\\build.cmd{arch_flag} Release generatelayoutonly", cwd=runtime_dir)
         else:
-            run("./src/tests/build.sh Release generatelayoutonly", cwd=runtime_dir)
+            run(f"./src/tests/build.sh{arch_flag} Release generatelayoutonly", cwd=runtime_dir)
 
         print("Successfully built runtime")
         post_log(f"Core_root built for '{item}' ✓")
