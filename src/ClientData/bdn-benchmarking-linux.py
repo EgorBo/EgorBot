@@ -36,23 +36,31 @@ def setup_platform():
 #  Dependency installation
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _sudo() -> str:
+    """Return 'sudo' if available and we're not already root, else ''."""
+    if os.getuid() == 0:
+        return ""
+    return "sudo " if shutil.which("sudo") else ""
+
+
 def install_platform_deps():
     """Install build dependencies via the system package manager."""
     is_helix = os.environ.get("HELIX_WORKITEM_PAYLOAD") is not None
     chk = not is_helix  # check=False on Helix so failures don't abort
+    sudo = _sudo()
 
     if shutil.which("apt"):
-        common.run("apt update", check=chk)
-        common.run("apt install -y git zip ninja-build", check=chk)
+        common.run(f"{sudo}apt update", check=chk)
+        common.run(f"{sudo}apt install -y git zip ninja-build", check=chk)
 
         # Install perf if enabled and not already available
         if common.CFG.perf_enabled:
             _build_perf_from_source()
     elif shutil.which("tdnf"):
-        common.run("tdnf install -y git zip ninja-build", check=chk)
-        common.run("tdnf update -y", check=chk)
+        common.run(f"{sudo}tdnf install -y git zip ninja-build", check=chk)
+        common.run(f"{sudo}tdnf update -y", check=chk)
     elif shutil.which("dnf"):
-        common.run("dnf install -y git zip ninja-build", check=chk)
+        common.run(f"{sudo}dnf install -y git zip ninja-build", check=chk)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -65,8 +73,9 @@ def _build_perf_from_source():
     common.post_log("perf not found, building from source...")
 
     # Install build dependencies
+    sudo = _sudo()
     common.run(
-        "apt update && apt install -y "
+        f"{sudo}apt update && {sudo}apt install -y "
         "build-essential git flex bison pkg-config "
         "libelf-dev libdw-dev libtraceevent-dev "
         "python3-dev libslang2-dev libperl-dev "
@@ -116,8 +125,9 @@ def run_perf_profiling():
         return
 
     # Relax perf restrictions
-    common.run("sysctl -w kernel.perf_event_paranoid=-1", check=False)
-    common.run("sysctl -w kernel.kptr_restrict=0", check=False)
+    sudo = _sudo()
+    common.run(f"{sudo}sysctl -w kernel.perf_event_paranoid=-1", check=False)
+    common.run(f"{sudo}sysctl -w kernel.kptr_restrict=0", check=False)
 
     perf = _perf()
     if not PERF_BIN:
