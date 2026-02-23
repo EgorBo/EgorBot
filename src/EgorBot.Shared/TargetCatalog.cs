@@ -91,9 +91,9 @@ public static class TargetCatalog
     };
 
     // Helix long names
-    private const string HelixQueueLinuxX64 = "(Ubuntu.2604.Amd64.Open)AzureLinux.3.Amd64.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-26.04-helix-amd64";
-    private const string HelixQueueLinuxArm64 = "(Ubuntu.2404.Arm64.Open)Ubuntu.2204.Armarch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-helix-arm64v8";
-    private const string HelixQueueLinuxArm32 = "(Debian.12.Arm32.Open)Ubuntu.2204.ArmArch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:debian-12-helix-arm32v7";
+    private const string HelixQueueLinuxX64 = "(Ubuntu.2404.Amd64)AzureLinux.3.Amd64.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-24.04-helix-webassembly-amd64";
+    private const string HelixQueueLinuxArm64 = "(Ubuntu.2604.ArmArch.Open)Ubuntu.2204.ArmArch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-26.04-helix-arm64v8";
+    private const string HelixQueueLinuxArm32 = "(Alpine.323.Arm32.Open)Ubuntu.2204.ArmArch.Open@mcr.microsoft.com/dotnet-buildtools/prereqs:alpine-3.23-helix-arm32v7";
 
     // ── OS distro → OS family ────────────────────────────────────────────
 
