@@ -177,13 +177,13 @@ public sealed class CloudInitBuilder(IConfiguration config)
         // Write BDN args
         if (!string.IsNullOrWhiteSpace(job.BdnArguments))
         {
-            sb.AppendLine("# Write BDN arguments");
-            sb.AppendLine("Set-Content -Path 'BDN_ARGS.rsp' -Encoding UTF8 -Value @(");
+            sb.AppendLine("# Write BDN arguments (UTF8NoBOM to avoid BOM corrupting args)");
+            sb.AppendLine("[System.IO.File]::WriteAllLines((Join-Path $workDir 'BDN_ARGS.rsp'), @(");
             foreach (var arg in SplitBdnArgs(job.BdnArguments))
             {
                 sb.AppendLine($"    '{arg.Replace("'", "''")}'");
             }
-            sb.AppendLine(")");
+            sb.AppendLine("), (New-Object System.Text.UTF8Encoding $false))");
             sb.AppendLine();
         }
 
