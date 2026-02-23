@@ -10,7 +10,7 @@ namespace EgorBot.Github.Services;
 ///
 /// Monitors:
 ///   - dotnet/runtime
-///   - EgorBot/runtime-utils (configurable)
+///   - EgorBot/Benchmarks (configurable)
 ///
 /// Once a mention is detected and processed, its unique key is stored so it
 /// is never processed again — even if the comment/body is edited later.
@@ -269,10 +269,10 @@ public sealed class GitHubPollingService(
             config["Github:PrimaryRepo:Owner"] ?? "dotnet",
             config["Github:PrimaryRepo:Name"] ?? "runtime"));
 
-        // EgorBot/runtime-utils (tracking repo)
+        // EgorBot/Benchmarks (tracking repo)
         repos.Add(new RepoConfig(
             config["Github:TrackingRepo:Owner"] ?? "EgorBot",
-            config["Github:TrackingRepo:Name"] ?? "runtime-utils"));
+            config["Github:TrackingRepo:Name"] ?? "Benchmarks"));
 
         return repos;
     }

@@ -8,13 +8,13 @@ namespace EgorBot.Github.Services;
 /// <summary>
 /// Manages the lifecycle of benchmark jobs:
 ///   1. Submit the job to EgorBot.Server
-///   2. Create a tracking issue in the runtime-utils repo
+///   2. Create a tracking issue in the Benchmarks repo
 ///   3. Poll job status and post results as comments on the tracking issue
 ///   4. Close the tracking issue when all jobs complete
 ///   5. If the original requester is @Copilot, post a single summary comment
 ///      back on the source PR (using a separate token)
 ///
-/// All communication happens in the tracking repo (EgorBot/runtime-utils).
+/// All communication happens in the tracking repo (EgorBot/Benchmarks).
 /// No comments are posted in dotnet/runtime except the Copilot notification.
 /// </summary>
 public sealed class JobTrackerService(
@@ -63,7 +63,7 @@ public sealed class JobTrackerService(
             Jobs = response.Jobs.Select(j => new JobInfo { Id = j.Id, Platform = j.Platform }).ToList(),
         };
 
-        // 2. Create tracking issue in runtime-utils repo (unless already in one)
+        // 2. Create tracking issue in Benchmarks repo (unless already in one)
         if (IsTrackingRepo(source.Owner, source.Repo))
         {
             // The command was posted in a tracking issue — reuse it
@@ -465,7 +465,7 @@ public sealed class JobTrackerService(
 
     private (string Owner, string Repo) GetTrackingRepo() =>
         (config["Github:TrackingRepo:Owner"] ?? "EgorBot",
-         config["Github:TrackingRepo:Name"] ?? "runtime-utils");
+         config["Github:TrackingRepo:Name"] ?? "Benchmarks");
 
     private GitHubClient CreateGitHubClient()
     {

@@ -71,7 +71,7 @@ public sealed class TrackedJob
     /// <summary>Individual job IDs per platform.</summary>
     public List<JobInfo> Jobs { get; set; } = [];
 
-    /// <summary>Tracking issue number in the runtime-utils repo.</summary>
+    /// <summary>Tracking issue number in the Benchmarks repo.</summary>
     public int? TrackingIssueNumber { get; set; }
 
     /// <summary>How many jobs have been completed (success or failure).</summary>
