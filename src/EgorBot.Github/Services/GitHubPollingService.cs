@@ -130,7 +130,8 @@ public sealed class GitHubPollingService(
                 HtmlUrl = comment.HtmlUrl,
             };
 
-            var command = CommandParser.Parse(comment.Body, isPr ? issueNumber : null);
+            var command = CommandParser.Parse(comment.Body, isPr ? issueNumber : null,
+                isPr ? await GetMergeCommitShaAsync(client, repo, issueNumber) : null);
             if (command is null) continue;
 
             await DispatchCommandAsync(source, command);
@@ -197,7 +198,8 @@ public sealed class GitHubPollingService(
                 HtmlUrl = issue.HtmlUrl,
             };
 
-            var command = CommandParser.Parse(issue.Body, isPr ? issue.Number : null);
+            var command = CommandParser.Parse(issue.Body, isPr ? issue.Number : null,
+                isPr ? await GetMergeCommitShaAsync(client, repo, issue.Number) : null);
             if (command is null) continue;
 
             await DispatchCommandAsync(source, command);
@@ -223,6 +225,27 @@ public sealed class GitHubPollingService(
 
     private static bool IsBotUser(string login) =>
         login.Equals("EgorBot", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// If the PR is merged, return its merge commit SHA; otherwise return null.
+    /// </summary>
+    private async Task<string?> GetMergeCommitShaAsync(GitHubClient client, RepoConfig repo, int prNumber)
+    {
+        try
+        {
+            var pr = await client.PullRequest.Get(repo.Owner, repo.Name, prNumber);
+            if (pr.Merged && !string.IsNullOrEmpty(pr.MergeCommitSha))
+            {
+                logger.LogInformation("PR #{PrNumber} is merged. Merge commit: {Sha}", prNumber, pr.MergeCommitSha);
+                return pr.MergeCommitSha;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to check merge status for PR #{PrNumber}", prNumber);
+        }
+        return null;
+    }
 
     /// <summary>
     /// Add a 👀 (eyes) reaction to a comment or issue/PR to acknowledge the mention.

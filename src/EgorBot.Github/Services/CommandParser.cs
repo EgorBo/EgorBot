@@ -34,7 +34,7 @@ public static class CommandParser
     /// <summary>
     /// Parse the command from the body text. Returns null if no valid mention found.
     /// </summary>
-    public static BotCommand? Parse(string body, int? contextPrNumber = null)
+    public static BotCommand? Parse(string body, int? contextPrNumber = null, string? mergeCommitSha = null)
     {
         if (!ContainsMention(body)) return null;
 
@@ -63,10 +63,10 @@ public static class CommandParser
             commandLine = firstLineEnd.Trim();
         }
 
-        return ParseCommandLine(commandLine, benchmarkCode, contextPrNumber);
+        return ParseCommandLine(commandLine, benchmarkCode, contextPrNumber, mergeCommitSha);
     }
 
-    private static BotCommand ParseCommandLine(string commandLine, string? benchmarkCode, int? contextPrNumber)
+    private static BotCommand ParseCommandLine(string commandLine, string? benchmarkCode, int? contextPrNumber, string? mergeCommitSha = null)
     {
         var targets = new List<string>();
         var commits = new List<string>();
@@ -198,13 +198,23 @@ public static class CommandParser
 
         // Default target if none specified
         if (targets.Count == 0)
-            targets.Add("macos26_helix_arm64");
+            targets.Add("macos15_helix_arm64");
 
-        // If we're in a PR context and no commits specified, use the PR itself + main
+        // If we're in a PR context and no commits specified:
+        //  - Merged PR: use the merge commit SHA and its parent (SHA~1)
+        //  - Open PR: use main + PR_N (agent will fetch the PR branch)
         if (commits.Count == 0 && contextPrNumber.HasValue)
         {
-            commits.Add("main");
-            commits.Add($"PR_{contextPrNumber.Value}");
+            if (!string.IsNullOrEmpty(mergeCommitSha))
+            {
+                commits.Add($"{mergeCommitSha}~1");
+                commits.Add(mergeCommitSha);
+            }
+            else
+            {
+                commits.Add("main");
+                commits.Add($"PR_{contextPrNumber.Value}");
+            }
         }
 
         // If still no commits, leave empty — the agent will run benchmarks
