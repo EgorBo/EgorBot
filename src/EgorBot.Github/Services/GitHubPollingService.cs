@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using EgorBot.Github.Models;
 using Octokit;
 
@@ -22,10 +24,12 @@ public sealed class GitHubPollingService(
 {
     /// <summary>
     /// Unique keys of entities we've already seen.
+    /// For comments: value is an empty string (keyed by comment ID, so edits aren't tracked).
+    /// For issue/PR bodies: value is a hash of the body text so we can detect description edits.
     /// Format: "{owner}/{repo}/issue/{number}" for body mentions,
     ///         "{owner}/{repo}/comment/{commentId}" for comment mentions.
     /// </summary>
-    private readonly ConcurrentDictionary<string, bool> _processed = new();
+    private readonly ConcurrentDictionary<string, string> _processed = new();
 
     /// <summary>
     /// Timestamp when this service instance started. Used to avoid re-processing
@@ -99,13 +103,14 @@ public sealed class GitHubPollingService(
             var key = $"{repo.Owner}/{repo.Name}/comment/{comment.Id}";
             if (_processed.ContainsKey(key)) continue;
 
+
             // Ignore comments left by the bot itself to avoid self-triggering loops
             if (IsBotUser(comment.User.Login)) continue;
 
             if (!CommandParser.ContainsMention(comment.Body)) continue;
 
             // Mark as processed BEFORE handling (to avoid re-processing on edits)
-            _processed[key] = true;
+            _processed[key] = string.Empty;
 
             logger.LogInformation("Detected @EgorBot mention in comment {CommentId} on {Owner}/{Repo}#{IssueUrl}",
                 comment.Id, repo.Owner, repo.Name, comment.HtmlUrl);
@@ -159,25 +164,37 @@ public sealed class GitHubPollingService(
         {
             ct.ThrowIfCancellationRequested();
 
-            // Only process issue bodies that were CREATED recently (within 2 minutes
-            // before this app instance started). The `since` filter returns issues
-            // that were merely UPDATED (e.g. by a new comment), but we must not
-            // re-process old issue bodies after an app restart when the in-memory
-            // _processed set is cleared.  New @EgorBot mentions in comments are
-            // handled separately by PollIssueCommentsAsync.
-            if (issue.CreatedAt < _startedAt - TimeSpan.FromMinutes(2))
-                continue;
-
-            var key = $"{repo.Owner}/{repo.Name}/issue/{issue.Number}";
-            if (_processed.ContainsKey(key)) continue;
-
             // Ignore issues/PRs authored by the bot itself
             if (IsBotUser(issue.User.Login)) continue;
 
             if (!CommandParser.ContainsMention(issue.Body)) continue;
 
-            // Mark as processed
-            _processed[key] = true;
+            var key = $"{repo.Owner}/{repo.Name}/issue/{issue.Number}";
+            var bodyHash = ComputeBodyHash(issue.Body);
+
+            if (_processed.TryGetValue(key, out var lastHash))
+            {
+                // We've seen this issue before. Skip unless the body was edited
+                // (hash changed), which means someone updated the description.
+                if (lastHash == bodyHash)
+                    continue;
+
+                logger.LogInformation(
+                    "Detected body edit on {Owner}/{Repo}#{Number} — re-processing @EgorBot mention",
+                    repo.Owner, repo.Name, issue.Number);
+            }
+            else if (issue.CreatedAt < _startedAt - TimeSpan.FromMinutes(2))
+            {
+                // First time seeing this old issue after a restart.
+                // Store its body hash so we can detect future edits, but
+                // don't process it now — we may have already handled it
+                // in a previous instance.
+                _processed[key] = bodyHash;
+                continue;
+            }
+
+            // Mark as processed with current body hash
+            _processed[key] = bodyHash;
 
             var isPr = issue.PullRequest != null;
 
@@ -225,6 +242,16 @@ public sealed class GitHubPollingService(
 
     private static bool IsBotUser(string login) =>
         login.Equals("EgorBot", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Return a short hash of the body text so we can cheaply detect description edits.
+    /// </summary>
+    private static string ComputeBodyHash(string? body)
+    {
+        if (string.IsNullOrEmpty(body)) return string.Empty;
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(body));
+        return Convert.ToHexString(hash, 0, 16); // 128-bit prefix is plenty
+    }
 
     /// <summary>
     /// If the PR is merged, return its merge commit SHA; otherwise return null.
