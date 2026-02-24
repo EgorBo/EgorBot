@@ -17,7 +17,8 @@ public sealed record TargetInfo(
     string? InstanceName,
     string? Region,
     VmCpuVendor CpuVendor,
-    bool PreferredDefault)
+    bool PreferredDefault,
+    int TotalCores = 32)
 {
     /// <summary>OS family derived from the target name: "linux", "windows", or "osx".</summary>
     public string OsFamily => TargetCatalog.InferOsFamily(Name);
@@ -47,47 +48,47 @@ public static class TargetCatalog
 
     private static readonly Dictionary<string, TargetInfo> Targets = new(StringComparer.OrdinalIgnoreCase)
     {
-        //                                                                    Arch          InstanceName                   Region        CpuVendor          Default
+        //                                                                    Arch          InstanceName                   Region        CpuVendor          Default  TotalCores
         // ── Azure ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["ubuntu24_azure_turin"]       = new("ubuntu24_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7", /*20*/  "westeurope", VmCpuVendor.Amd,   true),
-        ["ubuntu24_azure_genoa"]       = new("ubuntu24_azure_genoa",          VmArch.X64,   "Standard_D{0}ads_v6", /*?*/  "eastus", VmCpuVendor.Amd,   false),
-        ["ubuntu24_azure_milano"]      = new("ubuntu24_azure_milano",         VmArch.X64,   "Standard_D{0}ads_v5", /*20*/  "eastus", VmCpuVendor.Amd,   false),
-        ["ubuntu24_azure_emeraldrapids"] = new("ubuntu24_azure_emeraldrapids",VmArch.X64,   "Standard_D{0}ds_v6",  /*20*/  "westeurope", VmCpuVendor.Intel, true),
-        ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",  /*48*/  "westeurope", VmCpuVendor.Intel, false),
-        ["ubuntu24_azure_cobalt100"]   = new("ubuntu24_azure_cobalt100",      VmArch.Arm64, "Standard_D{0}pds_v6", /*20*/  "eastus",     VmCpuVendor.Arm,   true),
-        ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5", /*20*/  "eastus",     VmCpuVendor.Arm,   false),
-        ["windows_azure_emeraldrapids"] = new("windows_azure_emeraldrapids", VmArch.X64,   "Standard_D{0}ds_v6",   /*20*/  "eastus", VmCpuVendor.Intel, true),
-        ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",  /*48*/  "eastus", VmCpuVendor.Intel, false),
-        ["windows_azure_turin"]        = new("windows_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",  /*20*/  "westeurope", VmCpuVendor.Amd,   true),
-        ["windows_azure_genoa"]        = new("windows_azure_genoa",           VmArch.X64,   "Standard_D{0}ads_v6", /*20*/   "eastus",     VmCpuVendor.Amd,   false),
-        ["windows_azure_cobalt100"]    = new("windows_azure_cobalt100",       VmArch.Arm64, "Standard_D{0}pds_v6", /*60*/  "eastus",     VmCpuVendor.Arm,   true),
-        ["windows_azure_ampere"]       = new("windows_azure_ampere",          VmArch.Arm64, "Standard_D{0}pds_v5", /*20*/  "eastus",     VmCpuVendor.Arm,   false),
+        ["ubuntu24_azure_turin"]       = new("ubuntu24_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",         "westeurope", VmCpuVendor.Amd,   true,  20),
+        ["ubuntu24_azure_genoa"]       = new("ubuntu24_azure_genoa",          VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   false, 20),
+        ["ubuntu24_azure_milano"]      = new("ubuntu24_azure_milano",         VmArch.X64,   "Standard_D{0}ads_v5",         "eastus",     VmCpuVendor.Amd,   false, 20),
+        ["ubuntu24_azure_emeraldrapids"] = new("ubuntu24_azure_emeraldrapids",VmArch.X64,   "Standard_D{0}ds_v6",          "westeurope", VmCpuVendor.Intel, true,  20),
+        ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, false, 48),
+        ["ubuntu24_azure_cobalt100"]   = new("ubuntu24_azure_cobalt100",      VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true,  20),
+        ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false, 20),
+        ["windows_azure_emeraldrapids"] = new("windows_azure_emeraldrapids", VmArch.X64,   "Standard_D{0}ds_v6",          "eastus",     VmCpuVendor.Intel, true,  20),
+        ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "eastus",     VmCpuVendor.Intel, false, 48),
+        ["windows_azure_turin"]        = new("windows_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",          "westeurope", VmCpuVendor.Amd,   true,  20),
+        ["windows_azure_genoa"]        = new("windows_azure_genoa",           VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   false, 20),
+        ["windows_azure_cobalt100"]    = new("windows_azure_cobalt100",       VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true,  60),
+        ["windows_azure_ampere"]       = new("windows_azure_ampere",          VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false, 20),
 
         // ── AWS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["ubuntu24_aws_sapphirelake"]  = new("ubuntu24_aws_sapphirelake",     VmArch.X64,   "c7i",                         "us-east-1",  VmCpuVendor.Intel, false),
-        ["ubuntu24_aws_icelake"]       = new("ubuntu24_aws_icelake",          VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, true),
-        ["ubuntu24_aws_genoa"]         = new("ubuntu24_aws_genoa",            VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   true),
-        ["ubuntu24_aws_turin"]         = new("ubuntu24_aws_turin",            VmArch.X64,   "m8a",                         "us-east-1",  VmCpuVendor.Amd,   false),
-        ["ubuntu24_aws_milano"]        = new("ubuntu24_aws_milano",           VmArch.X64,   "c6a",                         "us-east-1",  VmCpuVendor.Amd,   false),
-        ["ubuntu24_aws_graviton2"]     = new("ubuntu24_aws_graviton2",        VmArch.Arm64, "c6g",                         "us-east-1",  VmCpuVendor.Arm,   false),
-        ["ubuntu24_aws_graviton3"]     = new("ubuntu24_aws_graviton3",        VmArch.Arm64, "c7g",                         "us-east-1",  VmCpuVendor.Arm,   false),
-        ["ubuntu24_aws_graviton4"]     = new("ubuntu24_aws_graviton4",        VmArch.Arm64, "c8g",                         "us-east-1",  VmCpuVendor.Arm,   true),
-        ["windows_aws_icelake"]        = new("windows_aws_icelake",           VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, false),
-        ["windows_aws_genoa"]          = new("windows_aws_genoa",             VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   false),
+        ["ubuntu24_aws_sapphirelake"]  = new("ubuntu24_aws_sapphirelake",     VmArch.X64,   "c7i",                         "us-east-1",  VmCpuVendor.Intel, false, 32),
+        ["ubuntu24_aws_icelake"]       = new("ubuntu24_aws_icelake",          VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, true,  32),
+        ["ubuntu24_aws_genoa"]         = new("ubuntu24_aws_genoa",            VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   true,  32),
+        ["ubuntu24_aws_turin"]         = new("ubuntu24_aws_turin",            VmArch.X64,   "m8a",                         "us-east-1",  VmCpuVendor.Amd,   false, 32),
+        ["ubuntu24_aws_milano"]        = new("ubuntu24_aws_milano",           VmArch.X64,   "c6a",                         "us-east-1",  VmCpuVendor.Amd,   false, 32),
+        ["ubuntu24_aws_graviton2"]     = new("ubuntu24_aws_graviton2",        VmArch.Arm64, "c6g",                         "us-east-1",  VmCpuVendor.Arm,   false, 32),
+        ["ubuntu24_aws_graviton3"]     = new("ubuntu24_aws_graviton3",        VmArch.Arm64, "c7g",                         "us-east-1",  VmCpuVendor.Arm,   false, 32),
+        ["ubuntu24_aws_graviton4"]     = new("ubuntu24_aws_graviton4",        VmArch.Arm64, "c8g",                         "us-east-1",  VmCpuVendor.Arm,   true,  32),
+        ["windows_aws_icelake"]        = new("windows_aws_icelake",           VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, false, 32),
+        ["windows_aws_genoa"]          = new("windows_aws_genoa",             VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   false, 32),
 
         // ── Helix ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["macos15_helix_arm64"]        = new("macos15_helix_arm64",           VmArch.Arm64, "osx.15.arm64.open",           null,         VmCpuVendor.Arm,   true),
-        ["macos15_helix_x64"]          = new("macos15_helix_x64",             VmArch.X64,   "OSX.15.Amd64.Open",           null,         VmCpuVendor.Intel, true),
-        ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.26.arm64.open",           null,         VmCpuVendor.Arm,   false),
-        ["ubuntu24_helix_x64"]         = new("ubuntu24_helix_x64",            VmArch.X64,   HelixQueueLinuxX64,            null,         VmCpuVendor.Amd,   false),
-        ["ubuntu24_helix_arm64"]       = new("ubuntu24_helix_arm64",          VmArch.Arm64, HelixQueueLinuxArm64,          null,         VmCpuVendor.Arm,   false),
-        ["ubuntu24_helix_arm32"]       = new("ubuntu24_helix_arm32",          VmArch.Arm32, HelixQueueLinuxArm32,          null,         VmCpuVendor.Arm,   true),
-        ["windows_helix_x64"]          = new("windows_helix_x64",             VmArch.X64,   "windows.amd64.vs2022.pre.open",null,       VmCpuVendor.Intel,  false),
-        ["windows_helix_arm64"]        = new("windows_helix_arm64",           VmArch.Arm64, "Windows.11.Arm64.Open",       null,         VmCpuVendor.Arm,   false),
+        ["macos15_helix_arm64"]        = new("macos15_helix_arm64",           VmArch.Arm64, "osx.15.arm64.open",           null,         VmCpuVendor.Arm,   true,  64),
+        ["macos15_helix_x64"]          = new("macos15_helix_x64",             VmArch.X64,   "OSX.15.Amd64.Open",           null,         VmCpuVendor.Intel, true,  64),
+        ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.26.arm64.open",           null,         VmCpuVendor.Arm,   false, 64),
+        ["ubuntu24_helix_x64"]         = new("ubuntu24_helix_x64",            VmArch.X64,   HelixQueueLinuxX64,            null,         VmCpuVendor.Amd,   false, 64),
+        ["ubuntu24_helix_arm64"]       = new("ubuntu24_helix_arm64",          VmArch.Arm64, HelixQueueLinuxArm64,          null,         VmCpuVendor.Arm,   false, 64),
+        ["ubuntu24_helix_arm32"]       = new("ubuntu24_helix_arm32",          VmArch.Arm32, HelixQueueLinuxArm32,          null,         VmCpuVendor.Arm,   true,  64),
+        ["windows_helix_x64"]          = new("windows_helix_x64",             VmArch.X64,   "windows.amd64.vs2022.pre.open",null,       VmCpuVendor.Intel,  false, 64),
+        ["windows_helix_arm64"]        = new("windows_helix_arm64",           VmArch.Arm64, "Windows.11.Arm64.Open",       null,         VmCpuVendor.Arm,   false, 64),
 
         // ── Docker (local / sandboxed) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-        ["ubuntu24_docker_x64"]        = new("ubuntu24_docker_x64",           VmArch.X64,   null,                          null,         VmCpuVendor.Amd, true),
-        ["ubuntu24_docker_arm64"]      = new("ubuntu24_docker_arm64",         VmArch.Arm64, null,                          null,         VmCpuVendor.Arm, true),
+        ["ubuntu24_docker_x64"]        = new("ubuntu24_docker_x64",           VmArch.X64,   null,                          null,         VmCpuVendor.Amd, true,  96),
+        ["ubuntu24_docker_arm64"]      = new("ubuntu24_docker_arm64",         VmArch.Arm64, null,                          null,         VmCpuVendor.Arm, true,  96),
     };
 
     // Helix long names

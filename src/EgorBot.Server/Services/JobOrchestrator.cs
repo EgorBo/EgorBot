@@ -23,6 +23,7 @@ public sealed class JobOrchestrator(
     CloudProviderFactory providerFactory,
     CloudInitBuilder cloudInitBuilder,
     LogUploadService logUploadService,
+    CorePoolManager corePool,
     IEnumerable<INotificationService> notifiers,
     RuntimeSettings runtimeSettings,
     IConfiguration config,
@@ -194,6 +195,15 @@ public sealed class JobOrchestrator(
             logger.LogInformation("[{JobId}] Cloud-init script length={Len}", jobId, cloudInitScript.Length);
             await AddLogAsync(db, jobId, "Cloud-init script generated.");
 
+            // 2b. Acquire cores from the pool (waits if quota is exhausted)
+            var coresToRent = runtimeSettings.DefaultCores;
+            logger.LogInformation("[{JobId}] Requesting {Cores} cores from pool for {Platform}...",
+                jobId, coresToRent, job.Platform);
+            await AddLogAsync(db, jobId, $"Waiting for {coresToRent} cores from pool...");
+            await corePool.RentAsync(job.Platform, coresToRent, ct);
+            logger.LogInformation("[{JobId}] Acquired {Cores} cores", jobId, coresToRent);
+            await AddLogAsync(db, jobId, $"Acquired {coresToRent} cores from pool.");
+
             // 3. Provision
             provider = providerFactory.GetProvider(job.Platform);
             logger.LogInformation("[{JobId}] Provisioning via {Provider}...", jobId, provider.Name);
@@ -300,6 +310,10 @@ public sealed class JobOrchestrator(
                         instanceId, jobId);
                 }
             }
+
+            // Return cores to the pool
+            corePool.Return(job.Platform, runtimeSettings.DefaultCores);
+            logger.LogInformation("[{JobId}] Returned {Cores} cores to pool", jobId, runtimeSettings.DefaultCores);
 
             _completions.TryRemove(jobId, out _);
             _heartbeats.TryRemove(jobId, out _);
