@@ -499,10 +499,12 @@ def build_core_roots():
                 run(f"git checkout {commit}", cwd=runtime_dir)
 
         # Install deps via runtime's own script (most deps come from here)
-        if TARGET_OS == "osx":
-            run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
-        elif TARGET_OS != "windows":
-            run("eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
+        if TARGET_OS != "windows":
+            # The script calls apt-get internally; prefix with sudo if not root
+            prefix = ""
+            if TARGET_OS != "osx" and os.getuid() != 0 and shutil.which("sudo"):
+                prefix = "sudo "
+            run(f"{prefix}eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
 
         # Make it more resilient to warnings in case if we build old commits
         dbp = runtime_dir / "Directory.Build.props"
@@ -616,7 +618,8 @@ def main(cfg: Optional[Config] = None):
     # Start background log sender if callback is configured
     start_callback_sender()
 
-    post_log(f"[STAGE 1/6] Environment set up. OS={TARGET_OS}, Arch={TARGET_ARCH}, WorkDir={WORK_DIR}")
+    cpu_count = os.cpu_count() or "?"
+    post_log(f"[STAGE 1/6] Environment set up. OS={TARGET_OS}, Arch={TARGET_ARCH}, CPUs={cpu_count}, WorkDir={WORK_DIR}")
     post_log(f"  Commits/PRs: {cfg.gh_commits_and_prs}")
     post_log(f"  BenchCodeFile: {cfg.bench_code_file or '(none)'}")
     post_log(f"  Callback: {cfg.callback_url or '(none)'}, JobId: {cfg.job_id or '(none)'}")
