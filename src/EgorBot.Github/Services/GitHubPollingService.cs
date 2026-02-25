@@ -8,7 +8,7 @@ namespace EgorBot.Github.Services;
 
 /// <summary>
 /// Background service that polls GitHub repositories for @EgorBot mentions
-/// in issue/PR comments and descriptions every 30 seconds.
+/// in issue/PR comments, PR review comments, and descriptions every 30 seconds.
 ///
 /// Monitors:
 ///   - dotnet/runtime
@@ -60,6 +60,7 @@ public sealed class GitHubPollingService(
                 foreach (var repo in repos)
                 {
                     await PollIssueCommentsAsync(client, repo, since, ct);
+                    await PollPrReviewCommentsAsync(client, repo, since, ct);
                     await PollIssuesAndPrsAsync(client, repo, since, ct);
                 }
             }
@@ -116,7 +117,7 @@ public sealed class GitHubPollingService(
                 comment.Id, repo.Owner, repo.Name, comment.HtmlUrl);
 
             // React with 👀 to acknowledge detection
-            await AddEyesReactionAsync(client, repo.Owner, repo.Name, comment.Id, isComment: true);
+            await AddEyesReactionAsync(client, repo.Owner, repo.Name, comment.Id, CommentKind.IssueComment);
 
             // Determine the issue/PR number from the URL
             // comment.HtmlUrl looks like: https://github.com/dotnet/runtime/issues/12345#issuecomment-...
@@ -137,6 +138,67 @@ public sealed class GitHubPollingService(
 
             var command = CommandParser.Parse(comment.Body, isPr ? issueNumber : null,
                 isPr ? await GetMergeCommitShaAsync(client, repo, issueNumber) : null);
+            if (command is null) continue;
+
+            await DispatchCommandAsync(source, command);
+        }
+    }
+
+    // ── Poll PR review comments (line-level discussion comments) ────────
+
+    private async Task PollPrReviewCommentsAsync(GitHubClient client, RepoConfig repo, DateTimeOffset since, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var request = new PullRequestReviewCommentRequest
+        {
+            Since = since,
+            Sort = PullRequestReviewCommentSort.Updated,
+            Direction = SortDirection.Descending,
+        };
+
+        var comments = await client.PullRequest.ReviewComment.GetAllForRepository(repo.Owner, repo.Name, request,
+            new ApiOptions { PageSize = 100, PageCount = 1 });
+
+        foreach (var comment in comments)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var key = $"{repo.Owner}/{repo.Name}/review-comment/{comment.Id}";
+            if (_processed.ContainsKey(key)) continue;
+
+            // Ignore comments left by the bot itself to avoid self-triggering loops
+            if (IsBotUser(comment.User.Login)) continue;
+
+            if (!CommandParser.ContainsMention(comment.Body)) continue;
+
+            // Mark as processed BEFORE handling
+            _processed[key] = string.Empty;
+
+            logger.LogInformation("Detected @EgorBot mention in PR review comment {CommentId} on {Owner}/{Repo} ({Url})",
+                comment.Id, repo.Owner, repo.Name, comment.HtmlUrl);
+
+            // React with 👀 to acknowledge detection
+            await AddEyesReactionAsync(client, repo.Owner, repo.Name, comment.Id, CommentKind.PrReviewComment);
+
+            // Extract PR number from PullRequestUrl
+            // PullRequestUrl looks like: https://api.github.com/repos/dotnet/runtime/pulls/12345
+            var prNumber = ParsePrNumberFromApiUrl(comment.PullRequestUrl);
+            if (prNumber <= 0) continue;
+
+            var source = new MentionSource
+            {
+                Owner = repo.Owner,
+                Repo = repo.Name,
+                Number = prNumber,
+                IsPullRequest = true,
+                CommentId = comment.Id,
+                Author = comment.User.Login,
+                HtmlUrl = comment.HtmlUrl,
+            };
+
+            var command = CommandParser.Parse(comment.Body, prNumber,
+                await GetMergeCommitShaAsync(client, repo, prNumber));
             if (command is null) continue;
 
             await DispatchCommandAsync(source, command);
@@ -202,7 +264,7 @@ public sealed class GitHubPollingService(
                 isPr ? "PR" : "issue", issue.Number, repo.Owner, repo.Name);
 
             // React with 👀 to acknowledge detection
-            await AddEyesReactionAsync(client, repo.Owner, repo.Name, issue.Number, isComment: false);
+            await AddEyesReactionAsync(client, repo.Owner, repo.Name, issue.Number, CommentKind.Issue);
 
             var source = new MentionSource
             {
@@ -274,25 +336,58 @@ public sealed class GitHubPollingService(
         return null;
     }
 
+    private enum CommentKind { Issue, IssueComment, PrReviewComment }
+
     /// <summary>
-    /// Add a 👀 (eyes) reaction to a comment or issue/PR to acknowledge the mention.
+    /// Add a 👀 (eyes) reaction to a comment, review comment, or issue/PR to acknowledge the mention.
     /// </summary>
-    private async Task AddEyesReactionAsync(GitHubClient client, string owner, string repo, long entityId, bool isComment)
+    private async Task AddEyesReactionAsync(GitHubClient client, string owner, string repo, long entityId, CommentKind kind)
     {
         try
         {
-            if (isComment)
-                await client.Reaction.IssueComment.Create(owner, repo, entityId, new NewReaction(ReactionType.Eyes));
-            else
-                await client.Reaction.Issue.Create(owner, repo, (int)entityId, new NewReaction(ReactionType.Eyes));
+            var reaction = new NewReaction(ReactionType.Eyes);
+            switch (kind)
+            {
+                case CommentKind.IssueComment:
+                    await client.Reaction.IssueComment.Create(owner, repo, entityId, reaction);
+                    break;
+                case CommentKind.PrReviewComment:
+                    await client.Reaction.PullRequestReviewComment.Create(owner, repo, entityId, reaction);
+                    break;
+                default:
+                    await client.Reaction.Issue.Create(owner, repo, (int)entityId, reaction);
+                    break;
+            }
 
-            logger.LogInformation("Added 👀 reaction to {Type} {Id} on {Owner}/{Repo}",
-                isComment ? "comment" : "issue", entityId, owner, repo);
+            logger.LogInformation("Added 👀 reaction to {Kind} {Id} on {Owner}/{Repo}",
+                kind, entityId, owner, repo);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to add 👀 reaction to {Type} {Id}", isComment ? "comment" : "issue", entityId);
+            logger.LogWarning(ex, "Failed to add 👀 reaction to {Kind} {Id}", kind, entityId);
         }
+    }
+
+    /// <summary>
+    /// Extract PR number from GitHub API URL like https://api.github.com/repos/dotnet/runtime/pulls/12345
+    /// </summary>
+    private static int ParsePrNumberFromApiUrl(string? url)
+    {
+        if (string.IsNullOrEmpty(url)) return 0;
+        try
+        {
+            var uri = new Uri(url);
+            var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            // segments: ["repos", "owner", "repo", "pulls", "12345"]
+            if (segments.Length >= 5
+                && segments[3].Equals("pulls", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(segments[4], out var number))
+            {
+                return number;
+            }
+        }
+        catch { }
+        return 0;
     }
 
     private GitHubClient CreateGitHubClient()
