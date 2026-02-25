@@ -56,7 +56,7 @@
 
     <div class="error-box" id="errorBox"></div>
 
-    <div class="section-header">Logs</div>
+    <div class="section-header">Logs <a id="fullLogLink" href="#" target="_blank" style="font-size:12px;font-weight:400;text-transform:none;display:none;margin-left:8px;">View full raw log</a></div>
     <div id="logContainer"></div>
 
     <div class="section-header" id="resultHeader" style="display:none">DONE</div>
@@ -91,6 +91,15 @@
         function renderMeta(job) {
             document.getElementById('jobTitle').textContent = `Job ${job.id.substring(0, 8)}…`;
             document.title = `EgorBot — ${job.id.substring(0, 8)}…`;
+
+            // Show the "View full raw log" link
+            const fullLogLink = document.getElementById('fullLogLink');
+            if (job.logsBlobUrl) {
+                fullLogLink.href = job.logsBlobUrl;
+            } else {
+                fullLogLink.href = `/api/jobs/${job.id}/logs/full`;
+            }
+            fullLogLink.style.display = 'inline';
             document.getElementById('metaSection').innerHTML = `
                 <div class="meta-row">
                     <span class="meta-label">ID</span>
@@ -208,7 +217,7 @@
                 banner.style.cssText = 'color:#8b949e;padding:4px 0;font-size:12px;border-bottom:1px solid #21262d;margin-bottom:4px;';
                 container.prepend(banner);
             }
-            banner.textContent = `⬆ ${totalSkipped.toLocaleString()} older lines hidden (showing last ${MAX_VISIBLE_LINES})`;
+            banner.innerHTML = `⬆ ${totalSkipped.toLocaleString()} older lines hidden (showing last ${MAX_VISIBLE_LINES}) — <a href="/api/jobs/${jobId}/logs/full" target="_blank">view full log</a>`;
         }
 
         function showResultsAvailable() {
