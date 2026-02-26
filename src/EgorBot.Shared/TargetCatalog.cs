@@ -50,31 +50,45 @@ public static class TargetCatalog
     {
         //                                                                    Arch          InstanceName                   Region        CpuVendor          Default  TotalCores
         // ── Azure ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+        // linux-x64
         ["ubuntu24_azure_turin"]       = new("ubuntu24_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",         "westeurope", VmCpuVendor.Amd,   true,  20),
         ["ubuntu24_azure_genoa"]       = new("ubuntu24_azure_genoa",          VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   false, 20),
         ["ubuntu24_azure_milano"]      = new("ubuntu24_azure_milano",         VmArch.X64,   "Standard_D{0}ads_v5",         "eastus",     VmCpuVendor.Amd,   false, 20),
         ["ubuntu24_azure_emeraldrapids"] = new("ubuntu24_azure_emeraldrapids",VmArch.X64,   "Standard_D{0}ds_v6",          "westeurope", VmCpuVendor.Intel, true,  20),
         ["ubuntu24_azure_cascadelake"] = new("ubuntu24_azure_cascadelake",    VmArch.X64,   "Standard_D{0}ds_v5",          "westeurope", VmCpuVendor.Intel, false, 48),
+        
+        // linux-arm64
         ["ubuntu24_azure_cobalt100"]   = new("ubuntu24_azure_cobalt100",      VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true,  20),
         ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false, 20),
-        ["windows_azure_emeraldrapids"] = new("windows_azure_emeraldrapids", VmArch.X64,   "Standard_D{0}ds_v6",          "eastus",     VmCpuVendor.Intel, true,  20),
-        ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "eastus",     VmCpuVendor.Intel, false, 48),
-        ["windows_azure_turin"]        = new("windows_azure_turin",          VmArch.X64,   "Standard_D{0}ads_v7",          "westeurope", VmCpuVendor.Amd,   true,  20),
+        
+        // windows-x64
+        ["windows_azure_turin"]        = new("windows_azure_turin",           VmArch.X64,   "Standard_D{0}ads_v7",         "westeurope", VmCpuVendor.Amd,   true,  20),
         ["windows_azure_genoa"]        = new("windows_azure_genoa",           VmArch.X64,   "Standard_D{0}ads_v6",         "eastus",     VmCpuVendor.Amd,   false, 20),
+        ["windows_azure_emeraldrapids"] = new("windows_azure_emeraldrapids",  VmArch.X64,   "Standard_D{0}ds_v6",          "westeurope", VmCpuVendor.Intel, true, 20),
+        ["windows_azure_cascadelake"]  = new("windows_azure_cascadelake",     VmArch.X64,   "Standard_D{0}ds_v5",          "eastus",     VmCpuVendor.Intel, false, 48),
+
+        // windows-arm64
         ["windows_azure_cobalt100"]    = new("windows_azure_cobalt100",       VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true,  60),
         ["windows_azure_ampere"]       = new("windows_azure_ampere",          VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false, 20),
 
         // ── AWS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+        // linux-x64
         ["ubuntu24_aws_sapphirelake"]  = new("ubuntu24_aws_sapphirelake",     VmArch.X64,   "c7i",                         "us-east-1",  VmCpuVendor.Intel, false, 32),
         ["ubuntu24_aws_icelake"]       = new("ubuntu24_aws_icelake",          VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, true,  32),
         ["ubuntu24_aws_genoa"]         = new("ubuntu24_aws_genoa",            VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   true,  32),
         ["ubuntu24_aws_turin"]         = new("ubuntu24_aws_turin",            VmArch.X64,   "m8a",                         "us-east-1",  VmCpuVendor.Amd,   false, 32),
         ["ubuntu24_aws_milano"]        = new("ubuntu24_aws_milano",           VmArch.X64,   "c6a",                         "us-east-1",  VmCpuVendor.Amd,   false, 32),
+
+        // linux-arm64
         ["ubuntu24_aws_graviton2"]     = new("ubuntu24_aws_graviton2",        VmArch.Arm64, "c6g",                         "us-east-1",  VmCpuVendor.Arm,   false, 32),
         ["ubuntu24_aws_graviton3"]     = new("ubuntu24_aws_graviton3",        VmArch.Arm64, "c7g",                         "us-east-1",  VmCpuVendor.Arm,   false, 32),
         ["ubuntu24_aws_graviton4"]     = new("ubuntu24_aws_graviton4",        VmArch.Arm64, "c8g",                         "us-east-1",  VmCpuVendor.Arm,   true,  32),
-        ["windows_aws_icelake"]        = new("windows_aws_icelake",           VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, false, 32),
-        ["windows_aws_genoa"]          = new("windows_aws_genoa",             VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   false, 32),
+
+        // windows-x64
+        ["windows_aws_icelake"]        = new("windows_aws_icelake",           VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, true, 32),
+        ["windows_aws_genoa"]          = new("windows_aws_genoa",             VmArch.X64,   "c7a",                         "us-east-1",  VmCpuVendor.Amd,   true, 32),
 
         // ── Helix ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
         ["macos15_helix_arm64"]        = new("macos15_helix_arm64",           VmArch.Arm64, "osx.15.arm64.open",           null,         VmCpuVendor.Arm,   true,  64),
