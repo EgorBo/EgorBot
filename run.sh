@@ -63,6 +63,9 @@ setup_caddy() {
     # Write Caddyfile: HTTPS on 443 → proxy to internal Kestrel
     sudo tee /etc/caddy/Caddyfile >/dev/null <<EOF
 ${EGORBOT_DOMAIN} {
+    handle /mcp {
+        reverse_proxy localhost:${GITHUB_PORT}
+    }
     reverse_proxy localhost:${SERVER_PORT}
 }
 EOF
