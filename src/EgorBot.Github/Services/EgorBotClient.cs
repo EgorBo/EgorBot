@@ -165,6 +165,28 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
         }
     }
 
+    /// <summary>Set the tracking issue URL for all jobs in a group.</summary>
+    public async Task SetTrackingIssueUrlAsync(Guid groupId, string trackingIssueUrl)
+    {
+        try
+        {
+            var content = new StringContent(
+                $"\"{trackingIssueUrl}\"",
+                System.Text.Encoding.UTF8,
+                "application/json");
+            var response = await http.PatchAsync($"/api/jobs/group/{groupId}/tracking-issue", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning("Failed to set tracking issue URL for group {GroupId}: {Status}",
+                    groupId, response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to set tracking issue URL for group {GroupId}", groupId);
+        }
+    }
+
     /// <summary>Get the logs page URL for a job.</summary>
     public string GetLogsUrl(Guid jobId)
     {

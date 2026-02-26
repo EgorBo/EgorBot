@@ -167,6 +167,9 @@ public sealed class JobTrackerService(
 
             logger.LogInformation("Created tracking issue #{IssueNumber} in {Owner}/{Repo}",
                 issue.Number, trackingOwner, trackingRepo);
+
+            // Notify the server so Telegram notifications can include the tracking issue link
+            await botClient.SetTrackingIssueUrlAsync(tracked.GroupId, issue.HtmlUrl);
         }
         catch (Exception ex)
         {

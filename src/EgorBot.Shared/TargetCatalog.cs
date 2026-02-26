@@ -79,7 +79,7 @@ public static class TargetCatalog
         // ── Helix ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
         ["macos15_helix_arm64"]        = new("macos15_helix_arm64",           VmArch.Arm64, "osx.15.arm64.open",           null,         VmCpuVendor.Arm,   true,  64),
         ["macos15_helix_x64"]          = new("macos15_helix_x64",             VmArch.X64,   "OSX.15.Amd64.Open",           null,         VmCpuVendor.Intel, true,  64),
-        ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.26.arm64.open",           null,         VmCpuVendor.Arm,   false, 64),
+        ["macos26_helix_arm64"]        = new("macos26_helix_arm64",           VmArch.Arm64, "osx.15.arm64.open",           null,         VmCpuVendor.Arm,   false, 64),
         ["ubuntu24_helix_x64"]         = new("ubuntu24_helix_x64",            VmArch.X64,   HelixQueueLinuxX64,            null,         VmCpuVendor.Amd,   false, 64),
         ["ubuntu24_helix_arm64"]       = new("ubuntu24_helix_arm64",          VmArch.Arm64, HelixQueueLinuxArm64,          null,         VmCpuVendor.Arm,   false, 64),
         ["ubuntu24_helix_arm32"]       = new("ubuntu24_helix_arm32",          VmArch.Arm32, HelixQueueLinuxArm32,          null,         VmCpuVendor.Arm,   true,  64),
@@ -170,7 +170,7 @@ public static class TargetCatalog
     public static bool TryResolve(string input, out string? canonicalName)
     {
         canonicalName = null;
-        var clean = input.ToLowerInvariant().TrimStart('-').Trim();
+        var clean = input.ToLowerInvariant().TrimStart('-').Trim().Replace('-', '_');
         if (string.IsNullOrEmpty(clean)) return false;
 
         // 1. Exact match (handles full canonical names like "ubuntu24_azure_genoa")

@@ -32,8 +32,7 @@ public sealed class BenchmarkTools
         [Description("Semicolon-separated commits/PRs to compare, e.g. 'PR_124445;main' or 'abc123;def456'. " +
                      "Use PR_<number> for pull requests.")]
         string commitsAndPrs,
-        [Description("Target platform (e.g. 'amd', 'arm', 'intel', 'windows_x64'). " +
-                     "Use 'list_targets' tool to see available targets. If omitted, defaults to 'arm'.")]
+        [Description("Target platform (e.g. 'amd', 'arm', 'intel', 'windows_x64'). ")]
         string? target = null,
         [Description("Additional BenchmarkDotNet CLI arguments (e.g. '--filter *MyBenchmark*').")]
         string? bdnArguments = null,
@@ -94,9 +93,9 @@ public sealed class BenchmarkTools
     /// <summary>
     /// List all available benchmark target platforms.
     /// </summary>
-    [McpServerTool(Name = "list_targets"), Description(
-        "List all available benchmark target platforms with their architecture, cloud provider, and CPU. " +
-        "Use the target names returned here as the 'target' parameter for 'run_benchmark'.")]
+    //[McpServerTool(Name = "list_targets"), Description(
+    //    "List all available benchmark target platforms with their architecture, cloud provider, and CPU. " +
+    //    "Use the target names returned here as the 'target' parameter for 'run_benchmark'.")]
     public static string ListTargets()
     {
         var sb = new StringBuilder();
@@ -126,8 +125,8 @@ public sealed class BenchmarkTools
     /// <summary>
     /// Get the status of a previously submitted benchmark job.
     /// </summary>
-    [McpServerTool(Name = "get_job_status"), Description(
-        "Check the status of a previously submitted benchmark job by its job ID (GUID).")]
+    //[McpServerTool(Name = "get_job_status"), Description(
+    //    "Check the status of a previously submitted benchmark job by its job ID (GUID).")]
     public static async Task<string> GetJobStatus(
         EgorBotClient botClient,
         [Description("The job ID (GUID) returned by 'run_benchmark'.")]

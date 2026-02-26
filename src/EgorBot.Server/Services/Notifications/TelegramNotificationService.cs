@@ -17,6 +17,7 @@ public sealed class TelegramNotificationService : INotificationService
     private readonly ILogger<TelegramNotificationService> _logger;
     private readonly string? _botToken;
     private readonly string? _chatId;
+    private readonly string? _serviceBaseUrl;
     private readonly IHttpClientFactory _httpFactory;
 
     public TelegramNotificationService(
@@ -31,6 +32,7 @@ public sealed class TelegramNotificationService : INotificationService
             ?? Environment.GetEnvironmentVariable("EGORBOT_TG_TOK");
         _chatId = config["Telegram:AdminChatId"]
             ?? Environment.GetEnvironmentVariable("EGORBOT_TG_ADMINID");
+        _serviceBaseUrl = config["EgorBot:ServiceBaseUrl"];
 
         if (string.IsNullOrWhiteSpace(_botToken) || string.IsNullOrWhiteSpace(_chatId))
         {
@@ -50,9 +52,6 @@ public sealed class TelegramNotificationService : INotificationService
     {
         if (!IsEnabled) return;
 
-        var sourceHint = !string.IsNullOrEmpty(job.SourceUrl)
-            ? $"\nSource: {job.SourceUrl}"
-            : "";
         var requestedByHint = !string.IsNullOrEmpty(job.RequestedBy)
             ? $"\nRequested by: @{job.RequestedBy}"
             : "";
@@ -61,7 +60,8 @@ public sealed class TelegramNotificationService : INotificationService
             🚀 *Job started*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
-            Commits: `{job.CommitsAndPrs}`{requestedByHint}{sourceHint}
+            Commits: `{job.CommitsAndPrs}`{requestedByHint}
+            {FormatLinks(job)}
             """;
         await SendMessageAsync(msg);
     }
@@ -73,16 +73,14 @@ public sealed class TelegramNotificationService : INotificationService
         var sshLine = ipAddress is not null
             ? $"\nSSH: `ssh ubuntu@{ipAddress}`"
             : "";
-        var sourceHint = !string.IsNullOrEmpty(job.SourceUrl)
-            ? $"\nSource: {job.SourceUrl}"
-            : "";
 
         var msg = $"""
             🖥 *VM provisioned*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
             Provider: {providerName}
-            IP: `{ipAddress ?? "N/A"}`{sshLine}{sourceHint}
+            IP: `{ipAddress ?? "N/A"}`{sshLine}
+            {FormatLinks(job)}
             """;
         await SendMessageAsync(msg);
     }
@@ -91,15 +89,12 @@ public sealed class TelegramNotificationService : INotificationService
     {
         if (!IsEnabled) return;
 
-        var sourceHint = !string.IsNullOrEmpty(job.SourceUrl)
-            ? $"\nSource: {job.SourceUrl}"
-            : "";
-
         var msg = $"""
             ✅ *Job completed*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
-            Commits: `{job.CommitsAndPrs}`{sourceHint}
+            Commits: `{job.CommitsAndPrs}`
+            {FormatLinks(job)}
             """;
         await SendMessageAsync(msg);
     }
@@ -111,16 +106,14 @@ public sealed class TelegramNotificationService : INotificationService
         var instanceHint = !string.IsNullOrEmpty(job.CloudProviderInstanceId)
             ? $"\nInstance: `{job.CloudProviderInstanceId}`"
             : "";
-        var sourceHint = !string.IsNullOrEmpty(job.SourceUrl)
-            ? $"\nSource: {job.SourceUrl}"
-            : "";
 
         var msg = $"""
             ❌ *Job failed*
             ID: `{job.Id}`
             Platform: `{job.Platform}`
-            Commits: `{job.CommitsAndPrs}`{instanceHint}{sourceHint}
+            Commits: `{job.CommitsAndPrs}`{instanceHint}
             Error: {EscapeMarkdown(error)}
+            {FormatLinks(job)}
             """;
         await SendMessageAsync(msg);
     }
@@ -172,6 +165,33 @@ public sealed class TelegramNotificationService : INotificationService
             _logger.LogWarning(ex, "Telegram sendMessage failed");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Build a line of Markdown links: [Source](…) | [Tracking issue](…) | [Live logs](…)
+    /// Only includes links whose data is available on the job.
+    /// </summary>
+    private string FormatLinks(BenchmarkJob job)
+    {
+        var parts = new List<string>();
+
+        if (!string.IsNullOrEmpty(job.SourceUrl))
+            parts.Add($"[Source]({job.SourceUrl})");
+
+        if (!string.IsNullOrEmpty(job.TrackingIssueUrl))
+            parts.Add($"[Tracking issue]({job.TrackingIssueUrl})");
+
+        var logsUrl = GetJobWebViewUrl(job.Id);
+        if (logsUrl is not null)
+            parts.Add($"[Live logs]({logsUrl})");
+
+        return parts.Count > 0 ? string.Join(" | ", parts) : "";
+    }
+
+    private string? GetJobWebViewUrl(Guid jobId)
+    {
+        if (string.IsNullOrEmpty(_serviceBaseUrl)) return null;
+        return $"{_serviceBaseUrl.TrimEnd('/')}/jobs/{jobId}";
     }
 
     private static string EscapeMarkdown(string text)

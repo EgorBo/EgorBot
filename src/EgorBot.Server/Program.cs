@@ -189,6 +189,25 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
     return Results.Ok(new { groupId, jobs });
 });
 
+// PATCH /api/jobs/group/{groupId}/tracking-issue — set tracking issue URL for all jobs in a group
+api.MapPatch("/jobs/group/{groupId:guid}/tracking-issue", async (Guid groupId, HttpContext ctx, AppDbContext db) =>
+{
+    using var reader = new StreamReader(ctx.Request.Body);
+    var url = (await reader.ReadToEndAsync()).Trim().Trim('"');
+    if (string.IsNullOrWhiteSpace(url))
+        return Results.BadRequest(new { error = "URL is required." });
+
+    var jobs = await db.Jobs.Where(j => j.GroupId == groupId).ToListAsync();
+    if (jobs.Count == 0)
+        return Results.NotFound(new { error = "No jobs found for this group." });
+
+    foreach (var job in jobs)
+        job.TrackingIssueUrl = url;
+
+    await db.SaveChangesAsync();
+    return Results.Ok();
+});
+
 // GET /api/jobs — List recent jobs
 api.MapGet("/jobs", async (AppDbContext db, int? page, int? pageSize) =>
 {

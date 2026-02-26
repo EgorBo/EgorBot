@@ -55,6 +55,10 @@ public class BenchmarkJob
     /// <summary>Error message if the job failed.</summary>
     public string? ErrorMessage { get; set; }
 
+    /// <summary>URL of the tracking issue in the Benchmarks repo.</summary>
+    [MaxLength(512)]
+    public string? TrackingIssueUrl { get; set; }
+
     /// <summary>URL of the uploaded full log in Azure Blob Storage.</summary>
     [MaxLength(512)]
     public string? LogsBlobUrl { get; set; }
