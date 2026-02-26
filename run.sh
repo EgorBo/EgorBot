@@ -99,9 +99,9 @@ nohup dotnet run --no-build --no-launch-profile \
     -- --EgorBot:ServiceBaseUrl="${PUBLIC_URL}" \
     > "${WORK_DIR}/EgorBot.server.log" 2>&1 &
 
+ASPNETCORE_URLS="http://localhost:${GITHUB_PORT}" \
 nohup dotnet run --no-build --no-launch-profile \
     --project src/EgorBot.Github/EgorBot.Github.csproj -c Release \
-    --urls "http://localhost:${GITHUB_PORT}" \
     -- --EgorBot:BaseUrl="http://localhost:${SERVER_PORT}" \
        --EgorBot:ServiceBaseUrl="${PUBLIC_URL}" \
     > "${WORK_DIR}/EgorBot.github.log" 2>&1 &
