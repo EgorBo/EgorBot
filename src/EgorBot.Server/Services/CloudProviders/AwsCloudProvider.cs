@@ -206,4 +206,45 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
             logger.LogError(ex, "Failed to terminate EC2 instance {Id}", instanceId);
         }
     }
+
+    public async Task<IReadOnlyList<string>> ListActiveVmsAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var ec2 = CreateEc2Client();
+            var request = new DescribeInstancesRequest
+            {
+                Filters =
+                [
+                    new Filter("instance-state-name", ["pending", "running", "stopping"])
+                ]
+            };
+
+            var names = new List<string>();
+            DescribeInstancesResponse response;
+            do
+            {
+                response = await ec2.DescribeInstancesAsync(request, ct);
+                foreach (var reservation in response.Reservations)
+                {
+                    foreach (var instance in reservation.Instances)
+                    {
+                        var nameTag = instance.Tags?.FirstOrDefault(t => t.Key == "Name")?.Value;
+                        var display = !string.IsNullOrEmpty(nameTag)
+                            ? $"{nameTag} ({instance.InstanceId})"
+                            : instance.InstanceId;
+                        names.Add(display);
+                    }
+                }
+                request.NextToken = response.NextToken;
+            } while (!string.IsNullOrEmpty(response.NextToken));
+
+            return names;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "AWS: failed to list active instances");
+            return [];
+        }
+    }
 }

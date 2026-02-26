@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using EgorBot.Server.Data;
 using EgorBot.Server.Models;
+using EgorBot.Server.Services.CloudProviders;
 using Microsoft.EntityFrameworkCore;
 
 namespace EgorBot.Server.Services.Notifications;
@@ -135,6 +136,10 @@ public sealed class TelegramCommandService(
             case "jobs":
                 await HandleJobsCommandAsync(ct);
                 break;
+            case "allvms":
+            case "vms":
+                await HandleAllVmsCommandAsync(ct);
+                break;
             case "cancelall":
             case "cancel":
                 await HandleCancelAllAsync(ct);
@@ -152,6 +157,7 @@ public sealed class TelegramCommandService(
                 var sb = new StringBuilder();
                 sb.AppendLine("📋 *Available commands:*");
                 sb.AppendLine("`jobs` — list active jobs");
+                sb.AppendLine("`allvms` — list all VMs across cloud providers");
                 sb.AppendLine("`cores` — show current default core count");
                 sb.AppendLine("`cores N` — set default core count (e.g. `cores 16`)");
                 sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
@@ -232,6 +238,49 @@ public sealed class TelegramCommandService(
             if (!string.IsNullOrEmpty(job.RequestedBy))
                 sb.AppendLine($"    By: @{job.RequestedBy}");
         }
+
+        await SendReplyAsync(sb.ToString());
+    }
+
+    private async Task HandleAllVmsCommandAsync(CancellationToken ct)
+    {
+        await SendReplyAsync("🔍 Querying cloud providers...");
+
+        using var scope = scopeFactory.CreateScope();
+        var providers = scope.ServiceProvider.GetServices<ICloudProvider>();
+
+        var sb = new StringBuilder();
+        sb.AppendLine("🖥 *All active VMs:*");
+        var totalCount = 0;
+
+        foreach (var provider in providers)
+        {
+            try
+            {
+                var vms = await provider.ListActiveVmsAsync(ct);
+                sb.AppendLine();
+                sb.AppendLine($"*{provider.Name}* ({vms.Count}):");
+                if (vms.Count == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (var vm in vms)
+                        sb.AppendLine($"  • `{EscapeMarkdown(vm)}`");
+                    totalCount += vms.Count;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to list VMs from {Provider}", provider.Name);
+                sb.AppendLine();
+                sb.AppendLine($"*{provider.Name}*: ❌ error");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"Total: *{totalCount}* VM(s)");
 
         await SendReplyAsync(sb.ToString());
     }

@@ -348,4 +348,30 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             logger.LogError(ex, "Azure: failed to delete resource group '{RG}'", instanceId);
         }
     }
+
+    public async Task<IReadOnlyList<string>> ListActiveVmsAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var armClient = CreateArmClient();
+            var subscription = await armClient.GetDefaultSubscriptionAsync(ct);
+            var names = new List<string>();
+
+            await foreach (var rg in subscription.GetResourceGroups().GetAllAsync(cancellationToken: ct))
+            {
+                ct.ThrowIfCancellationRequested();
+                await foreach (var vm in rg.GetVirtualMachines().GetAllAsync(cancellationToken: ct))
+                {
+                    names.Add($"{rg.Data.Name}/{vm.Data.Name}");
+                }
+            }
+
+            return names;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Azure: failed to list active VMs");
+            return [];
+        }
+    }
 }

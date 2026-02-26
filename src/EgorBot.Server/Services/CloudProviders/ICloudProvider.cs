@@ -15,6 +15,13 @@ public interface ICloudProvider
 
     /// <summary>Tear down the VM / kill the process.</summary>
     Task DeprovisionAsync(string instanceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// List the names/identifiers of all currently active VMs in this provider.
+    /// Returns an empty list for providers that don't manage VMs (e.g. Docker, Helix).
+    /// </summary>
+    Task<IReadOnlyList<string>> ListActiveVmsAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<string>>([]);
 }
 
 public sealed record ProvisionRequest(
