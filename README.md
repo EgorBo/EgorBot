@@ -22,7 +22,7 @@ public class MyBenchmarks
 ```
 ````
 
-EgorBot will build `dotnet/runtime` for the PR and main (or each commit passed via `-commits`), run the benchmark, and post BDN results back as a comment. `--envvars` and other BDN arguments can be passed through to customize the run.
+EgorBot will build `dotnet/runtime` for the PR and main (or each commit passed via `-commits`), run the benchmark, and post BDN results back as a comment. `--envvars` and [other BDN arguments](https://benchmarkdotnet.org/articles/guides/console-args.html) can be passed through to customize the run.
 
 ### Command format
 
