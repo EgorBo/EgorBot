@@ -239,11 +239,13 @@ public sealed class JobTrackerService(
 
             if (status.Status == "Completed" && status.HasResult)
             {
+                job.Succeeded = true;
                 var markdown = await botClient.GetJobResultAsync(job.Id);
                 await PostResultOnTrackingIssueAsync(tracked, job, markdown, success: true);
             }
             else
             {
+                job.Succeeded = false;
                 var error = status.ErrorMessage ?? $"Job {status.Status.ToLowerInvariant()}.";
                 await PostResultOnTrackingIssueAsync(tracked, job, error, success: false);
             }
@@ -290,7 +292,8 @@ public sealed class JobTrackerService(
                     """;
             }
 
-            await ghClient.Issue.Comment.Create(trackingOwner, trackingRepo, issueNumber, body);
+            var resultComment = await ghClient.Issue.Comment.Create(trackingOwner, trackingRepo, issueNumber, body);
+            job.ResultCommentUrl = resultComment.HtmlUrl;
             logger.LogInformation("Posted result for {Platform} on tracking issue #{Issue}",
                 job.Platform, issueNumber);
         }
@@ -367,7 +370,25 @@ public sealed class JobTrackerService(
             var (trackingOwner, trackingRepo) = GetTrackingRepo();
             var trackingUrl = $"https://github.com/{trackingOwner}/{trackingRepo}/issues/{trackingIssueNumber}";
 
-            var comment = $"@{tracked.Source.Author}, benchmark results are ready: {trackingUrl}";
+            // Build per-platform result links
+            var resultLines = string.Join("\n", tracked.Jobs.Select(j =>
+            {
+                var status = j.Succeeded ? "✅" : "❌";
+                var link = j.ResultCommentUrl is not null
+                    ? $"[{j.Platform}]({j.ResultCommentUrl})"
+                    : j.Platform;
+                return $"- {status} {link}";
+            }));
+
+            var comment = $"""
+                @{tracked.Source.Author}, benchmark results are ready:
+
+                {resultLines}
+
+                Full tracking issue: {trackingUrl}
+
+                Please analyze the results and act accordingly — if there are regressions, consider reverting or fixing; if results look good, no action is needed. Note: some benchmarks may be flaky or bi-modal, so use your judgment when interpreting small differences.
+                """;
 
             var ghClient = new GitHubClient(new ProductHeaderValue(config["Github:BotName"] ?? "EgorBot"))
             {

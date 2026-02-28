@@ -84,4 +84,6 @@ public sealed class JobInfo
     public required string Platform { get; init; }
     public bool IsCompleted { get; set; }
     public string? LogsBlobUrl { get; set; }
+    public string? ResultCommentUrl { get; set; }
+    public bool Succeeded { get; set; }
 }
