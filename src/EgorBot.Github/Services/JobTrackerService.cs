@@ -385,8 +385,6 @@ public sealed class JobTrackerService(
 
                 {resultLines}
 
-                Full tracking issue: {trackingUrl}
-
                 Please analyze the results and act accordingly — if there are regressions, consider reverting or fixing; if results look good, no action is needed. Note: some benchmarks may be flaky or bi-modal, so use your judgment when interpreting small differences.
                 """;
 
