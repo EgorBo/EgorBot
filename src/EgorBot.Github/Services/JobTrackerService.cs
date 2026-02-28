@@ -203,6 +203,9 @@ public sealed class JobTrackerService(
                         await CloseTrackingIssueAsync(tracked);
                     else
                         logger.LogInformation("Skipping closing tracking issue (Github:CloseTrackingIssues = false).");
+
+                    // Copilot notification runs regardless of CloseTrackingIssues setting
+                    await TryNotifyCopilotAsync(tracked);
                 }
             }
             catch (Exception ex)
@@ -318,17 +321,29 @@ public sealed class JobTrackerService(
                 new IssueUpdate { State = ItemState.Closed });
 
             logger.LogInformation("Closed tracking issue #{Issue}", issueNumber);
-
-            // If the original requester's name starts with "copilot", post a notification on the source repo
-            if (tracked.Source.Author.StartsWith("copilot", StringComparison.OrdinalIgnoreCase))
-            {
-                await NotifyCopilotOnSourceAsync(tracked, issueNumber);
-            }
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to close tracking issue #{Issue}", issueNumber);
         }
+    }
+
+    /// <summary>
+    /// If the original requester's name starts with "copilot", post a notification
+    /// on the source PR/issue. Runs independently of CloseTrackingIssues setting.
+    /// </summary>
+    private async Task TryNotifyCopilotAsync(TrackedJob tracked)
+    {
+        if (!tracked.Source.Author.StartsWith("copilot", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (tracked.TrackingIssueNumber is not { } issueNumber)
+        {
+            logger.LogWarning("Copilot notification skipped — no tracking issue number.");
+            return;
+        }
+
+        await NotifyCopilotOnSourceAsync(tracked, issueNumber);
     }
 
     /// <summary>
