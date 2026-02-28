@@ -540,6 +540,45 @@ app.MapGet("/jobs/{id:guid}", async (Guid id, HttpContext ctx) =>
 // Health check
 app.MapGet("/health", () => Results.Ok("healthy"));
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  Scratch log — generic text log for ad-hoc debugging (e.g. Helix machines)
+// ═════════════════════════════════════════════════════════════════════════════
+
+var _scratchLogs = new System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Concurrent.ConcurrentQueue<(DateTime Time, string Text)>>();
+
+// POST /api/scratch/{name} — append text (request body) to a named log
+app.MapPost("/api/scratch/{name}", async (string name, HttpContext ctx) =>
+{
+    using var reader = new StreamReader(ctx.Request.Body);
+    var text = await reader.ReadToEndAsync();
+    var queue = _scratchLogs.GetOrAdd(name, _ => new());
+    queue.Enqueue((DateTime.UtcNow, text));
+    return Results.Ok();
+});
+
+// GET /api/scratch/{name} — view full raw log as plain text
+app.MapGet("/api/scratch/{name}", (string name) =>
+{
+    if (!_scratchLogs.TryGetValue(name, out var queue) || queue.IsEmpty)
+        return Results.Text("(empty)\n", "text/plain");
+
+    var sb = new System.Text.StringBuilder();
+    foreach (var (time, text) in queue)
+    {
+        sb.Append(time.ToString("HH:mm:ss.fff"));
+        sb.Append("  ");
+        sb.AppendLine(text);
+    }
+    return Results.Text(sb.ToString(), "text/plain");
+});
+
+// DELETE /api/scratch/{name} — clear a named log
+app.MapDelete("/api/scratch/{name}", (string name) =>
+{
+    _scratchLogs.TryRemove(name, out _);
+    return Results.Ok();
+});
+
 app.Run();
 
 /// <summary>Partial class to enable WebApplicationFactory&lt;Program&gt; in tests.</summary>

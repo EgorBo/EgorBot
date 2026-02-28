@@ -319,8 +319,8 @@ public sealed class JobTrackerService(
 
             logger.LogInformation("Closed tracking issue #{Issue}", issueNumber);
 
-            // If the original requester was @Copilot, post a notification on the source repo
-            if (tracked.Source.Author.Equals("Copilot", StringComparison.OrdinalIgnoreCase))
+            // If the original requester's name starts with "copilot", post a notification on the source repo
+            if (tracked.Source.Author.StartsWith("copilot", StringComparison.OrdinalIgnoreCase))
             {
                 await NotifyCopilotOnSourceAsync(tracked, issueNumber);
             }
@@ -332,7 +332,7 @@ public sealed class JobTrackerService(
     }
 
     /// <summary>
-    /// Post a comment on the original dotnet/runtime PR/issue notifying @Copilot
+    /// Post a comment on the original dotnet/runtime PR/issue notifying the Copilot user
     /// that benchmarks are done. Uses a separate GitHub token (Github:CopilotNotifyToken)
     /// so it appears as a different identity.
     /// </summary>
@@ -352,7 +352,7 @@ public sealed class JobTrackerService(
             var (trackingOwner, trackingRepo) = GetTrackingRepo();
             var trackingUrl = $"https://github.com/{trackingOwner}/{trackingRepo}/issues/{trackingIssueNumber}";
 
-            var comment = $"@Copilot, all benchmarks are finished, you can check the results here: {trackingUrl}";
+            var comment = $"@{tracked.Source.Author}, benchmark results are ready: {trackingUrl}";
 
             var ghClient = new GitHubClient(new ProductHeaderValue(config["Github:BotName"] ?? "EgorBot"))
             {
