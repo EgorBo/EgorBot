@@ -385,7 +385,7 @@ public sealed class JobTrackerService(
 
                 {resultLines}
 
-                Please analyze the results and act accordingly — if there are regressions, consider reverting or fixing; if results look good, no action is needed. Note: some benchmarks may be flaky or bi-modal, so use your judgment when interpreting small differences.
+                Please analyze the results and act accordingly. </br> NOTE: some benchmarks may be flaky or bi-modal, so use your judgment when interpreting small differences.
                 """;
 
             var ghClient = new GitHubClient(new ProductHeaderValue(config["Github:BotName"] ?? "EgorBot"))
