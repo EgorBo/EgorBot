@@ -103,7 +103,7 @@ setup_grafana() {
     # Install the SQLite datasource plugin
     if [ ! -d /var/lib/grafana/plugins/frser-sqlite-datasource ]; then
         echo "Installing Grafana SQLite plugin..."
-        sudo grafana cli plugins install frser-sqlite-datasource
+        sudo grafana-cli plugins install frser-sqlite-datasource
     fi
 
     # Symlink the DB so Grafana can read it at a stable path
