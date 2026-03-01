@@ -107,18 +107,14 @@ setup_grafana() {
         sudo grafana-cli plugins install frser-sqlite-datasource
     fi
 
-    # Symlink the DB so Grafana can read it at a stable path
+    # Copy the DB to a Grafana-accessible path and keep it refreshed
     sudo mkdir -p /opt/egorbot
-    sudo ln -sf "${DB_PATH}" /opt/egorbot/egorbot.db
-    sudo chmod 644 "${DB_PATH}" 2>/dev/null || true
+    sudo cp "${DB_PATH}" /opt/egorbot/egorbot.db 2>/dev/null || true
+    sudo chmod 644 /opt/egorbot/egorbot.db
 
-    # Ensure the grafana user can traverse the path to the DB file
-    local db_dir
-    db_dir=$(dirname "${DB_PATH}")
-    while [ "$db_dir" != "/" ]; do
-        sudo chmod o+rx "$db_dir" 2>/dev/null || true
-        db_dir=$(dirname "$db_dir")
-    done
+    # Set up a cron job to refresh the copy every minute
+    local cron_line="* * * * * cp ${DB_PATH} /opt/egorbot/egorbot.db && chmod 644 /opt/egorbot/egorbot.db"
+    (sudo crontab -l 2>/dev/null | grep -v "/opt/egorbot/egorbot.db"; echo "$cron_line") | sudo crontab -
 
     # Configure Grafana: anonymous access, sub-path /grafana
     sudo tee /etc/grafana/grafana.ini >/dev/null <<'GRAFANA_INI'
