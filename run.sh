@@ -160,7 +160,11 @@ GRAFANA_INI
         sleep 1
     done
 
-    # Create or update the SQLite datasource via API
+    # Delete any existing datasource with this name (may have wrong UID from old provisioning)
+    curl -s -X DELETE -u admin:admin \
+        http://localhost:${GRAFANA_PORT}/grafana/api/datasources/name/EgorBot%20SQLite 2>/dev/null || true
+
+    # Create the SQLite datasource with the correct UID
     curl -s -X POST http://localhost:${GRAFANA_PORT}/grafana/api/datasources \
         -H "Content-Type: application/json" \
         -u admin:admin \
