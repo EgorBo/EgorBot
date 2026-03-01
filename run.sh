@@ -139,16 +139,40 @@ provisioning = /etc/grafana/provisioning
 allow_loading_unsigned_plugins = frser-sqlite-datasource
 GRAFANA_INI
 
-    # Copy provisioning files
+    # Copy provisioning files (dashboards only — datasource is configured via API after startup)
     sudo mkdir -p /etc/grafana/provisioning/datasources
     sudo mkdir -p /etc/grafana/provisioning/dashboards/json
 
-    sudo cp "${WORK_DIR}/grafana/provisioning/datasources/sqlite.yaml" /etc/grafana/provisioning/datasources/
+    # Remove datasource provisioning file (we use the API instead to avoid plugin race condition)
+    sudo rm -f /etc/grafana/provisioning/datasources/sqlite.yaml
     sudo cp "${WORK_DIR}/grafana/provisioning/dashboards/dashboards.yaml" /etc/grafana/provisioning/dashboards/
     sudo cp "${WORK_DIR}/grafana/provisioning/dashboards/json/egorbot-overview.json" /etc/grafana/provisioning/dashboards/json/
 
     sudo systemctl enable grafana-server
     sudo systemctl restart grafana-server
+
+    # Wait for Grafana to be ready, then configure datasource via API
+    echo "Waiting for Grafana to start..."
+    for i in $(seq 1 30); do
+        if curl -s http://localhost:${GRAFANA_PORT}/grafana/api/health | grep -q "ok"; then
+            break
+        fi
+        sleep 1
+    done
+
+    # Create or update the SQLite datasource via API
+    curl -s -X POST http://localhost:${GRAFANA_PORT}/grafana/api/datasources \
+        -H "Content-Type: application/json" \
+        -u admin:admin \
+        -d '{
+            "name": "EgorBot SQLite",
+            "uid": "egorbot-sqlite",
+            "type": "frser-sqlite-datasource",
+            "access": "proxy",
+            "isDefault": true,
+            "jsonData": { "path": "/opt/egorbot/egorbot.db" }
+        }' 2>/dev/null || true
+
     echo "Grafana started — available at /grafana (port ${GRAFANA_PORT})"
 }
 
