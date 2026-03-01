@@ -127,6 +127,9 @@ root_url = %(protocol)s://%(domain)s/grafana
 serve_from_sub_path = true
 http_port = 3000
 
+[dashboards]
+default_home_dashboard_path = /etc/grafana/provisioning/dashboards/json/egorbot-overview.json
+
 [security]
 admin_user = admin
 admin_password = admin
