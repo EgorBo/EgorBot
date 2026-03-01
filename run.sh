@@ -112,6 +112,14 @@ setup_grafana() {
     sudo ln -sf "${DB_PATH}" /opt/egorbot/egorbot.db
     sudo chmod 644 "${DB_PATH}" 2>/dev/null || true
 
+    # Ensure the grafana user can traverse the path to the DB file
+    local db_dir
+    db_dir=$(dirname "${DB_PATH}")
+    while [ "$db_dir" != "/" ]; do
+        sudo chmod o+rx "$db_dir" 2>/dev/null || true
+        db_dir=$(dirname "$db_dir")
+    done
+
     # Configure Grafana: anonymous access, sub-path /grafana
     sudo tee /etc/grafana/grafana.ini >/dev/null <<'GRAFANA_INI'
 [server]
