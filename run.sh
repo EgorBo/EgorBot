@@ -159,6 +159,11 @@ GRAFANA_INI
     sudo cp "${WORK_DIR}/grafana/provisioning/dashboards/dashboards.yaml" /etc/grafana/provisioning/dashboards/
     sudo cp "${WORK_DIR}/grafana/provisioning/dashboards/json/egorbot-overview.json" /etc/grafana/provisioning/dashboards/json/
 
+    # Allow Grafana to access /home (systemd ProtectHome blocks it by default)
+    sudo mkdir -p /etc/systemd/system/grafana-server.service.d/
+    echo -e "[Service]\nProtectHome=false" | sudo tee /etc/systemd/system/grafana-server.service.d/override.conf >/dev/null
+    sudo systemctl daemon-reload
+
     sudo systemctl enable grafana-server
     sudo systemctl restart grafana-server
 
