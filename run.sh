@@ -107,14 +107,18 @@ setup_grafana() {
         sudo grafana-cli plugins install frser-sqlite-datasource
     fi
 
-    # Copy the DB to a Grafana-accessible path and keep it refreshed
-    sudo mkdir -p /opt/egorbot
-    sudo cp "${DB_PATH}" /opt/egorbot/egorbot.db 2>/dev/null || true
-    sudo chmod 644 /opt/egorbot/egorbot.db
-
-    # Set up a cron job to refresh the copy every minute
-    local cron_line="* * * * * cp ${DB_PATH} /opt/egorbot/egorbot.db && chmod 644 /opt/egorbot/egorbot.db"
-    (sudo crontab -l 2>/dev/null | grep -v "/opt/egorbot/egorbot.db"; echo "$cron_line") | sudo crontab -
+    # Ensure Grafana can read the DB file directly
+    sudo chmod o+r "${DB_PATH}" 2>/dev/null || true
+    # Ensure grafana user can traverse the directory path
+    local db_dir
+    db_dir=$(dirname "${DB_PATH}")
+    while [ "$db_dir" != "/" ]; do
+        sudo chmod o+rx "$db_dir" 2>/dev/null || true
+        db_dir=$(dirname "$db_dir")
+    done
+    # Also grant access to the WAL/SHM files if present
+    sudo chmod o+r "${DB_PATH}-wal" 2>/dev/null || true
+    sudo chmod o+r "${DB_PATH}-shm" 2>/dev/null || true
 
     # Configure Grafana: anonymous access, sub-path /grafana
     sudo tee /etc/grafana/grafana.ini >/dev/null <<'GRAFANA_INI'
@@ -178,7 +182,7 @@ GRAFANA_INI
             "type": "frser-sqlite-datasource",
             "access": "proxy",
             "isDefault": true,
-            "jsonData": { "path": "/opt/egorbot/egorbot.db" }
+            "jsonData": { "path": "'"${DB_PATH}"'" }
         }' 2>/dev/null || true
 
     echo "Grafana started — available at /grafana (port ${GRAFANA_PORT})"
