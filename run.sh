@@ -67,7 +67,8 @@ ${EGORBOT_DOMAIN} {
     handle /mcp {
         reverse_proxy localhost:${GITHUB_PORT}
     }
-    handle /grafana* {
+    @grafana path /grafana /grafana/*
+    handle @grafana {
         reverse_proxy localhost:${GRAFANA_PORT}
     }
     reverse_proxy localhost:${SERVER_PORT}
