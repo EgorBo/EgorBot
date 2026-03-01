@@ -14,7 +14,7 @@
       "title": "Jobs per Day",
       "type": "barchart",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" }
@@ -40,7 +40,7 @@
       "title": "Jobs by Status",
       "type": "piechart",
       "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" }
@@ -72,7 +72,7 @@
       "title": "Jobs by Platform",
       "type": "piechart",
       "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" }
@@ -97,7 +97,7 @@
       "title": "Top Requesters",
       "type": "table",
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {},
         "overrides": []
@@ -119,7 +119,7 @@
       "title": "Job Duration (minutes)",
       "type": "histogram",
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -145,7 +145,7 @@
       "title": "Avg Duration by Platform (min)",
       "type": "barchart",
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -171,7 +171,7 @@
       "title": "Jobs Timeline (status over time)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 16, "x": 0, "y": 16 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -207,7 +207,7 @@
       "title": "Recent Jobs",
       "type": "table",
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {},
         "overrides": [
@@ -247,7 +247,7 @@
       "title": "Summary Stats",
       "type": "stat",
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 24 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" }
