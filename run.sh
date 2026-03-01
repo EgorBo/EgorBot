@@ -67,7 +67,7 @@ ${EGORBOT_DOMAIN} {
     handle /mcp {
         reverse_proxy localhost:${GITHUB_PORT}
     }
-    handle_path /grafana* {
+    handle /grafana* {
         reverse_proxy localhost:${GRAFANA_PORT}
     }
     reverse_proxy localhost:${SERVER_PORT}
@@ -86,7 +86,7 @@ EOF
 setup_caddy
 
 # ── Grafana (analytics dashboard) ────────────────────────────────────────────
-DB_PATH="${WORK_DIR}/src/EgorBot.Server/bin/Release/net10.0/egorbot.db"
+DB_PATH="${WORK_DIR}/egorbot.db"
 
 setup_grafana() {
     # Install Grafana OSS if not present
