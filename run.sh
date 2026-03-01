@@ -87,7 +87,7 @@ EOF
 setup_caddy
 
 # ── Grafana (analytics dashboard) ────────────────────────────────────────────
-DB_PATH="${WORK_DIR}/egorbot.db"
+DB_PATH="${WORK_DIR}/src/EgorBot.Server/egorbot.db"
 
 setup_grafana() {
     # Install Grafana OSS if not present
