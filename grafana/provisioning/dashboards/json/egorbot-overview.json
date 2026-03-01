@@ -5,7 +5,7 @@
   "timezone": "utc",
   "refresh": "5m",
   "time": {
-    "from": "now-30d",
+    "from": "now-90d",
     "to": "now"
   },
   "panels": [
@@ -17,15 +17,17 @@
       "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" }
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "decimals": 0,
+          "min": 0
         },
         "overrides": []
       },
       "options": {
         "orientation": "auto",
-        "showValue": "auto",
+        "showValue": "always",
         "stacking": "none",
-        "barWidth": 0.8
+        "barWidth": 0.7
       },
       "targets": [
         {
@@ -51,17 +53,20 @@
           { "matcher": { "id": "byName", "options": "TimedOut" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
           { "matcher": { "id": "byName", "options": "Cancelled" }, "properties": [{ "id": "color", "value": { "fixedColor": "gray", "mode": "fixed" } }] },
           { "matcher": { "id": "byName", "options": "Running" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "Pending" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+          { "matcher": { "id": "byName", "options": "Pending" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Provisioning" }, "properties": [{ "id": "color", "value": { "fixedColor": "light-blue", "mode": "fixed" } }] }
         ]
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "right" },
-        "pieType": "pie",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "displayLabels": ["name", "value"],
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
-          "rawQueryText": "SELECT Status, COUNT(*) AS count FROM Jobs GROUP BY Status ORDER BY count DESC",
+          "rawQueryText": "SELECT SUM(CASE WHEN Status='Completed' THEN 1 ELSE 0 END) AS Completed, SUM(CASE WHEN Status='Failed' THEN 1 ELSE 0 END) AS Failed, SUM(CASE WHEN Status='TimedOut' THEN 1 ELSE 0 END) AS TimedOut, SUM(CASE WHEN Status='Cancelled' THEN 1 ELSE 0 END) AS Cancelled, SUM(CASE WHEN Status='Running' THEN 1 ELSE 0 END) AS Running, SUM(CASE WHEN Status='Pending' THEN 1 ELSE 0 END) AS Pending, SUM(CASE WHEN Status='Provisioning' THEN 1 ELSE 0 END) AS Provisioning FROM Jobs",
           "queryType": "table",
           "timeColumns": []
         }
@@ -80,13 +85,15 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "right" },
-        "pieType": "pie",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "displayLabels": ["name", "value"],
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
-          "rawQueryText": "SELECT Platform, COUNT(*) AS count FROM Jobs GROUP BY Platform ORDER BY count DESC",
+          "rawQueryText": "SELECT SUM(CASE WHEN Platform LIKE '%linux%' THEN 1 ELSE 0 END) AS Linux, SUM(CASE WHEN Platform LIKE '%windows%' THEN 1 ELSE 0 END) AS Windows, SUM(CASE WHEN Platform LIKE '%macos%' OR Platform LIKE '%osx%' OR Platform LIKE '%apple%' THEN 1 ELSE 0 END) AS macOS, SUM(CASE WHEN Platform NOT LIKE '%linux%' AND Platform NOT LIKE '%windows%' AND Platform NOT LIKE '%macos%' AND Platform NOT LIKE '%osx%' AND Platform NOT LIKE '%apple%' THEN 1 ELSE 0 END) AS Other FROM Jobs WHERE Platform IS NOT NULL",
           "queryType": "table",
           "timeColumns": []
         }
@@ -100,7 +107,12 @@
       "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {},
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "avg_min" },
+            "properties": [{ "id": "decimals", "value": 1 }]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -108,7 +120,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT COALESCE(RequestedBy, '(unknown)') AS requester, COUNT(*) AS jobs, COUNT(DISTINCT GroupId) AS requests, ROUND(AVG(CASE WHEN CompletedAt IS NOT NULL AND StartedAt IS NOT NULL THEN (julianday(CompletedAt) - julianday(StartedAt)) * 86400 END), 0) AS avg_duration_sec FROM Jobs GROUP BY requester ORDER BY jobs DESC LIMIT 20",
+          "rawQueryText": "SELECT COALESCE(RequestedBy, '(unknown)') AS requester, COUNT(*) AS jobs, COUNT(DISTINCT GroupId) AS requests, ROUND(AVG(CASE WHEN CompletedAt IS NOT NULL AND StartedAt IS NOT NULL THEN (julianday(CompletedAt) - julianday(StartedAt)) * 1440 END), 1) AS avg_min FROM Jobs GROUP BY requester ORDER BY jobs DESC LIMIT 20",
           "queryType": "table",
           "timeColumns": []
         }
@@ -122,8 +134,7 @@
       "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "unit": "m"
+          "color": { "fixedColor": "green", "mode": "fixed" }
         },
         "overrides": []
       },
@@ -149,13 +160,13 @@
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
-          "unit": "m"
+          "decimals": 1
         },
         "overrides": []
       },
       "options": {
         "orientation": "horizontal",
-        "showValue": "auto",
+        "showValue": "always",
         "barWidth": 0.7
       },
       "targets": [
@@ -168,13 +179,15 @@
     },
     {
       "id": 7,
-      "title": "Jobs Timeline (status over time)",
+      "title": "Jobs Timeline",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 16, "x": 0, "y": 16 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
+          "decimals": 0,
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "stacking": { "mode": "normal" },
@@ -196,7 +209,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT date(CreatedAt) AS time, SUM(CASE WHEN Status = 'Completed' THEN 1 ELSE 0 END) AS Completed, SUM(CASE WHEN Status = 'Failed' THEN 1 ELSE 0 END) AS Failed, SUM(CASE WHEN Status = 'TimedOut' THEN 1 ELSE 0 END) AS TimedOut, SUM(CASE WHEN Status = 'Cancelled' THEN 1 ELSE 0 END) AS Cancelled FROM Jobs GROUP BY date(CreatedAt) ORDER BY time",
+          "rawQueryText": "SELECT datetime(date(CreatedAt)) AS time, SUM(CASE WHEN Status = 'Completed' THEN 1 ELSE 0 END) AS Completed, SUM(CASE WHEN Status = 'Failed' THEN 1 ELSE 0 END) AS Failed, SUM(CASE WHEN Status = 'TimedOut' THEN 1 ELSE 0 END) AS TimedOut, SUM(CASE WHEN Status = 'Cancelled' THEN 1 ELSE 0 END) AS Cancelled FROM Jobs GROUP BY date(CreatedAt) ORDER BY time",
           "queryType": "table",
           "timeColumns": ["time"]
         }
@@ -216,9 +229,7 @@
             "properties": [
               {
                 "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
+                "value": { "type": "color-text" }
               },
               {
                 "id": "mappings",
@@ -236,7 +247,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT Id, Platform, Status, COALESCE(RequestedBy, '') AS RequestedBy, CreatedAt, CASE WHEN CompletedAt IS NOT NULL AND StartedAt IS NOT NULL THEN ROUND((julianday(CompletedAt) - julianday(StartedAt)) * 1440, 1) ELSE NULL END AS duration_min FROM Jobs ORDER BY CreatedAt DESC LIMIT 50",
+          "rawQueryText": "SELECT substr(Id, 1, 8) AS Id, Platform, Status, COALESCE(RequestedBy, '') AS RequestedBy, datetime(CreatedAt) AS CreatedAt, CASE WHEN CompletedAt IS NOT NULL AND StartedAt IS NOT NULL THEN ROUND((julianday(CompletedAt) - julianday(StartedAt)) * 1440, 1) ELSE NULL END AS duration_min FROM Jobs ORDER BY CreatedAt DESC LIMIT 50",
           "queryType": "table",
           "timeColumns": ["CreatedAt"]
         }
@@ -244,15 +255,18 @@
     },
     {
       "id": 9,
-      "title": "Summary Stats",
+      "title": "Summary",
       "type": "stat",
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 24 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "egorbot-sqlite" },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" }
+          "color": { "mode": "palette-classic" },
+          "decimals": 0
         },
-        "overrides": []
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "avg_duration_min" }, "properties": [{ "id": "decimals", "value": 1 }] }
+        ]
       },
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"] },
