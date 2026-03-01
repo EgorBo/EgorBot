@@ -31,11 +31,23 @@
         .stat-card .value { color: #c9d1d9; font-size: 24px; font-weight: bold; }
         .mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; }
         .empty { text-align: center; padding: 40px; color: #8b949e; }
+
+        .logo { width: 48px; height: 48px; border-radius: 50%; filter: drop-shadow(0 0 8px rgba(88,166,255,0.4)); transition: transform 0.4s ease, filter 0.4s ease; }
+        .logo:hover { transform: rotate(20deg) scale(1.1); filter: drop-shadow(0 0 16px rgba(88,166,255,0.7)); }
+        .header { gap: 12px; }
+        .title-group { display: flex; align-items: center; gap: 14px; }
+
+        @keyframes pulse-glow { 0%,100% { filter: drop-shadow(0 0 6px rgba(88,166,255,0.3)); } 50% { filter: drop-shadow(0 0 14px rgba(88,166,255,0.6)); } }
+        .logo { animation: pulse-glow 3s ease-in-out infinite; }
+        .logo:hover { animation: none; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🤖 EgorBot v2</h1>
+        <div class="title-group">
+            <img src="/icon.png" alt="EgorBot" class="logo">
+            <h1>EgorBot v2</h1>
+        </div>
         <span id="autoRefresh" style="color: #8b949e; font-size: 12px;">Auto-refresh: 10s</span>
     </div>
 

@@ -17,6 +17,7 @@ EGORBOT_DOMAIN="${EGORBOT_DOMAIN:-}"
 # Internal ports (Caddy proxies to these)
 SERVER_PORT=5000
 GITHUB_PORT=5001
+GRAFANA_PORT=3000
 
 WORK_DIR=$(pwd)
 
@@ -66,6 +67,9 @@ ${EGORBOT_DOMAIN} {
     handle /mcp {
         reverse_proxy localhost:${GITHUB_PORT}
     }
+    handle_path /grafana* {
+        reverse_proxy localhost:${GRAFANA_PORT}
+    }
     reverse_proxy localhost:${SERVER_PORT}
 }
 EOF
@@ -80,6 +84,74 @@ EOF
 }
 
 setup_caddy
+
+# ── Grafana (analytics dashboard) ────────────────────────────────────────────
+DB_PATH="${WORK_DIR}/src/EgorBot.Server/bin/Release/net10.0/egorbot.db"
+
+setup_grafana() {
+    # Install Grafana OSS if not present
+    if ! command -v grafana-server &>/dev/null; then
+        echo "Installing Grafana OSS..."
+        sudo apt-get install -y -qq apt-transport-https software-properties-common
+        sudo mkdir -p /etc/apt/keyrings/
+        wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/grafana.gpg >/dev/null
+        echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list >/dev/null
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq grafana
+    fi
+
+    # Install the SQLite datasource plugin
+    if [ ! -d /var/lib/grafana/plugins/frser-sqlite-datasource ]; then
+        echo "Installing Grafana SQLite plugin..."
+        sudo grafana cli plugins install frser-sqlite-datasource
+    fi
+
+    # Symlink the DB so Grafana can read it at a stable path
+    sudo mkdir -p /opt/egorbot
+    sudo ln -sf "${DB_PATH}" /opt/egorbot/egorbot.db
+    sudo chmod 644 "${DB_PATH}" 2>/dev/null || true
+
+    # Configure Grafana: anonymous access, sub-path /grafana
+    sudo tee /etc/grafana/grafana.ini >/dev/null <<'GRAFANA_INI'
+[server]
+root_url = %(protocol)s://%(domain)s/grafana
+serve_from_sub_path = true
+http_port = 3000
+
+[security]
+admin_user = admin
+admin_password = admin
+allow_embedding = true
+
+[auth.anonymous]
+enabled = true
+org_name = Main Org.
+org_role = Viewer
+
+[users]
+allow_sign_up = false
+
+[paths]
+provisioning = /etc/grafana/provisioning
+
+[plugins]
+allow_loading_unsigned_plugins = frser-sqlite-datasource
+GRAFANA_INI
+
+    # Copy provisioning files
+    sudo mkdir -p /etc/grafana/provisioning/datasources
+    sudo mkdir -p /etc/grafana/provisioning/dashboards/json
+
+    sudo cp "${WORK_DIR}/grafana/provisioning/datasources/sqlite.yaml" /etc/grafana/provisioning/datasources/
+    sudo cp "${WORK_DIR}/grafana/provisioning/dashboards/dashboards.yaml" /etc/grafana/provisioning/dashboards/
+    sudo cp "${WORK_DIR}/grafana/provisioning/dashboards/json/egorbot-overview.json" /etc/grafana/provisioning/dashboards/json/
+
+    sudo systemctl enable grafana-server
+    sudo systemctl restart grafana-server
+    echo "Grafana started — available at /grafana (port ${GRAFANA_PORT})"
+}
+
+setup_grafana
 
 # ── Determine public base URL ────────────────────────────────────────────────
 if [ -n "$EGORBOT_DOMAIN" ]; then
@@ -110,6 +182,7 @@ echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "  EgorBot started!"
 echo "  Public URL:  ${PUBLIC_URL}"
+echo "  Grafana:     ${PUBLIC_URL}/grafana"
 echo "  Server log:  ${WORK_DIR}/EgorBot.server.log"
 echo "  Github log:  ${WORK_DIR}/EgorBot.github.log"
 echo "═══════════════════════════════════════════════════════════════"

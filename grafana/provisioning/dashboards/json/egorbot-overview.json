@@ -1,0 +1,277 @@
+{
+  "uid": "egorbot-overview",
+  "title": "EgorBot Overview",
+  "tags": ["egorbot"],
+  "timezone": "utc",
+  "refresh": "5m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Jobs per Day",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "barWidth": 0.8
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT date(CreatedAt) AS day, COUNT(*) AS jobs FROM Jobs GROUP BY date(CreatedAt) ORDER BY day",
+          "queryType": "table",
+          "timeColumns": ["day"]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Jobs by Status",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Completed" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Failed" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "TimedOut" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Cancelled" }, "properties": [{ "id": "color", "value": { "fixedColor": "gray", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Running" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Pending" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right" },
+        "pieType": "pie",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT Status, COUNT(*) AS count FROM Jobs GROUP BY Status ORDER BY count DESC",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Jobs by Platform",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right" },
+        "pieType": "pie",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT Platform, COUNT(*) AS count FROM Jobs GROUP BY Platform ORDER BY count DESC",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Top Requesters",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "jobs", "desc": true }]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT COALESCE(RequestedBy, '(unknown)') AS requester, COUNT(*) AS jobs, COUNT(DISTINCT GroupId) AS requests, ROUND(AVG(CASE WHEN CompletedAt IS NOT NULL AND StartedAt IS NOT NULL THEN (julianday(CompletedAt) - julianday(StartedAt)) * 86400 END), 0) AS avg_duration_sec FROM Jobs GROUP BY requester ORDER BY jobs DESC LIMIT 20",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Job Duration (minutes)",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "options": {
+        "bucketSize": 5,
+        "combine": false,
+        "fillOpacity": 80
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ROUND((julianday(CompletedAt) - julianday(StartedAt)) * 1440, 1) AS duration_min FROM Jobs WHERE CompletedAt IS NOT NULL AND StartedAt IS NOT NULL",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Avg Duration by Platform (min)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "barWidth": 0.7
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT Platform, ROUND(AVG((julianday(CompletedAt) - julianday(StartedAt)) * 1440), 1) AS avg_min, COUNT(*) AS jobs FROM Jobs WHERE CompletedAt IS NOT NULL AND StartedAt IS NOT NULL GROUP BY Platform ORDER BY avg_min DESC",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Jobs Timeline (status over time)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 16 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": { "mode": "normal" },
+            "fillOpacity": 80,
+            "barAlignment": 0,
+            "pointSize": 5,
+            "lineWidth": 1
+          }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Completed" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Failed" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "TimedOut" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT date(CreatedAt) AS time, SUM(CASE WHEN Status = 'Completed' THEN 1 ELSE 0 END) AS Completed, SUM(CASE WHEN Status = 'Failed' THEN 1 ELSE 0 END) AS Failed, SUM(CASE WHEN Status = 'TimedOut' THEN 1 ELSE 0 END) AS TimedOut, SUM(CASE WHEN Status = 'Cancelled' THEN 1 ELSE 0 END) AS Cancelled FROM Jobs GROUP BY date(CreatedAt) ORDER BY time",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Recent Jobs",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Status" },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "Completed": { "color": "green", "text": "Completed" }, "Failed": { "color": "red", "text": "Failed" }, "TimedOut": { "color": "orange", "text": "TimedOut" }, "Running": { "color": "blue", "text": "Running" } } }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "CreatedAt", "desc": true }]
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT Id, Platform, Status, COALESCE(RequestedBy, '') AS RequestedBy, CreatedAt, CASE WHEN CompletedAt IS NOT NULL AND StartedAt IS NOT NULL THEN ROUND((julianday(CompletedAt) - julianday(StartedAt)) * 1440, 1) ELSE NULL END AS duration_min FROM Jobs ORDER BY CreatedAt DESC LIMIT 50",
+          "queryType": "table",
+          "timeColumns": ["CreatedAt"]
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Summary Stats",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT COUNT(*) AS total_jobs, COUNT(DISTINCT GroupId) AS total_requests, COUNT(DISTINCT RequestedBy) AS unique_users, SUM(CASE WHEN Status = 'Completed' THEN 1 ELSE 0 END) AS completed, SUM(CASE WHEN Status = 'Failed' THEN 1 ELSE 0 END) AS failed, ROUND(AVG(CASE WHEN CompletedAt IS NOT NULL AND StartedAt IS NOT NULL THEN (julianday(CompletedAt) - julianday(StartedAt)) * 1440 END), 1) AS avg_duration_min FROM Jobs",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ]
+    }
+  ],
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "schemaVersion": 39,
+  "version": 1
+}

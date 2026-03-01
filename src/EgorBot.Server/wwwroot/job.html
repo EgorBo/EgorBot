@@ -45,10 +45,21 @@
             background: #3b1117; border: 1px solid #7f1d1d; border-radius: 6px;
             padding: 12px; color: #f87171; font-size: 13px; display: none;
         }
+
+        .job-header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+        .logo { width: 36px; height: 36px; border-radius: 50%; filter: drop-shadow(0 0 6px rgba(88,166,255,0.35)); transition: transform 0.4s ease, filter 0.4s ease; }
+        .logo:hover { transform: rotate(20deg) scale(1.1); filter: drop-shadow(0 0 14px rgba(88,166,255,0.7)); }
+        .logo-link { display: flex; align-items: center; text-decoration: none; }
+
+        @keyframes spin-once { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .logo.loading { animation: spin-once 1.2s ease-in-out infinite; }
     </style>
 </head>
 <body>
-    <h1 id="jobTitle">Job Details</h1>
+    <div class="job-header">
+        <a href="/" class="logo-link"><img src="/icon.png" alt="EgorBot" class="logo" id="logoIcon"></a>
+        <h1 id="jobTitle">Job Details</h1>
+    </div>
 
     <div class="meta" id="metaSection">
         <div>Loading...</div>
@@ -89,6 +100,9 @@
         }
 
         function renderMeta(job) {
+            // Stop the loading spin
+            document.getElementById('logoIcon').classList.remove('loading');
+
             document.getElementById('jobTitle').textContent = `Job ${job.id.substring(0, 8)}…`;
             document.title = `EgorBot — ${job.id.substring(0, 8)}…`;
 
@@ -239,6 +253,8 @@
             return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         }
 
+        // Start with the logo spinning as a loading indicator
+        document.getElementById('logoIcon').classList.add('loading');
         loadJobStatus();
     </script>
 </body>
