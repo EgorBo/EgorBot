@@ -62,7 +62,8 @@ app.Use(async (ctx, next) =>
     var path = ctx.Request.Path.Value ?? "";
     var isQuiet = path.EndsWith("/heartbeat", StringComparison.OrdinalIgnoreCase)
                || path.EndsWith("/logs", StringComparison.OrdinalIgnoreCase)
-               || path.EndsWith("/status", StringComparison.OrdinalIgnoreCase);
+               || path.EndsWith("/status", StringComparison.OrdinalIgnoreCase)
+               || path.Equals("/favicon.ico", StringComparison.OrdinalIgnoreCase);
 
     if (isQuiet)
     {

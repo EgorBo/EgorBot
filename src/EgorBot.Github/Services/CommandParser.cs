@@ -28,7 +28,7 @@ public static class CommandParser
     public static bool ContainsMention(string? body)
     {
         if (string.IsNullOrWhiteSpace(body)) return false;
-        return Regex.IsMatch(body, $@"(?m)^{Regex.Escape(BotMention)}", RegexOptions.IgnoreCase);
+        return Regex.IsMatch(body, $@"(?m)^\s*{Regex.Escape(BotMention)}", RegexOptions.IgnoreCase);
     }
 
     /// <summary>
@@ -39,7 +39,7 @@ public static class CommandParser
         if (!ContainsMention(body)) return null;
 
         // Find the @EgorBot line (must be at start of a line)
-        var match = Regex.Match(body, $@"(?m)^{Regex.Escape(BotMention)}(.*)", RegexOptions.IgnoreCase);
+        var match = Regex.Match(body, $@"(?m)^\s*{Regex.Escape(BotMention)}(.*)", RegexOptions.IgnoreCase);
         if (!match.Success) return null;
 
         // Get everything after the mention
