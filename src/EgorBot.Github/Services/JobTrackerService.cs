@@ -38,7 +38,7 @@ public sealed class JobTrackerService(
 
         if (command.ErrorMessage is not null)
         {
-            await PostCommentOnTrackingRepoAsync(source, $"⚠️ {command.ErrorMessage}");
+            await PostErrorCommentAsync(source, $"⚠️ {command.ErrorMessage}");
             return;
         }
 
@@ -448,6 +448,24 @@ public sealed class JobTrackerService(
             // For dotnet/runtime — log only, no comment posted
             logger.LogInformation("Skipping reply on {Owner}/{Repo}#{Number} (not tracking repo): {Body}",
                 source.Owner, source.Repo, source.Number, body);
+        }
+    }
+
+    /// <summary>
+    /// Post an error/warning message directly on the source issue/PR so the user
+    /// always sees it — even when the source repo is not the tracking repo.
+    /// </summary>
+    private async Task PostErrorCommentAsync(MentionSource source, string body)
+    {
+        try
+        {
+            var ghClient = CreateGitHubClient();
+            await ghClient.Issue.Comment.Create(source.Owner, source.Repo, source.Number, body);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to post error comment on {Owner}/{Repo}#{Number}",
+                source.Owner, source.Repo, source.Number);
         }
     }
 
