@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
-using System.Text;
 using EgorBot.Github.Models;
 using Octokit;
 
@@ -23,9 +21,8 @@ public sealed class GitHubPollingService(
     IServiceProvider services) : BackgroundService
 {
     /// <summary>
-    /// Unique keys of entities we've already seen.
-    /// For comments: value is an empty string (keyed by comment ID, so edits aren't tracked).
-    /// For issue/PR bodies: value is a hash of the body text so we can detect description edits.
+    /// Unique keys of entities we've already processed.
+    /// Once a mention is handled, it is never processed again — even if the body is edited.
     /// Format: "{owner}/{repo}/issue/{number}" for body mentions,
     ///         "{owner}/{repo}/comment/{commentId}" for comment mentions.
     /// </summary>
@@ -232,31 +229,21 @@ public sealed class GitHubPollingService(
             if (!CommandParser.ContainsMention(issue.Body)) continue;
 
             var key = $"{repo.Owner}/{repo.Name}/issue/{issue.Number}";
-            var bodyHash = ComputeBodyHash(issue.Body);
 
-            if (_processed.TryGetValue(key, out var lastHash))
-            {
-                // We've seen this issue before. Skip unless the body was edited
-                // (hash changed), which means someone updated the description.
-                if (lastHash == bodyHash)
-                    continue;
+            if (_processed.ContainsKey(key))
+                continue; // Already processed — never re-process, even if body was edited
 
-                logger.LogInformation(
-                    "Detected body edit on {Owner}/{Repo}#{Number} — re-processing @EgorBot mention",
-                    repo.Owner, repo.Name, issue.Number);
-            }
-            else if (issue.CreatedAt < _startedAt - TimeSpan.FromMinutes(2))
+            if (issue.CreatedAt < _startedAt - TimeSpan.FromMinutes(2))
             {
                 // First time seeing this old issue after a restart.
-                // Store its body hash so we can detect future edits, but
-                // don't process it now — we may have already handled it
-                // in a previous instance.
-                _processed[key] = bodyHash;
+                // Record it so we skip it in future cycles, but don't process
+                // now — we may have already handled it in a previous instance.
+                _processed[key] = string.Empty;
                 continue;
             }
 
-            // Mark as processed with current body hash
-            _processed[key] = bodyHash;
+            // Mark as processed BEFORE handling (to avoid re-processing on edits)
+            _processed[key] = string.Empty;
 
             var isPr = issue.PullRequest != null;
 
@@ -305,15 +292,6 @@ public sealed class GitHubPollingService(
     private static bool IsBotUser(string login) =>
         login.Equals("EgorBot", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Return a short hash of the body text so we can cheaply detect description edits.
-    /// </summary>
-    private static string ComputeBodyHash(string? body)
-    {
-        if (string.IsNullOrEmpty(body)) return string.Empty;
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(body));
-        return Convert.ToHexString(hash, 0, 16); // 128-bit prefix is plenty
-    }
 
     /// <summary>
     /// If the PR is merged, return its merge commit SHA; otherwise return null.
