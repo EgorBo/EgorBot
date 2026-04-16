@@ -142,8 +142,8 @@ class Config:
                         help="1 = enable perf recording (default: 0)")
         p.add_argument("--perf_record_args", default="",
                         help="Extra args for perf record")
-        p.add_argument("--perf_record_freq", default="999",
-                        help="perf record -F frequency (default: 999)")
+        p.add_argument("--perf_record_freq", default="4999",
+                        help="perf record -F frequency (default: 4999)")
         p.add_argument("--callback_url", default="",
                         help="Base URL of EgorBot service for posting logs/results (e.g. http://host:5000/api/internal)")
         p.add_argument("--job_id", default="",

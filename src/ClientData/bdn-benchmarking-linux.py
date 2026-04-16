@@ -193,7 +193,7 @@ def run_perf_profiling():
         run_entries = [(Path(p).parent.name, p) for p in corerun_paths]
 
     perf_record_args = common.CFG.perf_record_args or "-e cpu-clock"
-    high_freq = int(common.CFG.perf_record_freq) if common.CFG.perf_record_freq else 1999
+    high_freq = int(common.CFG.perf_record_freq) if common.CFG.perf_record_freq else 4999
     low_freq = 299
 
     perf_out_dir = common.ARTIFACTS_DIR / "perf"
