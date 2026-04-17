@@ -44,7 +44,8 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
                                 || e.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
                                 || e.Name.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase)
                                 || e.Name.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase)
-                                || e.Name.EndsWith(".stats", StringComparison.OrdinalIgnoreCase)))
+                                || e.Name.EndsWith(".stats", StringComparison.OrdinalIgnoreCase)
+                                || e.Name.Equals("perf_events.txt", StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             if (perfEntries.Count == 0)
@@ -83,6 +84,29 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
         List<(string FullName, string Name, byte[] Data)> perfData, Guid jobId, string baseUrl)
     {
         var artifactsDir = GetLocalArtifactsDir(jobId);
+
+        // Split off the top-level perf_events.txt (machine-wide, not per-benchmark).
+        var perfEventsEntry = perfData.FirstOrDefault(e =>
+            e.FullName.Equals("perf/perf_events.txt", StringComparison.OrdinalIgnoreCase));
+        string? perfEventsLink = null;
+        int savedCount = 0;
+        if (perfEventsEntry.Data is not null)
+        {
+            perfData.Remove(perfEventsEntry);
+            try
+            {
+                var localPath = Path.Combine(artifactsDir, "perf", "perf_events.txt");
+                Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
+                File.WriteAllBytes(localPath, perfEventsEntry.Data);
+                savedCount++;
+                perfEventsLink = $"{baseUrl.TrimEnd('/')}/api/jobs/{jobId}/artifacts/perf/perf_events.txt";
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to save perf_events.txt locally for job {JobId}", jobId);
+            }
+        }
+
         var grouped = perfData
             .GroupBy(e => { var parts = e.FullName.Split('/'); return parts.Length >= 2 ? parts[1] : "unknown"; })
             .OrderBy(g => g.Key);
@@ -92,7 +116,11 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
         sb.AppendLine("<details>");
         sb.AppendLine("<summary>Profiling artifacts</summary>");
         sb.AppendLine();
-        int savedCount = 0;
+        if (perfEventsLink is not null)
+        {
+            sb.AppendLine($"Supported perf events on this machine: [perf_events.txt]({perfEventsLink})");
+            sb.AppendLine();
+        }
 
         foreach (var group in grouped)
         {

@@ -199,6 +199,12 @@ def run_perf_profiling():
     perf_out_dir = common.ARTIFACTS_DIR / "perf"
     common.ensure_dirs(perf_out_dir)
 
+    # Dump the full list of perf events supported by this machine once, so it
+    # is uploaded as an artifact and users can pick events for -perf_events.
+    perf_events_file = perf_out_dir / "perf_events.txt"
+    common.post_log(f"[PERF] Dumping supported perf events to {perf_events_file.name}...")
+    common.run(f"{perf} list", check=False, stdout_file=perf_events_file)
+
     for label, corerun_path in run_entries:
         for bdnline in benchmarks:
             bdnline_escaped = re_mod.sub(r'[^a-zA-Z0-9]', '_', bdnline)
@@ -277,10 +283,6 @@ def run_perf_profiling():
             stats_file = bench_dir / f"{label}.stats"
             stat_events = "task-clock,cycles,instructions,branches,branch-misses,cache-misses,cache-references,context-switches,cpu-migrations,page-faults"
             common.run(f"{perf} stat -e {stat_events} -o {stats_file} -p {pid} sleep 6", check=False)
-
-            # List perf counters
-            perf_list_file = bench_dir / f"{label}.perf_list.txt"
-            common.run(f"{perf} list", check=False, stdout_file=perf_list_file)
 
             # Kill the benchmark process
             common.post_log("[PERF]   Killing benchmark process...")
