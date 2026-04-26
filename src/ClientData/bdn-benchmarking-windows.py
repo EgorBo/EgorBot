@@ -317,11 +317,43 @@ def _refresh_windows_path():
 #  Main entry point: install_platform_deps
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _enable_long_paths():
+    """
+    Enable Windows long path support — required by dotnet/runtime's build.cmd,
+    which now hard-fails early if either the registry flag or git's core.longpaths
+    is not set. Fresh Azure VMs have neither enabled by default.
+    """
+    common.post_log("Enabling Windows long path support...")
+    try:
+        r = subprocess.run(
+            ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Control\FileSystem",
+             "/v", "LongPathsEnabled", "/t", "REG_DWORD", "/d", "1", "/f"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode == 0:
+            common.post_log("LongPathsEnabled=1 set in registry")
+        else:
+            common.post_log(f"WARNING: reg add returned {r.returncode}: {r.stderr.strip() or r.stdout.strip()}")
+    except Exception as e:
+        common.post_log(f"WARNING: failed to set LongPathsEnabled: {e}")
+
+
+def _enable_git_long_paths():
+    """Enable git's long-path support (must run after git is installed)."""
+    if not shutil.which("git"):
+        common.post_log("WARNING: git not found, skipping core.longpaths config")
+        return
+    common.run("git config --system core.longpaths true", check=False)
+
+
 def install_platform_deps():
     """
     Install all Windows build dependencies, then activate VS environment.
     If winget is available, use it; otherwise fall back to direct downloads.
     """
+    # Must be enabled BEFORE dotnet/runtime's build.cmd runs in a later stage.
+    _enable_long_paths()
+
     use_winget = _ensure_winget()
 
     if use_winget:
@@ -348,6 +380,9 @@ def install_platform_deps():
         _install_cmake_standalone()
         _install_ninja_standalone()
         _ensure_vs_build_tools()
+
+    # Now that git is installed, enable its long-path support.
+    _enable_git_long_paths()
 
     # Ensure the Python that's running the agent is discoverable by subprocesses
     # (dotnet/runtime's native build requires Python for code generation).
