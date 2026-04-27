@@ -13,12 +13,8 @@
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
-    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
-    <PackageReference Include="Microsoft.ML.Tokenizers.Data.O200kBase" Version="2.0.0" />
     <PackageReference Include="ObjectLayoutInspector" Version="0.1.4" />
-    <PackageReference Include="System.IO.Hashing" Version="11.0.0-preview.1.26104.118" />
-    <PackageReference Include="System.Numerics.Tensors" Version="11.0.0-preview.1.26104.118" />
+    <!--PackageReference Include="System.IO.Hashing" Version="11.0.0-preview.1.26104.118" /-->
     <PackageReference Include="xunit" Version="2.9.3" />
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 </Project>
