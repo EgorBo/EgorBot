@@ -484,7 +484,7 @@ public sealed class JobTrackerService(
             **Targets** (default: `macos26_helix_arm64`):
             `-arm` `-intel` `-amd` `-x64`
             `-azure_genoa` `-azure_cobalt100` `-azure_cascadelake` `-azure_milano` `-azure_ampere`
-            `-aws_graviton4` `-aws_graviton3` `-aws_sapphirelake` `-aws_icelake` `-aws_genoa` `-aws_turin`
+            `-aws_graviton5` `-aws_graviton4` `-aws_graviton3` `-aws_sapphirelake` `-aws_icelake` `-aws_genoa` `-aws_turin`
 
             **Options:**
             `-profiler` — enable perf profiler

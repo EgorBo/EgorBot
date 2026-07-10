@@ -85,6 +85,7 @@ public static class TargetCatalog
         ["ubuntu24_aws_graviton2"]     = new("ubuntu24_aws_graviton2",        VmArch.Arm64, "c6g",                         "us-east-1",  VmCpuVendor.Arm,   false, 32),
         ["ubuntu24_aws_graviton3"]     = new("ubuntu24_aws_graviton3",        VmArch.Arm64, "c7g",                         "us-east-1",  VmCpuVendor.Arm,   false, 32),
         ["ubuntu24_aws_graviton4"]     = new("ubuntu24_aws_graviton4",        VmArch.Arm64, "c8g",                         "us-east-1",  VmCpuVendor.Arm,   true,  32),
+        ["ubuntu24_aws_graviton5"]     = new("ubuntu24_aws_graviton5",        VmArch.Arm64, "c9g",                         "us-east-1",  VmCpuVendor.Arm,   false, 32),
 
         // windows-x64
         ["windows_aws_icelake"]        = new("windows_aws_icelake",           VmArch.X64,   "c6i",                         "us-east-1",  VmCpuVendor.Intel, true, 32),
