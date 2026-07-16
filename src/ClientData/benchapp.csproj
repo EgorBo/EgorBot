@@ -9,7 +9,7 @@
     <LangVersion>preview</LangVersion>
     <EnablePreviewFeatures>true</EnablePreviewFeatures>
     <NoWarn>$(NoWarn);SYSLIB5001;SYSLIB5002;SYSLIB5003;SYSLIB5004;SYSLIB5005;SYSLIB5006;SYSLIB5007;CA2252</NoWarn>
-    <Features>$(Features);runtime-async=on</Features>
+    <Features Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">$(Features);runtime-async=on</Features>
   </PropertyGroup>
 
   <ItemGroup>
