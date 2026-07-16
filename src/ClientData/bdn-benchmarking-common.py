@@ -130,8 +130,8 @@ class Config:
         p.add_argument("--bench_csproj_file",
                         default="",
                         help="Local path to .csproj template for custom benchmarks")
-        p.add_argument("--bench_tfm", default="net10.0",
-                        help="Target framework moniker (default: net10.0)")
+        p.add_argument("--bench_tfm", default="net11.0",
+                        help="Target framework moniker (default: net11.0)")
         p.add_argument("--runtime_build_args", default="/p:NoPgoOptimize=true",
                         help='Extra args for build.sh/build.cmd (default: /p:NoPgoOptimize=true)')
         p.add_argument("--bdn_args_file",
