@@ -377,11 +377,12 @@ def _build_custom_benchmarks(bench_args: List[str]):
         else:
             download("https://gist.github.com/EgorBo/c3378873ad204ebf522a07138f621128/raw", csproj)
 
-        # Fix multi-targeting: only build for the requested TFM
+        # Always target net10 and net11 so BDN can run either via --runtimes
+        # (a lower-TFM benchapp can be referenced by any equal-or-newer runtime job).
         csproj_text = csproj.read_text(encoding="utf-8")
         csproj_text = re_mod.sub(
-            r'<TargetFrameworks>[^<]+</TargetFrameworks>',
-            f'<TargetFramework>{CFG.bench_tfm}</TargetFramework>',
+            r'<TargetFrameworks?>[^<]+</TargetFrameworks?>',
+            '<TargetFrameworks>net10.0;net11.0</TargetFrameworks>',
             csproj_text,
         )
         csproj.write_text(csproj_text, encoding="utf-8")
