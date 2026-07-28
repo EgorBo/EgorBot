@@ -97,6 +97,8 @@ public sealed class JobTrackerService(
     /// If the command came from the tracking repo and has no explicit commits,
     /// try to parse a PR number from the issue title.
     /// E.g. "Benchmarks for dotnet/runtime#124445 (for @EgorBo)" → PR_124445
+    /// The title is the same shape for issues and PRs, so the referenced item is
+    /// verified before it is treated as a PR.
     /// </summary>
     private async Task<BotCommand> TryInferPrFromTrackingIssueAsync(MentionSource source, BotCommand command)
     {
@@ -111,22 +113,50 @@ public sealed class JobTrackerService(
         {
             var ghClient = CreateGitHubClient();
             var issue = await ghClient.Issue.Get(source.Owner, source.Repo, source.Number);
-            var match = Regex.Match(issue.Title, @"#(\d+)");
-            if (match.Success && int.TryParse(match.Groups[1].Value, out var prNumber))
+
+            var match = Regex.Match(issue.Title, @"(?<owner>[A-Za-z0-9_.-]+)/(?<repo>[A-Za-z0-9_.-]+)#(?<number>\d+)");
+            if (!match.Success || !int.TryParse(match.Groups["number"].Value, out var number))
+                return command;
+
+            var refOwner = match.Groups["owner"].Value;
+            var refRepo = match.Groups["repo"].Value;
+
+            // The agent always clones dotnet/runtime, so "PR_N" only means anything there.
+            var primaryOwner = config["Github:PrimaryRepo:Owner"] ?? "dotnet";
+            var primaryRepo = config["Github:PrimaryRepo:Name"] ?? "runtime";
+            if (!refOwner.Equals(primaryOwner, StringComparison.OrdinalIgnoreCase)
+                || !refRepo.Equals(primaryRepo, StringComparison.OrdinalIgnoreCase))
             {
-                logger.LogInformation("Inferred PR #{PrNumber} from tracking issue title: {Title}",
-                    prNumber, issue.Title);
-                return new BotCommand
-                {
-                    Targets = command.Targets,
-                    CommitsAndPrs = $"main;PR_{prNumber}",
-                    BdnArguments = command.BdnArguments,
-                    BenchmarkCode = command.BenchmarkCode,
-                    UseProfiler = command.UseProfiler,
-                    Attempts = command.Attempts,
-                    IsHelp = command.IsHelp,
-                };
+                logger.LogInformation(
+                    "Tracking issue #{Number} references {Owner}/{Repo}, which is not the benchmarked repo — skipping PR inference",
+                    source.Number, refOwner, refRepo);
+                return command;
             }
+
+            // A tracking issue created from a plain issue has the very same title shape as
+            // one created from a PR. Assuming "PR" here produced PR_<issue number>, and the
+            // agent then failed on `git fetch origin pull/<issue number>/head`.
+            var referenced = await ghClient.Issue.Get(refOwner, refRepo, number);
+            if (referenced.PullRequest is null)
+            {
+                logger.LogInformation(
+                    "Tracking issue #{Number} refers to {Owner}/{Repo}#{Ref}, which is an issue and not a PR — running without a PR build",
+                    source.Number, refOwner, refRepo, number);
+                return command;
+            }
+
+            logger.LogInformation("Inferred PR #{PrNumber} from tracking issue title: {Title}",
+                number, issue.Title);
+            return new BotCommand
+            {
+                Targets = command.Targets,
+                CommitsAndPrs = $"main;PR_{number}",
+                BdnArguments = command.BdnArguments,
+                BenchmarkCode = command.BenchmarkCode,
+                UseProfiler = command.UseProfiler,
+                Attempts = command.Attempts,
+                IsHelp = command.IsHelp,
+            };
         }
         catch (Exception ex)
         {
