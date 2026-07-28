@@ -81,11 +81,22 @@ public sealed class CorePoolManager : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         var target = TargetCatalog.GetTarget(platform);
-        TaskCompletionSource<bool>? tcs = null;
+        TaskCompletionSource<bool> tcs;
+        PoolEntry pool;
+        LinkedListNode<(int Cores, TaskCompletionSource<bool> Tcs)> node;
 
         lock (_lock)
         {
-            var pool = GetOrCreatePool(target);
+            pool = GetOrCreatePool(target);
+
+            // A request bigger than the whole pool can never be satisfied — waiting for it
+            // would wedge this job (and every job queued behind it) forever.
+            if (cores > pool.TotalCores)
+            {
+                throw new InvalidOperationException(
+                    $"Requested {cores} cores for '{platform}', but pool '{GetPoolKey(target)}' " +
+                    $"only has {pool.TotalCores}. Lower the default core count (e.g. `cores {pool.TotalCores}`).");
+            }
 
             if (pool.Waiters.Count == 0 && pool.AvailableCores >= cores)
             {
@@ -99,7 +110,7 @@ public sealed class CorePoolManager : IDisposable
 
             // Slow path: must wait
             tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            pool.Waiters.AddLast((cores, tcs));
+            node = pool.Waiters.AddLast((cores, tcs));
             _logger.LogInformation(
                 "CorePool: queuing {Cores} cores for '{Platform}' (pool '{Key}'). Used={Used}/{Total}, waiters={Waiters}",
                 cores, platform, GetPoolKey(target), pool.UsedCores, pool.TotalCores, pool.Waiters.Count);
@@ -107,7 +118,21 @@ public sealed class CorePoolManager : IDisposable
 
         // Wait outside the lock
         using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
-        await tcs.Task;
+        try
+        {
+            await tcs.Task;
+        }
+        catch
+        {
+            // Drop the dead waiter immediately instead of leaving it queued
+            // in front of everyone else until the next Return().
+            lock (_lock)
+            {
+                if (node.List is not null)
+                    pool.Waiters.Remove(node);
+            }
+            throw;
+        }
 
         _logger.LogInformation(
             "CorePool: rented {Cores} cores for '{Platform}' (after wait)",
@@ -117,10 +142,24 @@ public sealed class CorePoolManager : IDisposable
     /// <summary>
     /// Return <paramref name="cores"/> to the pool for <paramref name="platform"/>.
     /// Wakes queued waiters (FIFO) if enough cores are now available.
+    /// Never throws — returning cores happens on cleanup paths where an exception
+    /// would leak the whole rent (and wedge every subsequent job).
     /// </summary>
     public void Return(string platform, int cores)
     {
-        var target = TargetCatalog.GetTarget(platform);
+        if (cores <= 0)
+            return;
+
+        TargetInfo target;
+        try
+        {
+            target = TargetCatalog.GetTarget(platform);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CorePool: Return called with unknown platform '{Platform}' — cores leaked", platform);
+            return;
+        }
 
         lock (_lock)
         {
@@ -154,9 +193,9 @@ public sealed class CorePoolManager : IDisposable
             var next = node.Next;
             var (requested, tcs) = node.Value;
 
-            if (tcs.Task.IsCanceled)
+            if (tcs.Task.IsCompleted)
             {
-                // Waiter was cancelled — discard it
+                // Waiter was cancelled (or already served) — discard it
                 pool.Waiters.Remove(node);
                 node = next;
                 continue;
@@ -164,9 +203,14 @@ public sealed class CorePoolManager : IDisposable
 
             if (pool.AvailableCores >= requested)
             {
-                pool.UsedCores += requested;
                 pool.Waiters.Remove(node);
-                tcs.TrySetResult(true);
+
+                // Only charge the pool if the waiter actually observes the grant.
+                // TrySetResult loses the race against a concurrent cancellation, and
+                // charging a waiter that never wakes up leaks the cores forever.
+                if (tcs.TrySetResult(true))
+                    pool.UsedCores += requested;
+
                 // Continue — the next waiter might also fit
             }
             else
@@ -192,6 +236,29 @@ public sealed class CorePoolManager : IDisposable
                 result[key] = (pool.UsedCores, pool.TotalCores, pool.Waiters.Count);
             }
             return result;
+        }
+    }
+
+    /// <summary>
+    /// Forget all accounting and wake every waiter. Only safe to call when no jobs
+    /// are running (e.g. right after cancelling everything) — it exists so a leaked
+    /// rent can be recovered without restarting the service.
+    /// Returns the number of cores that were considered "in use".
+    /// </summary>
+    public int ResetAll()
+    {
+        lock (_lock)
+        {
+            var leaked = 0;
+            foreach (var (key, pool) in _pools)
+            {
+                leaked += pool.UsedCores;
+                _logger.LogWarning("CorePool: reset pool '{Key}' (was Used={Used}/{Total}, waiters={Waiters})",
+                    key, pool.UsedCores, pool.TotalCores, pool.Waiters.Count);
+                pool.UsedCores = 0;
+                DrainWaiters(pool);
+            }
+            return leaked;
         }
     }
 

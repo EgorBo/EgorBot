@@ -230,37 +230,50 @@ def run_perf_profiling():
 
             bdn_artifacts = bench_dir / "bdn_scratch"
 
+            # NOTE: keep this argument list in sync with the BenchmarkDotNet version
+            # used by benchapp.csproj -- an unknown argument makes BDN print its usage
+            # and exit with code 0, which silently disables profiling.
+            # Overhead evaluation is opt-in (--evaluateOverhead) in BDN 0.16+, so we
+            # simply don't ask for it here.
+            bdn_args = [
+                "--filter", bdnline, "-i",
+                "--noForcedGCs", "--disableLogFile",
+                "--maxWarmupCount", "8",
+                "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
+                "-a", str(bdn_artifacts),
+            ]
+
             if corerun_path:
-                bench_cmd = [
-                    str(corerun_path), str(bench_dll),
-                    "--filter", bdnline, "-i",
-                    "--noForcedGCs", "--noOverheadEvaluation", "--disableLogFile",
-                    "--maxWarmupCount", "8",
-                    "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
-                    "-a", str(bdn_artifacts),
-                ]
+                bench_cmd = [str(corerun_path), str(bench_dll)] + bdn_args
                 target_process = "corerun"
             else:
-                bench_cmd = [
-                    "dotnet", str(bench_dll),
-                    "--filter", bdnline, "-i",
-                    "--noForcedGCs", "--noOverheadEvaluation", "--disableLogFile",
-                    "--maxWarmupCount", "8",
-                    "--minIterationCount", "15000000", "--maxIterationCount", "20000000",
-                    "-a", str(bdn_artifacts),
-                ]
+                bench_cmd = ["dotnet", str(bench_dll)] + bdn_args
                 target_process = "dotnet"
 
-            proc = subprocess.Popen(
-                bench_cmd, env=perf_env, cwd=common.DIR_BENCHAPP,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            # Keep the output around so early exits can actually be diagnosed.
+            bench_log = bench_dir / f"{label}_bdn_profiling_run.log"
+            bench_log_handle = open(bench_log, "w", encoding="utf-8", errors="replace")
+            try:
+                proc = subprocess.Popen(
+                    bench_cmd, env=perf_env, cwd=common.DIR_BENCHAPP,
+                    stdout=bench_log_handle, stderr=subprocess.STDOUT,
+                )
 
-            common.post_log(f"[PERF]   Waiting 30s for warmup (PID={proc.pid})...")
-            time.sleep(30)
+                common.post_log(f"[PERF]   Waiting 30s for warmup (PID={proc.pid})...")
+                time.sleep(30)
 
-            if proc.poll() is not None:
+                early_exit = proc.poll() is not None
+            finally:
+                bench_log_handle.close()
+
+            if early_exit:
                 common.post_log(f"[PERF]   Process exited early (code {proc.returncode}), skipping")
+                try:
+                    tail = bench_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[:30]
+                    if tail:
+                        common.post_log("[PERF]   Output of the failed run:\n" + "\n".join(tail))
+                except Exception:
+                    pass
                 continue
 
             pid = proc.pid

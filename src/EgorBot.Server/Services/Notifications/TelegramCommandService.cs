@@ -20,6 +20,7 @@ public sealed class TelegramCommandService(
     IServiceScopeFactory scopeFactory,
     JobOrchestrator orchestrator,
     RuntimeSettings runtimeSettings,
+    CorePoolManager corePool,
     IHostApplicationLifetime appLifetime,
     IHttpClientFactory httpFactory,
     ILogger<TelegramCommandService> logger) : BackgroundService
@@ -109,7 +110,21 @@ public sealed class TelegramCommandService(
                     }
 
                     logger.LogInformation("Telegram admin command: \"{Command}\"", text);
-                    await HandleCommandAsync(text, stoppingToken);
+                    try
+                    {
+                        await HandleCommandAsync(text, stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // A failing command must not kill the polling loop (or the host —
+                        // an escaping exception from ExecuteAsync stops the whole app).
+                        logger.LogError(ex, "Telegram command \"{Command}\" failed", text);
+                        await SendReplyAsync($"❌ Command failed: {EscapeMarkdown(ex.Message)}");
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -119,7 +134,14 @@ public sealed class TelegramCommandService(
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "TelegramCommandService poll error");
-                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
 
@@ -128,8 +150,14 @@ public sealed class TelegramCommandService(
 
     private async Task HandleCommandAsync(string text, CancellationToken ct)
     {
-        // Strip leading '/' (Telegram sends /jobs, /quit, etc.)
-        var command = text.TrimStart('/').ToLowerInvariant();
+        // Strip leading '/' (Telegram sends /jobs, /quit, etc.) and any "@BotName" suffix
+        var command = text.TrimStart('/').Trim().ToLowerInvariant();
+        var atIndex = command.IndexOf('@');
+        if (atIndex > 0 && !command.Contains(' '))
+            command = command[..atIndex];
+
+        if (command.Length == 0)
+            return;
 
         switch (command)
         {
@@ -160,6 +188,8 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`allvms` — list all VMs across cloud providers");
                 sb.AppendLine("`cores` — show current default core count");
                 sb.AppendLine("`cores N` — set default core count (e.g. `cores 16`)");
+                sb.AppendLine("`pool` — show core pool usage (used/total + waiters)");
+                sb.AppendLine("`pool reset` — force-release leaked cores (use when jobs hang on \"Waiting for N cores\")");
                 sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
                 sb.AppendLine("`quit` — shut down the service");
                 sb.AppendLine("`help` — show this message");
@@ -179,11 +209,16 @@ public sealed class TelegramCommandService(
                     await HandleCoresCommandAsync(command);
                     break;
                 }
-                // Check custom commands (registered in config)
-                var cmdName = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries)[0];
-                if (_customCommands.TryGetValue(cmdName, out var bashCmd))
+                if (command.StartsWith("pool"))
                 {
-                    _ = HandleCustomCommandAsync(cmdName, bashCmd, ct);
+                    await HandlePoolCommandAsync(command);
+                    break;
+                }
+                // Check custom commands (registered in config)
+                var parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length > 0 && _customCommands.TryGetValue(parts[0], out var bashCmd))
+                {
+                    _ = HandleCustomCommandAsync(parts[0], bashCmd, ct);
                     break;
                 }
                 await SendReplyAsync($"Unknown command: `{EscapeMarkdown(command)}`\nSend `help` for available commands.");
@@ -352,6 +387,37 @@ public sealed class TelegramCommandService(
             logger.LogError(ex, "Custom command '{Name}' failed", name);
             await SendReplyAsync($"❌ `{EscapeMarkdown(name)}` failed: {EscapeMarkdown(ex.Message)}");
         }
+    }
+
+    private async Task HandlePoolCommandAsync(string command)
+    {
+        var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length > 1 && parts[1] is "reset" or "clear")
+        {
+            var leaked = corePool.ResetAll();
+            logger.LogWarning("Admin reset the core pool ({Cores} cores were marked as used)", leaked);
+            await SendReplyAsync($"♻️ Core pool reset — released *{leaked}* core(s) that were marked as in use.");
+            return;
+        }
+
+        var snapshot = corePool.GetSnapshot();
+        if (snapshot.Count == 0)
+        {
+            await SendReplyAsync("🧮 Core pool is empty (no rents yet).");
+            return;
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("🧮 *Core pools:*");
+        foreach (var (key, (used, total, waiters)) in snapshot.OrderBy(p => p.Key))
+        {
+            sb.AppendLine($"`{EscapeMarkdown(key)}`: {used}/{total} used"
+                          + (waiters > 0 ? $", {waiters} waiting" : ""));
+        }
+        sb.AppendLine();
+        sb.AppendLine($"Default cores per job: *{runtimeSettings.DefaultCores}*");
+        await SendReplyAsync(sb.ToString());
     }
 
     private async Task HandleCoresCommandAsync(string command)

@@ -34,6 +34,15 @@ public sealed class GitHubPollingService(
     /// </summary>
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Start of the window the next poll cycle looks at. Only advanced after a cycle
+    /// completes, so a slow/failed cycle doesn't drop mentions.
+    /// </summary>
+    private DateTimeOffset _windowStart;
+
+    /// <summary>How far back the very first cycle looks (covers restarts/deploys).</summary>
+    private static readonly TimeSpan StartupGrace = TimeSpan.FromMinutes(2);
+
     private record RepoConfig(string Owner, string Name);
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -48,11 +57,14 @@ public sealed class GitHubPollingService(
         logger.LogInformation("GitHub polling started. Repos: [{Repos}], interval: {Interval}s",
             string.Join(", ", repos.Select(r => $"{r.Owner}/{r.Name}")), pollInterval.TotalSeconds);
 
+        _windowStart = _startedAt - StartupGrace;
+
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                var since = DateTimeOffset.UtcNow - pollInterval - TimeSpan.FromSeconds(5); // small overlap
+                var cycleStart = DateTimeOffset.UtcNow;
+                var since = _windowStart - TimeSpan.FromSeconds(5); // small overlap
 
                 foreach (var repo in repos)
                 {
@@ -60,6 +72,10 @@ public sealed class GitHubPollingService(
                     await PollPrReviewCommentsAsync(client, repo, since, ct);
                     await PollIssuesAndPrsAsync(client, repo, since, ct);
                 }
+
+                // Only advance after a full successful cycle, so nothing is skipped
+                // if a cycle throws or takes longer than the poll interval.
+                _windowStart = cycleStart;
             }
             catch (RateLimitExceededException ex)
             {
@@ -101,6 +117,11 @@ public sealed class GitHubPollingService(
             var key = $"{repo.Owner}/{repo.Name}/comment/{comment.Id}";
             if (_processed.ContainsKey(key)) continue;
 
+            // The API filters on updated_at, but a mention must only trigger a run when the
+            // comment is *created*. Editing a comment — or hiding/minimizing it in the UI —
+            // bumps updated_at and would otherwise re-run the benchmark whenever the
+            // in-memory _processed cache is empty (i.e. after a restart/redeploy).
+            if (comment.CreatedAt < since) continue;
 
             // Ignore comments left by the bot itself to avoid self-triggering loops
             if (IsBotUser(comment.User.Login)) continue;
@@ -163,6 +184,9 @@ public sealed class GitHubPollingService(
 
             var key = $"{repo.Owner}/{repo.Name}/review-comment/{comment.Id}";
             if (_processed.ContainsKey(key)) continue;
+
+            // Only newly created comments trigger a run — see PollIssueCommentsAsync.
+            if (comment.CreatedAt < since) continue;
 
             // Ignore comments left by the bot itself to avoid self-triggering loops
             if (IsBotUser(comment.User.Login)) continue;

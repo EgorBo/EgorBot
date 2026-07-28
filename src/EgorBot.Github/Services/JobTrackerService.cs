@@ -23,6 +23,7 @@ public sealed class JobTrackerService(
     ILogger<JobTrackerService> logger) : IDisposable
 {
     private readonly ConcurrentDictionary<Guid, TrackedJob> _activeJobs = new();
+    private readonly Lock _timerLock = new();
     private Timer? _pollTimer;
 
     /// <summary>
@@ -181,11 +182,37 @@ public sealed class JobTrackerService(
 
     private void EnsurePollingStarted()
     {
-        if (_pollTimer != null) return;
-        _pollTimer = new Timer(PollCallback, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+        lock (_timerLock)
+        {
+            _pollTimer ??= new Timer(_ => PollCallback(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+        }
     }
 
-    private async void PollCallback(object? state)
+    private int _polling;
+
+    private async void PollCallback()
+    {
+        // A timer callback is `async void`: anything escaping it crashes the process.
+        // It can also re-enter while the previous tick is still running (each tick does
+        // several HTTP calls), which would post duplicate result comments.
+        if (Interlocked.Exchange(ref _polling, 1) == 1)
+            return;
+
+        try
+        {
+            await PollOnceAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Unhandled error in job tracker poll");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _polling, 0);
+        }
+    }
+
+    private async Task PollOnceAsync()
     {
         foreach (var (groupId, tracked) in _activeJobs)
         {
@@ -217,9 +244,14 @@ public sealed class JobTrackerService(
         // Stop polling if no more active jobs
         if (_activeJobs.IsEmpty)
         {
-            _pollTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-            _pollTimer?.Dispose();
-            _pollTimer = null;
+            lock (_timerLock)
+            {
+                if (_activeJobs.IsEmpty)
+                {
+                    _pollTimer?.Dispose();
+                    _pollTimer = null;
+                }
+            }
         }
     }
 
