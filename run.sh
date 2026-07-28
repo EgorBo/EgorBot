@@ -40,9 +40,6 @@ setup_caddy() {
 
     sudo tee /etc/caddy/Caddyfile >/dev/null <<EOF
 ${EGORBOT_DOMAIN} {
-    handle /mcp* {
-        reverse_proxy localhost:${GITHUB_PORT}
-    }
     reverse_proxy localhost:${SERVER_PORT}
 }
 EOF
