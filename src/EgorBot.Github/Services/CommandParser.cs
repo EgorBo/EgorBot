@@ -28,7 +28,7 @@ public static class CommandParser
     public static bool ContainsMention(string? body)
     {
         if (string.IsNullOrWhiteSpace(body)) return false;
-        return Regex.IsMatch(body, $@"(?m)^\s*{Regex.Escape(BotMention)}", RegexOptions.IgnoreCase);
+        return Regex.IsMatch(body, $@"(?m)^[ \t]*{Regex.Escape(BotMention)}\b", RegexOptions.IgnoreCase);
     }
 
     /// <summary>
@@ -38,32 +38,36 @@ public static class CommandParser
     {
         if (!ContainsMention(body)) return null;
 
-        // Find the @EgorBot line (must be at start of a line)
-        var match = Regex.Match(body, $@"(?m)^\s*{Regex.Escape(BotMention)}(.*)", RegexOptions.IgnoreCase);
+        // Find the @EgorBot line (must be at start of a line).
+        // NOTE: use [ \t]* rather than \s* — \s matches newlines, which would make
+        // match.Index point at a preceding blank line instead of at the mention.
+        var match = Regex.Match(body, $@"(?m)^[ \t]*{Regex.Escape(BotMention)}\b(.*)", RegexOptions.IgnoreCase);
         if (!match.Success) return null;
 
-        // Get everything after the mention
-        var afterMention = body[match.Index..];
+        // The command is the remainder of the mention line only — anything the user
+        // wrote on the following lines is prose, not BenchmarkDotNet arguments.
+        var commandLine = match.Groups[1].Value.Trim();
 
-        // Extract code snippet if present
-        string? benchmarkCode = null;
-        var codeBlockMatch = Regex.Match(afterMention, @"```(?:cs|csharp|c#|c)?\s*\r?\n(.*?)```", RegexOptions.Singleline);
-        string commandLine;
-        if (codeBlockMatch.Success)
-        {
-            benchmarkCode = codeBlockMatch.Groups[1].Value.TrimEnd();
-            // Command line is everything between @EgorBot and the first ```
-            var firstBacktick = afterMention.IndexOf("```", StringComparison.Ordinal);
-            commandLine = afterMention[BotMention.Length..firstBacktick].Trim();
-        }
-        else
-        {
-            // No code block — the rest of the first line is the command
-            var firstLineEnd = match.Groups[1].Value;
-            commandLine = firstLineEnd.Trim();
-        }
+        // Extract the benchmark snippet from the first fenced code block after the mention.
+        var afterMention = body[(match.Index + match.Length)..];
+        string? benchmarkCode = ExtractCodeBlock(afterMention);
 
         return ParseCommandLine(commandLine, benchmarkCode, contextPrNumber, mergeCommitSha);
+    }
+
+    /// <summary>
+    /// Return the contents of the first fenced code block, preferring a C#-tagged one
+    /// (```cs / ```csharp / ```C#) and falling back to any fenced block.
+    /// </summary>
+    private static string? ExtractCodeBlock(string text)
+    {
+        var csharp = Regex.Match(text, @"```(?:cs|csharp|c\#)[ \t]*\r?\n(.*?)```",
+            RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        if (csharp.Success)
+            return csharp.Groups[1].Value.TrimEnd();
+
+        var any = Regex.Match(text, @"```[^\r\n`]*\r?\n(.*?)```", RegexOptions.Singleline);
+        return any.Success ? any.Groups[1].Value.TrimEnd() : null;
     }
 
     private static BotCommand ParseCommandLine(string commandLine, string? benchmarkCode, int? contextPrNumber, string? mergeCommitSha = null)
@@ -172,6 +176,7 @@ public static class CommandParser
 
                 case "nonativepgo":
                     // it's currently enabled by default as is.
+                    consumed[i] = true;
                     break;
 
                 default:

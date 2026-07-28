@@ -30,7 +30,7 @@ var app = builder.Build();
 app.MapGet("/health", () => Results.Ok("healthy"));
 
 // ── MCP endpoint (Streamable HTTP at /mcp) ──────────────────────────────────
-app.MapMcp();
+app.MapMcp("/mcp");
 
 // GET /status — show active tracked jobs
 app.MapGet("/status", (JobTrackerService tracker) =>

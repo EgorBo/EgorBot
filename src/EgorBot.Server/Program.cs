@@ -134,6 +134,21 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
     // CommitsAndPrs can be empty — the agent will run benchmarks with the default SDK runtime
     var commitsAndPrs = request.CommitsAndPrs ?? "";
 
+    // These end up interpolated into the VM bootstrap command line
+    // (CloudInitBuilder → --gh_commits_and_prs "..."), so anything that could break
+    // out of the quoting must be rejected here rather than executed on the VM.
+    foreach (var commitRef in commitsAndPrs.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!SafeCommitRef().IsMatch(commitRef))
+        {
+            log.LogWarning("Validation failed: unsafe commit ref '{Ref}'", commitRef);
+            return Results.BadRequest(new
+            {
+                error = $"Invalid commit/PR reference: '{commitRef}'. Allowed characters: letters, digits, '_', '-', '.', '/', '~', '^'."
+            });
+        }
+    }
+
     var groupId = Guid.NewGuid();
     var jobs = new List<object>();
     log.LogInformation("Creating job group {GroupId}", groupId);
@@ -305,8 +320,10 @@ api.MapGet("/jobs/{id:guid}/artifacts/{**path}", async (Guid id, string path) =>
     if (string.IsNullOrEmpty(path))
         return Results.BadRequest(new { error = "Artifact path required." });
 
-    // Prevent directory traversal
-    var artifactsBase = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "artifacts", id.ToString()));
+    // Prevent directory traversal (compare including the separator, so a sibling
+    // directory sharing the id as a prefix can't be reached either)
+    var artifactsBase = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "data", "artifacts", id.ToString()))
+                        + Path.DirectorySeparatorChar;
     var fullPath = Path.GetFullPath(Path.Combine(artifactsBase, path.Replace('/', Path.DirectorySeparatorChar)));
 
     if (!fullPath.StartsWith(artifactsBase, StringComparison.OrdinalIgnoreCase))
@@ -361,13 +378,23 @@ api.MapGet("/jobs/{id:guid}/logs", async (Guid id, int? tail, AppDbContext db) =
 // GET /api/jobs/{id}/logs/stream — SSE endpoint for live log streaming
 api.MapGet("/jobs/{id:guid}/logs/stream", async (Guid id, long? after, AppDbContext db, HttpContext ctx, CancellationToken ct) =>
 {
+    // A missing job would otherwise fall back to default(JobStatus) == Pending and keep
+    // this loop (and its DB connection) alive forever.
+    if (!await db.Jobs.AnyAsync(j => j.Id == id, ct))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
     ctx.Response.ContentType = "text/event-stream";
     ctx.Response.Headers.CacheControl = "no-cache";
     ctx.Response.Headers.Connection = "keep-alive";
+    ctx.Response.Headers["X-Accel-Buffering"] = "no";
 
     long lastLogId = after ?? 0;
+    var streamDeadline = DateTime.UtcNow.AddHours(4);
 
-    while (!ct.IsCancellationRequested)
+    while (!ct.IsCancellationRequested && DateTime.UtcNow < streamDeadline)
     {
         var newLogs = await db.JobLogs
             .Where(l => l.JobId == id && l.Id > lastLogId)
@@ -469,50 +496,61 @@ internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
     string? markdown = null;
     string? error = null;
 
-    if (success)
+    try
     {
-        // Look for artifacts zip
-        var artifactsFile = form.Files.GetFile("artifacts");
-        if (artifactsFile is not null)
+        if (success)
         {
-            log.LogInformation("[Job {JobId}] Processing artifacts zip ({Size} bytes)", id, artifactsFile.Length);
-            var job = await db.Jobs.FindAsync(id);
-
-            // Buffer the zip to a MemoryStream so we can read it multiple times
-            using var ms = new MemoryStream();
-            await artifactsFile.OpenReadStream().CopyToAsync(ms);
-
-            // Extract BDN markdown report
-            ms.Position = 0;
-            markdown = resultProcessor.ProcessArtifactsZip(ms, job?.CommitsAndPrs ?? "", id);
-            log.LogInformation("[Job {JobId}] Result markdown length={Len}", id, markdown?.Length ?? 0);
-
-            // Extract and save profiling artifacts locally (if profiling was enabled)
-            if (job?.UseProfiler == true)
+            // Look for artifacts zip
+            var artifactsFile = form.Files.GetFile("artifacts");
+            if (artifactsFile is not null)
             {
+                log.LogInformation("[Job {JobId}] Processing artifacts zip ({Size} bytes)", id, artifactsFile.Length);
+                var job = await db.Jobs.FindAsync(id);
+
+                // Buffer the zip to a MemoryStream so we can read it multiple times
+                using var ms = new MemoryStream();
+                await artifactsFile.OpenReadStream().CopyToAsync(ms);
+
+                // Extract BDN markdown report
                 ms.Position = 0;
-                var perfLinks = await logUploadService.UploadPerfArtifactsAsync(ms, id);
-                if (perfLinks is not null)
+                markdown = resultProcessor.ProcessArtifactsZip(ms, job?.CommitsAndPrs ?? "", id);
+                log.LogInformation("[Job {JobId}] Result markdown length={Len}", id, markdown?.Length ?? 0);
+
+                // Extract and save profiling artifacts locally (if profiling was enabled)
+                if (job?.UseProfiler == true)
                 {
-                    markdown += perfLinks;
-                    log.LogInformation("[Job {JobId}] Appended perf artifact links to markdown", id);
+                    ms.Position = 0;
+                    var perfLinks = await logUploadService.UploadPerfArtifactsAsync(ms, id);
+                    if (perfLinks is not null)
+                    {
+                        markdown += perfLinks;
+                        log.LogInformation("[Job {JobId}] Appended perf artifact links to markdown", id);
+                    }
+                    else
+                    {
+                        log.LogWarning("[Job {JobId}] Profiling was enabled but no perf artifacts found in zip", id);
+                    }
                 }
-                else
-                {
-                    log.LogWarning("[Job {JobId}] Profiling was enabled but no perf artifacts found in zip", id);
-                }
+            }
+            else
+            {
+                markdown = "_No artifacts uploaded._";
+                log.LogWarning("[Job {JobId}] No artifacts file in the upload", id);
             }
         }
         else
         {
-            markdown = "_No artifacts uploaded._";
-            log.LogWarning("[Job {JobId}] No artifacts file in the upload", id);
+            error = form["error"].FirstOrDefault() ?? "Agent reported failure.";
+            log.LogWarning("[Job {JobId}] Agent reported failure: {Error}", id, error);
         }
     }
-    else
+    catch (Exception ex)
     {
-        error = form["error"].FirstOrDefault() ?? "Agent reported failure.";
-        log.LogWarning("[Job {JobId}] Agent reported failure: {Error}", id, error);
+        // Never leave the orchestrator waiting: without a CompleteJob signal the job
+        // would sit "Running" until the (multi-hour) timeout even though it finished.
+        log.LogError(ex, "[Job {JobId}] Failed to process the completion payload", id);
+        success = false;
+        error = $"Failed to process benchmark artifacts: {ex.Message}";
     }
 
     orchestrator.CompleteJob(id, new JobOutcome(success, markdown, error));
@@ -550,10 +588,23 @@ var _scratchLogs = new System.Collections.Concurrent.ConcurrentDictionary<string
 // POST /api/scratch/{name} — append text (request body) to a named log
 app.MapPost("/api/scratch/{name}", async (string name, HttpContext ctx) =>
 {
+    // Bounded on every axis — this endpoint is reachable from the internet and used
+    // to be an unbounded in-memory sink (one POST loop could OOM the server).
+    const int MaxLogs = 32, MaxEntriesPerLog = 500, MaxTextLength = 64 * 1024;
+
     using var reader = new StreamReader(ctx.Request.Body);
-    var text = await reader.ReadToEndAsync();
+    var buffer = new char[MaxTextLength];
+    var read = await reader.ReadBlockAsync(buffer, 0, MaxTextLength);
+    var text = new string(buffer, 0, read);
+
+    if (!_scratchLogs.ContainsKey(name) && _scratchLogs.Count >= MaxLogs)
+        return Results.BadRequest(new { error = "Too many scratch logs." });
+
     var queue = _scratchLogs.GetOrAdd(name, _ => new());
     queue.Enqueue((DateTime.UtcNow, text));
+    while (queue.Count > MaxEntriesPerLog)
+        queue.TryDequeue(out _);
+
     return Results.Ok();
 });
 
@@ -583,4 +634,8 @@ app.MapDelete("/api/scratch/{name}", (string name) =>
 app.Run();
 
 /// <summary>Partial class to enable WebApplicationFactory&lt;Program&gt; in tests.</summary>
-public partial class Program { }
+public partial class Program
+{
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[A-Za-z0-9_./~^-]+$")]
+    private static partial System.Text.RegularExpressions.Regex SafeCommitRef();
+}

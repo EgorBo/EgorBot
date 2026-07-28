@@ -101,6 +101,27 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     }
 
     /// <summary>
+    /// Admin password for provisioned VMs. Configure <c>Azure:AdminPassword</c>; otherwise a
+    /// random one is generated per process — never fall back to a value that is public in git.
+    /// </summary>
+    private string GetAdminPassword()
+    {
+        var configured = config["Azure:AdminPassword"];
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured;
+
+        return _generatedPassword.Value;
+    }
+
+    private readonly Lazy<string> _generatedPassword = new(() =>
+    {
+        // Azure requires upper/lower/digit/special and 12-72 chars.
+        var random = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24))
+            .Replace('+', 'x').Replace('/', 'y').TrimEnd('=');
+        return $"Eb1!{random}";
+    });
+
+    /// <summary>
     /// Build the ARM template parameters for a Linux VM deployment.
     /// </summary>
     private BinaryData BuildLinuxParameters(string jobId, string vmSize, string cloudInitScript, int diskSizeGb, string platform)
@@ -109,7 +130,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
         var offer = DefaultOffer;
         var sku = isArm64 ? DefaultSkuArm64 : DefaultSkuX64;
 
-        var password = config["Azure:AdminPassword"] ?? "EgorBot_Bench_2025!";
+        var password = GetAdminPassword();
 
         return BinaryData.FromObjectAsJson(new
         {
@@ -140,7 +161,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     {
         var isArm64 = TargetCatalog.GetTarget(platform).Arch == VmArch.Arm64;
 
-        var password = config["Azure:AdminPassword"] ?? "EgorBot_Bench_2025!";
+        var password = GetAdminPassword();
 
         // Encode the PowerShell script as base64 for customData
         var scriptBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(cloudInitScript));

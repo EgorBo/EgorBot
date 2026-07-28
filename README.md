@@ -48,7 +48,7 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 
 ### Targets
 
-Targets specify where to run. Format: `{os}_{cloud}_{cpu}`. If `os` is omitted, defaults to `ubuntu24`. If `cloud` is omitted, defaults to `azure` (or `helix` for macOS). If no target is specified at all it defaults to `macos26_helix_arm64` (baremetal Apple Silicon via Helix).
+Targets specify where to run. Format: `{os}_{cloud}_{cpu}`. If `os` is omitted, defaults to `ubuntu24`. If `cloud` is omitted, defaults to `azure` (or `helix` for macOS). If no target is specified at all it defaults to `macos15_helix_arm64` (baremetal Apple Silicon via Helix).
 
 You don't have to spell out the full name — EgorBot resolves shorthands:
 
@@ -93,6 +93,7 @@ Full target list:
 | `ubuntu24_aws_graviton2` | arm64 | AWS | Arm Graviton 2 |
 | `ubuntu24_aws_graviton3` | arm64 | AWS | Arm Graviton 3 |
 | `ubuntu24_aws_graviton4` | arm64 | AWS | Arm Graviton 4 |
+| `ubuntu24_aws_graviton5` | arm64 | AWS | Arm Graviton 5 |
 | `windows_aws_icelake` | x64 | AWS | Intel Ice Lake |
 | `windows_aws_genoa` | x64 | AWS | AMD Genoa |
 | | | | |
@@ -110,7 +111,7 @@ Multiple targets can be specified in a single command.</br>
 
 ### Default behavior
 
-- **No target** → `macos26_helix_arm64`
+- **No target** → `macos15_helix_arm64`
 - **In a PR comment with no `-commits`** → automatically compares `PR_<number>` vs `main`
 - **No code block** → runs benchmarks from [dotnet/performance](https://github.com/dotnet/performance)
 - **Unconsumed tokens** after options/targets are passed as BDN arguments (e.g. `--filter "*MyBench*"`)

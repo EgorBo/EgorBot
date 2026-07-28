@@ -45,14 +45,16 @@ public sealed class JobTrackerService(
 
         // If the mention is in a tracking issue (in the tracking repo), try to infer
         // the source PR context from the issue title (e.g. "Benchmarks for dotnet/runtime#124445 ...")
-        var effectiveCommand = TryInferPrFromTrackingIssue(source, command);
+        var effectiveCommand = await TryInferPrFromTrackingIssueAsync(source, command);
 
         // 1. Submit job to EgorBot.Server
         var response = await botClient.StartJobAsync(effectiveCommand, source.Author, source.HtmlUrl);
         if (response is null)
         {
             logger.LogError("Failed to submit job for {Owner}/{Repo}#{Number}", source.Owner, source.Repo, source.Number);
-            await PostCommentOnTrackingRepoAsync(source, "Failed to submit the benchmark job to EgorBot. Please try again later.");
+            // Report on the source issue/PR too: otherwise the user outside the tracking
+            // repo just sees the 👀 reaction and never hears back.
+            await PostErrorCommentAsync(source, "❌ Failed to submit the benchmark job to EgorBot. Please try again later.");
             return;
         }
 
@@ -96,7 +98,7 @@ public sealed class JobTrackerService(
     /// try to parse a PR number from the issue title.
     /// E.g. "Benchmarks for dotnet/runtime#124445 (for @EgorBo)" → PR_124445
     /// </summary>
-    private BotCommand TryInferPrFromTrackingIssue(MentionSource source, BotCommand command)
+    private async Task<BotCommand> TryInferPrFromTrackingIssueAsync(MentionSource source, BotCommand command)
     {
         if (!IsTrackingRepo(source.Owner, source.Repo))
             return command;
@@ -108,7 +110,7 @@ public sealed class JobTrackerService(
         try
         {
             var ghClient = CreateGitHubClient();
-            var issue = ghClient.Issue.Get(source.Owner, source.Repo, source.Number).GetAwaiter().GetResult();
+            var issue = await ghClient.Issue.Get(source.Owner, source.Repo, source.Number);
             var match = Regex.Match(issue.Title, @"#(\d+)");
             if (match.Success && int.TryParse(match.Groups[1].Value, out var prNumber))
             {
@@ -121,6 +123,7 @@ public sealed class JobTrackerService(
                     BdnArguments = command.BdnArguments,
                     BenchmarkCode = command.BenchmarkCode,
                     UseProfiler = command.UseProfiler,
+                    Attempts = command.Attempts,
                     IsHelp = command.IsHelp,
                 };
             }
@@ -175,6 +178,14 @@ public sealed class JobTrackerService(
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to create tracking issue for group {GroupId}", tracked.GroupId);
+
+            // Without a tracking issue every later result post is dropped, so the user
+            // would never hear back at all. Tell them where the logs are instead.
+            var logsLinks = string.Join("\n", tracked.Jobs.Select(j =>
+                $"- **{j.Platform}**: [live logs]({botClient.GetLogsUrl(j.Id)})"));
+            await PostErrorCommentAsync(tracked.Source,
+                "⚠️ The benchmark job was submitted, but I could not create a tracking issue, " +
+                $"so results won't be posted automatically. Follow the run here:\n\n{logsLinks}");
         }
     }
 
@@ -513,19 +524,21 @@ public sealed class JobTrackerService(
             ```
             ```
 
-            **Targets** (default: `macos26_helix_arm64`):
+            **Targets** (default: `macos15_helix_arm64`):
             `-arm` `-intel` `-amd` `-x64`
-            `-azure_genoa` `-azure_cobalt100` `-azure_cascadelake` `-azure_milano` `-azure_ampere`
+            `-azure_genoa` `-azure_cobalt100` `-azure_cascadelake` `-azure_milano` `-azure_ampere` `-azure_turin` `-azure_emeraldrapids`
             `-aws_graviton5` `-aws_graviton4` `-aws_graviton3` `-aws_sapphirelake` `-aws_icelake` `-aws_genoa` `-aws_turin`
 
             **Options:**
             `-profiler` — enable perf profiler
             `-pr <number>` — target a specific PR
-            `-commits SHA1,SHA2,...` — specify commits to compare
+            `-commits SHA1,SHA2,...` — specify commits to compare (`SHA~1` = its parent)
+            `-attempts <n>` — repeat the run n times
             `-help` — show this help
 
             Targets can be prefixed with OS: `-windows_arm`, `-linux_intel`
-            First unrecognized argument starts BDN arguments (e.g. `--filter "*MyBench*"`).
+            Anything on the `@EgorBot` line that isn't a target or an option is passed to
+            BenchmarkDotNet (e.g. `--filter "*MyBench*"`).
             """;
 
         // Help is safe to post on the source repo since the user explicitly asked for it

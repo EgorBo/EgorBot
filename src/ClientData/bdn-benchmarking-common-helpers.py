@@ -116,7 +116,15 @@ def run(
 
 
 def kill_process_by_name(name: str):
-    """Best-effort kill of processes by name (cross-platform)."""
+    """Best-effort kill of processes by name (cross-platform).
+
+    Refuses to kill 'dotnet' when the agent is talking to a callback on localhost:
+    that is a local development run, where the EgorBot server itself is a dotnet
+    process and killing it would take the whole bot down.
+    """
+    if name == "dotnet" and CFG.callback_url and "localhost" in CFG.callback_url:
+        print("  ⚠  Skipping 'kill dotnet' — local run, this would kill the EgorBot server.")
+        return
     try:
         if TARGET_OS == "windows":
             subprocess.run(f"taskkill /F /IM {name}.exe", shell=True,
@@ -428,7 +436,7 @@ def stop_callback_sender():
 #  Result packaging — single exit point on success *or* failure
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def send_results(*, success: bool, exit_code: int = 0) -> NoReturn:
+def send_results(*, success: bool, exit_code: int = 0, error: str = "") -> NoReturn:
     """
     Package artefacts into a zip and report the outcome.
     Always terminates the process.
@@ -452,7 +460,8 @@ def send_results(*, success: bool, exit_code: int = 0) -> NoReturn:
         complete_url = f"{CFG.callback_url}/jobs/{CFG.job_id}/complete"
         fields = {"success": "true" if success else "false"}
         if not success:
-            fields["error"] = f"Agent failed with exit code {exit_code}"
+            # Surface the real reason — "exit code 1" tells the user nothing.
+            fields["error"] = error or f"Agent failed with exit code {exit_code}"
         files = {}
         if zip_path.exists():
             files["artifacts"] = (zip_path.name, zip_path.read_bytes())

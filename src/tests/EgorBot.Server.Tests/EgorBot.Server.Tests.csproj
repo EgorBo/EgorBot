@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\EgorBot.Server\EgorBot.Server.csproj" />
+    <ProjectReference Include="..\..\EgorBot.Github\EgorBot.Github.csproj" />
   </ItemGroup>
 
 </Project>

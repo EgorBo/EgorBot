@@ -143,7 +143,13 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
                 {
                     try
                     {
-                        var localPath = Path.Combine(artifactsDir, entry.FullName.Replace('/', Path.DirectorySeparatorChar));
+                        var localPath = Path.GetFullPath(Path.Combine(artifactsDir, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
+                        if (!localPath.StartsWith(Path.GetFullPath(artifactsDir) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Zip entry names come from the VM — don't let one escape the job folder.
+                            logger.LogWarning("Skipping perf artifact with suspicious path '{Entry}' for job {JobId}", entry.FullName, jobId);
+                            continue;
+                        }
                         Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
                         File.WriteAllBytes(localPath, entry.Data);
                         savedCount++;

@@ -55,10 +55,14 @@ public sealed class CloudInitBuilder(IConfiguration config)
         // Write benchmark code file if provided
         if (!string.IsNullOrWhiteSpace(job.BenchmarkCode))
         {
+            // The delimiter is quoted, so the body is never expanded — but a line equal to
+            // the delimiter would end the heredoc early and run the rest as shell commands.
+            var benchDelimiter = MakeUniqueDelimiter("EGORBOT_BENCH_EOF", job.BenchmarkCode);
+
             sb.AppendLine("# Write benchmark code");
-            sb.AppendLine($"cat > Benchmark.cs << 'EGORBOT_BENCH_EOF'");
+            sb.AppendLine($"cat > Benchmark.cs << '{benchDelimiter}'");
             sb.AppendLine(job.BenchmarkCode);
-            sb.AppendLine("EGORBOT_BENCH_EOF");
+            sb.AppendLine(benchDelimiter);
             sb.AppendLine();
 
             // benchapp.csproj was already downloaded from the tarball
@@ -69,13 +73,15 @@ public sealed class CloudInitBuilder(IConfiguration config)
         // Write BDN args to .rsp file if provided
         if (!string.IsNullOrWhiteSpace(job.BdnArguments))
         {
+            var rspDelimiter = MakeUniqueDelimiter("EGORBOT_RSP_EOF", job.BdnArguments);
+
             sb.AppendLine("# Write BDN arguments");
-            sb.AppendLine("cat > BDN_ARGS.rsp << 'EGORBOT_RSP_EOF'");
+            sb.AppendLine($"cat > BDN_ARGS.rsp << '{rspDelimiter}'");
             foreach (var arg in SplitBdnArgs(job.BdnArguments))
             {
                 sb.AppendLine(arg);
             }
-            sb.AppendLine("EGORBOT_RSP_EOF");
+            sb.AppendLine(rspDelimiter);
             sb.AppendLine();
         }
 
@@ -200,6 +206,19 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("Write-Host 'Agent process completed.'");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Return a heredoc delimiter that does not occur as a line in <paramref name="content"/>,
+    /// so user-supplied text can never terminate the heredoc early.
+    /// </summary>
+    private static string MakeUniqueDelimiter(string baseName, string content)
+    {
+        var delimiter = baseName;
+        var suffix = 0;
+        while (content.Split('\n').Any(line => line.Trim() == delimiter))
+            delimiter = $"{baseName}_{++suffix}";
+        return delimiter;
     }
 
     private static string BuildAgentArgs(BenchmarkJob job, string callbackUrl, bool hasBenchmarkFile, bool skipDeps = false)

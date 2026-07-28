@@ -411,15 +411,31 @@ public sealed class GitHubPollingService(
     {
         var repos = new List<RepoConfig>();
 
-        // dotnet/runtime
-        repos.Add(new RepoConfig(
-            config["Github:PrimaryRepo:Owner"] ?? "dotnet",
-            config["Github:PrimaryRepo:Name"] ?? "runtime"));
+        // Github:Repos — the list operators actually edit. Falls back to the
+        // PrimaryRepo/TrackingRepo keys (and their defaults) when absent.
+        foreach (var child in config.GetSection("Github:Repos").GetChildren())
+        {
+            var owner = child["Owner"];
+            var name = child["Name"];
+            if (!string.IsNullOrWhiteSpace(owner) && !string.IsNullOrWhiteSpace(name))
+                repos.Add(new RepoConfig(owner, name));
+        }
 
-        // EgorBot/Benchmarks (tracking repo)
-        repos.Add(new RepoConfig(
-            config["Github:TrackingRepo:Owner"] ?? "EgorBot",
-            config["Github:TrackingRepo:Name"] ?? "Benchmarks"));
+        if (repos.Count == 0)
+        {
+            repos.Add(new RepoConfig(
+                config["Github:PrimaryRepo:Owner"] ?? "dotnet",
+                config["Github:PrimaryRepo:Name"] ?? "runtime"));
+        }
+
+        // The tracking repo must always be polled — that's where users reply to the bot.
+        var trackingOwner = config["Github:TrackingRepo:Owner"] ?? "EgorBot";
+        var trackingName = config["Github:TrackingRepo:Name"] ?? "Benchmarks";
+        if (!repos.Any(r => r.Owner.Equals(trackingOwner, StringComparison.OrdinalIgnoreCase)
+                            && r.Name.Equals(trackingName, StringComparison.OrdinalIgnoreCase)))
+        {
+            repos.Add(new RepoConfig(trackingOwner, trackingName));
+        }
 
         return repos;
     }

@@ -54,13 +54,29 @@ def install_platform_deps():
         common.run(f"{sudo}apt install -y git zip ninja-build", check=chk)
 
         # Install perf if enabled and not already available
-        if common.CFG.perf_enabled:
+        if common.CFG.perf_enabled and not _system_perf_works():
             _build_perf_from_source()
     elif shutil.which("tdnf"):
         common.run(f"{sudo}tdnf install -y git zip ninja-build", check=chk)
         common.run(f"{sudo}tdnf update -y", check=chk)
     elif shutil.which("dnf"):
         common.run(f"{sudo}dnf install -y git zip ninja-build", check=chk)
+
+
+def _system_perf_works() -> bool:
+    """True if a working system-wide perf is already installed.
+
+    Distro wrappers (e.g. Ubuntu's linux-tools stub) are on PATH but fail when the
+    matching kernel package is missing, so actually run it instead of trusting PATH.
+    """
+    perf = shutil.which("perf")
+    if not perf:
+        return False
+    try:
+        result = subprocess.run([perf, "--version"], capture_output=True, timeout=60)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -130,8 +146,17 @@ def run_perf_profiling():
     common.run(f"{sudo}sysctl -w kernel.kptr_restrict=0", check=False)
 
     perf = _perf()
-    if not PERF_BIN:
-        common.post_log("[PERF] perf was not built from source, skipping profiling")
+    if not PERF_BIN and not _system_perf_works():
+        # Nothing usable yet (e.g. --skip_deps, a non-apt distro, or the deps marker
+        # already existed) — try building it now rather than silently dropping the
+        # profiling the user explicitly asked for.
+        common.post_log("[PERF] No usable perf found, attempting to build it now...")
+        _build_perf_from_source()
+        perf = _perf()
+
+    if not PERF_BIN and not _system_perf_works():
+        common.post_log("[PERF] ERROR: perf is not available on this machine — "
+                        "profiling was requested but cannot run. No profiling artifacts will be produced.")
         return
 
     common.post_log(f"[PERF] using perf: {perf}")

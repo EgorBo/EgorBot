@@ -23,6 +23,7 @@
         .badge-completed { background: #14532d; color: #4ade80; }
         .badge-failed { background: #7f1d1d; color: #f87171; }
         .badge-timedout { background: #78350f; color: #fbbf24; }
+        .badge-cancelled { background: #374151; color: #9ca3af; }
 
         .section-header { color: #8b949e; font-size: 13px; text-transform: uppercase; font-weight: 600; margin: 16px 0 8px; }
 
@@ -84,19 +85,38 @@
         async function loadJobStatus() {
             try {
                 const res = await fetch(`/api/jobs/${jobId}/status`);
+                if (res.status === 404) {
+                    showFatal('Job not found. It may have been deleted.');
+                    return;
+                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const job = await res.json();
                 renderMeta(job);
 
-                if (job.status === 'Running' || job.status === 'Provisioning') {
+                // Pending jobs are queued (waiting for a free slot / cores) — they must keep
+                // polling, otherwise the page freezes on the state it was opened in.
+                if (job.status === 'Pending') {
+                    loadAllLogs();
+                    setTimeout(loadJobStatus, 5000);
+                } else if (job.status === 'Running' || job.status === 'Provisioning') {
                     await loadTailThenSSE();
                 } else {
                     loadAllLogs();
                     if (job.status === 'Completed') showResultsAvailable();
-                    if (job.status === 'Failed' || job.status === 'TimedOut') showError(job.errorMessage);
+                    if (job.status === 'Failed' || job.status === 'TimedOut' || job.status === 'Cancelled')
+                        showError(job.errorMessage || `Job ${job.status.toLowerCase()}.`);
                 }
             } catch (e) {
                 console.error('Failed to load job:', e);
+                showFatal('Failed to load this job — retrying…');
+                setTimeout(loadJobStatus, 5000);
             }
+        }
+
+        function showFatal(message) {
+            document.getElementById('logoIcon').classList.remove('loading');
+            document.getElementById('metaSection').innerHTML =
+                `<div class="meta-row"><span class="meta-value">${escapeHtml(message)}</span></div>`;
         }
 
         function renderMeta(job) {
@@ -117,15 +137,15 @@
             document.getElementById('metaSection').innerHTML = `
                 <div class="meta-row">
                     <span class="meta-label">ID</span>
-                    <span class="meta-value">${job.id}</span>
+                    <span class="meta-value">${escapeHtml(job.id)}</span>
                 </div>
                 <div class="meta-row">
                     <span class="meta-label">Status</span>
-                    <span class="badge badge-${job.status.toLowerCase()}">${job.status}</span>
+                    <span class="badge badge-${escapeHtml(String(job.status).toLowerCase())}">${escapeHtml(job.status)}</span>
                 </div>
                 <div class="meta-row">
                     <span class="meta-label">Platform</span>
-                    <span class="meta-value">${job.platform}</span>
+                    <span class="meta-value">${escapeHtml(job.platform)}</span>
                 </div>
                 <div class="meta-row">
                     <span class="meta-label">Commits/PRs</span>
@@ -136,8 +156,14 @@
                     <span class="meta-value">${new Date(job.createdAt).toLocaleString()}</span>
                 </div>
                 ${job.completedAt ? `<div class="meta-row"><span class="meta-label">Completed</span><span class="meta-value">${new Date(job.completedAt).toLocaleString()}</span></div>` : ''}
-                ${job.sourceUrl ? `<div class="meta-row"><span class="meta-label">Source</span><span class="meta-value"><a href="${escapeHtml(job.sourceUrl)}" target="_blank">${escapeHtml(job.sourceUrl)}</a></span></div>` : ''}
+                ${isSafeUrl(job.sourceUrl) ? `<div class="meta-row"><span class="meta-label">Source</span><span class="meta-value"><a href="${escapeHtml(job.sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(job.sourceUrl)}</a></span></div>` : ''}
             `;
+        }
+
+        // Only ever link out to http(s) — a stored "javascript:" URL would otherwise
+        // become a clickable script on this page.
+        function isSafeUrl(url) {
+            return typeof url === 'string' && /^https?:\/\//i.test(url);
         }
 
         async function loadTailThenSSE() {
@@ -249,8 +275,9 @@
         }
 
         function escapeHtml(s) {
-            if (!s) return '';
-            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            if (s === null || s === undefined) return '';
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                            .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
         }
 
         // Start with the logo spinning as a loading indicator

@@ -18,6 +18,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -586,15 +587,14 @@ def run_benchmarks(bench_args: List[str], attempt: int = 1, total_attempts: int 
     speedscope_pattern = str(bdn_artifacts_dir / "*.speedscope.json")
 
     if total_attempts > 1:
-        # Rename result files with attempt suffix before copying to ARTIFACTS_DIR,
+        # Rename result files with an attempt *prefix* before copying to ARTIFACTS_DIR,
         # so multiple attempts don't overwrite each other.
-        # e.g. "MyBench-report-github.md" → "MyBench-attempt2-report-github.md"
+        # A suffix would break the server-side matching, which keys off the file
+        # endings ("-report-github.md", ".speedscope.json").
+        # e.g. "MyBench-report-github.md" → "attempt2-MyBench-report-github.md"
         for f in globmod.glob(results_pattern) + globmod.glob(speedscope_pattern):
             p = Path(f)
-            stem = p.stem   # e.g. "MyBench-report-github"
-            suffix = p.suffix  # e.g. ".md"
-            new_name = f"{stem}-attempt{attempt}{suffix}"
-            dest = ARTIFACTS_DIR / new_name
+            dest = ARTIFACTS_DIR / f"attempt{attempt}-{p.name}"
             shutil.copy2(str(p), str(dest))
         # Also clean BDN results dir so next attempt starts fresh
         for f in globmod.glob(results_pattern) + globmod.glob(speedscope_pattern):
@@ -671,14 +671,41 @@ def main(cfg: Optional[Config] = None):
     post_log("[STAGE 6/6] Benchmarks completed ✓")
 
     # Run perf profiling if enabled (Linux only -- delegated to platform module)
-    if cfg.perf_enabled and _platform_mod and hasattr(_platform_mod, "run_perf_profiling"):
-        post_log("[PERF] Starting perf profiling stage...")
-        _platform_mod.run_perf_profiling()
+    if cfg.perf_enabled:
+        if _platform_mod and hasattr(_platform_mod, "run_perf_profiling"):
+            post_log("[PERF] Starting perf profiling stage...")
+            _platform_mod.run_perf_profiling()
+        else:
+            post_log(f"[PERF] Profiling was requested but is not supported on {TARGET_OS} "
+                     f"-- no profiling artifacts will be produced.")
 
     # Finalize: package artifacts, upload results
     post_log("Finalizing -- uploading results...")
     send_results(success=True)
 
 
+def _run_main_guarded():
+    """Entry point wrapper: any unhandled failure must be reported back to the server.
+
+    Without this the job simply stops posting and the user waits for the (multi-hour)
+    server-side timeout with no error message.
+    """
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as ex:  # noqa: BLE001 - last-resort reporting
+        details = traceback.format_exc()
+        try:
+            post_log(f"FATAL: agent failed with an unhandled error:\n{details}")
+        except Exception:
+            print(details)
+        try:
+            send_results(success=False, error=f"{type(ex).__name__}: {ex}")
+        except Exception:
+            print("Failed to report the failure back to EgorBot", file=sys.stderr)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    main()
+    _run_main_guarded()
