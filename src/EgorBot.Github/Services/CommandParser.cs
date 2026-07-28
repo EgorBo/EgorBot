@@ -18,7 +18,7 @@ namespace EgorBot.Github.Services;
 ///
 /// Target names, aliases, and OS prefixes are defined in <see cref="TargetCatalog"/>.
 /// </summary>
-public static class CommandParser
+public static partial class CommandParser
 {
     private const string BotMention = "@EgorBot";
 
@@ -77,6 +77,7 @@ public static class CommandParser
         bool useProfiler = false;
         bool isHelp = false;
         int attempts = 1;
+        string? perfStatEvents = null;
 
         var tokens = Tokenize(commandLine);
 
@@ -97,12 +98,48 @@ public static class CommandParser
                     consumed[i] = true;
                     break;
 
-                case "perf_events":
-
-                    return new BotCommand
+                case "perf_events" or "perfevents" or "events":
+                    consumed[i] = true;
+                    if (i + 1 >= tokens.Count)
                     {
-                        ErrorMessage = "`-perf_events` option is not currently supported (WIP).",
-                    };
+                        return new BotCommand
+                        {
+                            ErrorMessage = "`-perf_events` needs a comma-separated event list, e.g. "
+                                + "`-perf_events l1d_cache,l1d_cache_refill,cycles,instructions`.",
+                        };
+                    }
+
+                    i++;
+                    consumed[i] = true;
+                    perfStatEvents = tokens[i].Trim('"', '\'', '`');
+
+                    // Be forgiving about "cycles, instructions" / "cycles instructions":
+                    // absorb following bare tokens that look like event names.
+                    while (i + 1 < tokens.Count)
+                    {
+                        var next = tokens[i + 1].Trim('"', '\'', '`');
+                        if (next.Length == 0 || next.StartsWith('-')) break;
+                        if (TargetCatalog.TryResolve(next, out _)) break;
+                        if (!ValidPerfEvents().IsMatch(next.Trim(','))) break;
+
+                        i++;
+                        consumed[i] = true;
+                        perfStatEvents = perfStatEvents.TrimEnd(',') + "," + next.Trim(',');
+                    }
+
+                    perfStatEvents = perfStatEvents.Trim(',');
+                    if (!ValidPerfEvents().IsMatch(perfStatEvents))
+                    {
+                        return new BotCommand
+                        {
+                            ErrorMessage = $"`-perf_events` value `{perfStatEvents}` is not a valid event list. "
+                                + "Use comma-separated event names without spaces, e.g. "
+                                + "`-perf_events l1d_cache,l1d_cache_refill,cycles`. The events supported by the "
+                                + "machine are listed in the `perf_events.txt` artifact of any profiled run.",
+                        };
+                    }
+                    useProfiler = true;
+                    break;
 
                 // Help
                 case "help":
@@ -232,10 +269,15 @@ public static class CommandParser
             BdnArguments = string.IsNullOrWhiteSpace(bdnArgs) ? null : bdnArgs,
             BenchmarkCode = benchmarkCode,
             UseProfiler = useProfiler,
+            PerfStatEvents = perfStatEvents,
             Attempts = attempts,
             IsHelp = isHelp,
         };
     }
+
+    /// <summary>Comma-separated perf event names, e.g. "l1d_cache,l1d_cache_refill,cycles".</summary>
+    [GeneratedRegex(@"^[A-Za-z0-9_.:=/-]+(,[A-Za-z0-9_.:=/-]+)*$")]
+    private static partial Regex ValidPerfEvents();
 
     private static List<string> Tokenize(string input)
     {

@@ -274,9 +274,11 @@ public sealed class JobOrchestrator(
 
             // 2b. Acquire cores from the pool (waits if quota is exhausted)
             var coresToRent = runtimeSettings.DefaultCores;
-            logger.LogInformation("[{JobId}] Requesting {Cores} cores from pool for {Platform}...",
-                jobId, coresToRent, job.Platform);
-            await AddLogAsync(db, jobId, $"Waiting for {coresToRent} cores from pool...");
+            var poolState = corePool.GetPoolState(job.Platform);
+            logger.LogInformation("[{JobId}] Requesting {Cores} cores from pool for {Platform} (used {Used}/{Total}, {Waiters} waiting)...",
+                jobId, coresToRent, job.Platform, poolState.Used, poolState.Total, poolState.Waiters);
+            await AddLogAsync(db, jobId,
+                $"Waiting for {coresToRent} cores from pool ({poolState.Used}/{poolState.Total} in use, {poolState.Waiters} job(s) already queued)...");
             await corePool.RentAsync(job.Platform, coresToRent, jobToken);
             rentedCores = coresToRent;
             Interlocked.Increment(ref _activeRents);

@@ -246,6 +246,11 @@ public sealed class CloudInitBuilder(IConfiguration config)
             parts.Add("--perf_enabled 1");
         }
 
+        if (!string.IsNullOrWhiteSpace(job.PerfStatEvents))
+        {
+            parts.Add($"--perf_stat_events \"{job.PerfStatEvents}\"");
+        }
+
         if (job.Attempts > 1)
         {
             parts.Add($"--attempts {job.Attempts}");

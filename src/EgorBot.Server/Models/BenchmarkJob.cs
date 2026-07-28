@@ -33,6 +33,13 @@ public class BenchmarkJob
     /// <summary>Whether to enable profiling (perf record).</summary>
     public bool UseProfiler { get; set; }
 
+    /// <summary>
+    /// Optional comma-separated event list for `perf stat -e` (e.g. "l1d_cache,l1d_cache_refill").
+    /// Empty = the agent's portable default set.
+    /// </summary>
+    [MaxLength(512)]
+    public string? PerfStatEvents { get; set; }
+
     /// <summary>Number of times to run all benchmarks (default 1).</summary>
     public int Attempts { get; set; } = 1;
 

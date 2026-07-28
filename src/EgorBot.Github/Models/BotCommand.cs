@@ -20,6 +20,12 @@ public sealed class BotCommand
     /// <summary>Enable perf profiler.</summary>
     public bool UseProfiler { get; init; }
 
+    /// <summary>
+    /// Optional comma-separated event list for `perf stat -e`
+    /// (e.g. "l1d_cache,l1d_cache_refill,cycles"). Implies <see cref="UseProfiler"/>.
+    /// </summary>
+    public string? PerfStatEvents { get; init; }
+
     /// <summary>Number of times to run all benchmarks (default 1).</summary>
     public int Attempts { get; init; } = 1;
 

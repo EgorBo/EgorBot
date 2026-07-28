@@ -154,6 +154,7 @@ public sealed class JobTrackerService(
                 BdnArguments = command.BdnArguments,
                 BenchmarkCode = command.BenchmarkCode,
                 UseProfiler = command.UseProfiler,
+                PerfStatEvents = command.PerfStatEvents,
                 Attempts = command.Attempts,
                 IsHelp = command.IsHelp,
             };
@@ -561,6 +562,9 @@ public sealed class JobTrackerService(
 
             **Options:**
             `-profiler` — enable perf profiler
+            `-perf_events a,b,c` — custom `perf stat` events (implies `-profiler`),
+            e.g. `-perf_events l1d_cache,l1d_cache_refill,l2d_cache_refill,cycles,instructions`.
+            The events a machine supports are listed in the `perf_events.txt` artifact.
             `-pr <number>` — target a specific PR
             `-commits SHA1,SHA2,...` — specify commits to compare (`SHA~1` = its parent)
             `-attempts <n>` — repeat the run n times

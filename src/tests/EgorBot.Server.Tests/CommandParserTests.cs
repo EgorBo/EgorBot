@@ -89,4 +89,62 @@ public class CommandParserTests
         Assert.False(CommandParser.ContainsMention("thanks @EgorBotter for the help"));
         Assert.Null(CommandParser.Parse("ping @EgorBot please"));
     }
+
+    [Fact]
+    public void PerfEvents_AreParsedAndImplyTheProfiler()
+    {
+        var cmd = CommandParser.Parse("@EgorBot -arm -perf_events l1d_cache,l1d_cache_refill,cycles,instructions");
+
+        Assert.NotNull(cmd);
+        Assert.Equal("l1d_cache,l1d_cache_refill,cycles,instructions", cmd!.PerfStatEvents);
+        Assert.True(cmd.UseProfiler);
+        Assert.Null(cmd.BdnArguments);
+    }
+
+    [Theory]
+    [InlineData("@EgorBot -perf_events")]
+    [InlineData("@EgorBot -perf_events l1d_cache;rm -rf /")]
+    [InlineData("@EgorBot -perf_events $(id)")]
+    public void PerfEvents_InvalidValue_IsReportedToTheUser(string body)
+    {
+        var cmd = CommandParser.Parse(body);
+
+        Assert.NotNull(cmd);
+        Assert.NotNull(cmd!.ErrorMessage);
+        Assert.Contains("perf_events", cmd.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("@EgorBot -perf_events cycles, instructions")]
+    [InlineData("@EgorBot -perf_events cycles instructions")]
+    [InlineData("@EgorBot -perf_events cycles,instructions")]
+    public void PerfEvents_ToleratesSpacesInTheList(string body)
+    {
+        var cmd = CommandParser.Parse(body);
+
+        Assert.NotNull(cmd);
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Equal("cycles,instructions", cmd.PerfStatEvents);
+        Assert.Null(cmd.BdnArguments);
+    }
+
+    [Fact]
+    public void PerfEvents_StopsAtTargetsAndBdnArgs()
+    {
+        var cmd = CommandParser.Parse("@EgorBot -perf_events cycles -arm --filter *Foo*");
+
+        Assert.NotNull(cmd);
+        Assert.Equal("cycles", cmd!.PerfStatEvents);
+        Assert.Contains(cmd.Targets, t => t.Contains("arm", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("--filter *Foo*", cmd.BdnArguments);
+    }
+
+    [Fact]
+    public void PerfEvents_QuotedValue_IsAccepted()
+    {
+        var cmd = CommandParser.Parse("@EgorBot -amd -perf_events \"cycles,instructions\"");
+
+        Assert.NotNull(cmd);
+        Assert.Equal("cycles,instructions", cmd!.PerfStatEvents);
+    }
 }

@@ -98,6 +98,7 @@ class Config:
     perf_enabled: bool
     perf_record_args: str
     perf_record_freq: str
+    perf_stat_events: str
     callback_url: str
     job_id: str
     skip_deps: bool
@@ -145,6 +146,9 @@ class Config:
                         help="Extra args for perf record")
         p.add_argument("--perf_record_freq", default="4999",
                         help="perf record -F frequency (default: 4999)")
+        p.add_argument("--perf_stat_events", default="",
+                        help="Comma-separated events for 'perf stat -e' (default: a generic set). "
+                             "See the perf_events.txt artifact for what the machine supports.")
         p.add_argument("--callback_url", default="",
                         help="Base URL of EgorBot service for posting logs/results (e.g. http://host:5000/api/internal)")
         p.add_argument("--job_id", default="",
@@ -169,6 +173,7 @@ class Config:
             perf_enabled=bool(args.perf_enabled),
             perf_record_args=args.perf_record_args,
             perf_record_freq=args.perf_record_freq,
+            perf_stat_events=args.perf_stat_events,
             callback_url=args.callback_url,
             job_id=args.job_id,
             skip_deps=bool(args.skip_deps),

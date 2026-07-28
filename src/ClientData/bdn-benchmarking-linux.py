@@ -21,6 +21,10 @@ common = None  # type: ignore
 # Absolute path to the perf binary (resolved during install_platform_deps)
 PERF_BIN: str = ""
 
+# Portable default event set for 'perf stat' (avoids topdown/PMU errors on VMs).
+DEFAULT_STAT_EVENTS = ("task-clock,cycles,instructions,branches,branch-misses,"
+                       "cache-misses,cache-references,context-switches,cpu-migrations,page-faults")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  setup_platform (optional — Linux needs HOME set)
@@ -340,10 +344,16 @@ def run_perf_profiling():
                        check=False)
             time.sleep(2)
 
-            # Perf stat — use explicit portable events to avoid "topdown" PMU errors on VMs/AMD
+            # Perf stat — default to explicit portable events to avoid "topdown" PMU
+            # errors on VMs/AMD; -perf_events lets the user pick machine-specific ones
+            # (see the perf_events.txt artifact for the full supported list).
             stats_file = bench_dir / f"{label}.stats"
-            stat_events = "task-clock,cycles,instructions,branches,branch-misses,cache-misses,cache-references,context-switches,cpu-migrations,page-faults"
-            common.run(f"{perf} stat -e {stat_events} -o {stats_file} -p {pid} sleep 6", check=False)
+            stat_events = common.CFG.perf_stat_events or DEFAULT_STAT_EVENTS
+            stat_result = common.run(f"{perf} stat -e {stat_events} -o {stats_file} -p {pid} sleep 6", check=False)
+            if stat_result.returncode != 0:
+                common.post_log(f"[PERF]   WARNING: 'perf stat -e {stat_events}' failed "
+                                f"(exit {stat_result.returncode}) — verify the event names against "
+                                f"the perf_events.txt artifact for this machine.")
 
             # Kill the benchmark process
             common.post_log("[PERF]   Killing benchmark process...")

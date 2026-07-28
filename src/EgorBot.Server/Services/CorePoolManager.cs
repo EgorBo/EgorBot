@@ -64,12 +64,52 @@ public sealed class CorePoolManager : IDisposable
         var key = GetPoolKey(target);
         if (!_pools.TryGetValue(key, out var entry))
         {
-            entry = new PoolEntry { TotalCores = target.TotalCores };
+            var total = ResolvePoolCapacity(key, target);
+            entry = new PoolEntry { TotalCores = total };
             _pools[key] = entry;
             _logger.LogInformation("CorePool: created pool '{Key}' with {Total} total cores",
-                key, target.TotalCores);
+                key, total);
         }
         return entry;
+    }
+
+    /// <summary>
+    /// Capacity of a pool shared by several targets (same instance family).
+    /// Targets sharing a family must agree; when they don't, the smallest value wins so we
+    /// never exceed the real cloud quota — and which target happened to run first no longer
+    /// decides the pool size.
+    /// </summary>
+    private int ResolvePoolCapacity(string key, TargetInfo target)
+    {
+        var siblings = TargetCatalog.GetAllTargetNames()
+            .Select(TargetCatalog.GetTarget)
+            .Where(t => GetPoolKey(t).Equals(key, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (siblings.Count == 0)
+            return target.TotalCores;
+
+        var min = siblings.Min(t => t.TotalCores);
+        var max = siblings.Max(t => t.TotalCores);
+        if (min != max)
+        {
+            _logger.LogWarning(
+                "CorePool: targets sharing pool '{Key}' declare different TotalCores ({Values}) — using {Min}. " +
+                "Fix TargetCatalog so they agree.",
+                key, string.Join(", ", siblings.Select(t => $"{t.Name}={t.TotalCores}")), min);
+        }
+        return min;
+    }
+
+    /// <summary>Current usage of the pool backing <paramref name="platform"/>, for diagnostics.</summary>
+    public (int Used, int Total, int Waiters) GetPoolState(string platform)
+    {
+        var target = TargetCatalog.GetTarget(platform);
+        lock (_lock)
+        {
+            var pool = GetOrCreatePool(target);
+            return (pool.UsedCores, pool.TotalCores, pool.Waiters.Count);
+        }
     }
 
     /// <summary>

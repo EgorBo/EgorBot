@@ -30,6 +30,9 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
         [JsonPropertyName("useProfiler")]
         public bool UseProfiler { get; init; }
 
+        [JsonPropertyName("perfStatEvents")]
+        public string? PerfStatEvents { get; init; }
+
         [JsonPropertyName("attempts")]
         public int Attempts { get; init; } = 1;
 
@@ -92,6 +95,7 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
             BdnArguments = command.BdnArguments,
             BenchmarkCode = command.BenchmarkCode,
             UseProfiler = command.UseProfiler,
+            PerfStatEvents = command.PerfStatEvents,
             Attempts = command.Attempts,
             RequestedBy = requestedBy,
             SourceUrl = sourceUrl,

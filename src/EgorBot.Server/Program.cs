@@ -52,7 +52,43 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var dbLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Database");
     await db.Database.EnsureCreatedAsync();
+
+    // EnsureCreated() never alters an existing database, so columns added to the model
+    // after the file was created have to be patched in by hand — otherwise every query
+    // fails with "SQLite Error 1: 'no such column'".
+    (string Table, string Column, string Type)[] addedColumns =
+    [
+        ("Jobs", "PerfStatEvents", "TEXT NULL"),
+    ];
+
+    var connection = db.Database.GetDbConnection();
+    await connection.OpenAsync();
+    foreach (var (table, column, type) in addedColumns)
+    {
+        var exists = false;
+        await using (var check = connection.CreateCommand())
+        {
+            check.CommandText = $"PRAGMA table_info({table});";
+            await using var reader = await check.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+
+        if (exists) continue;
+
+        // Values are compile-time constants from the list above, not user input.
+        var alterSql = "ALTER TABLE " + table + " ADD COLUMN " + column + " " + type + ";";
+        await db.Database.ExecuteSqlRawAsync(alterSql);
+        dbLogger.LogWarning("Added missing column {Table}.{Column} to the existing database", table, column);
+    }
 }
 
 // ── Request logging middleware ───────────────────────────────────────────────
@@ -153,11 +189,24 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
     var jobs = new List<object>();
     log.LogInformation("Creating job group {GroupId}", groupId);
 
+    // Custom perf events end up in a `perf stat -e ...` command line on the VM.
+    var perfStatEvents = string.IsNullOrWhiteSpace(request.PerfStatEvents) ? null : request.PerfStatEvents.Trim();
+    if (perfStatEvents is not null && !SafePerfEvents().IsMatch(perfStatEvents))
+    {
+        log.LogWarning("Validation failed: unsafe perf events '{Events}'", perfStatEvents);
+        return Results.BadRequest(new
+        {
+            error = "Invalid perf event list. Use comma-separated event names, e.g. " +
+                    "'l1d_cache,l1d_cache_refill,cycles'. Allowed characters: letters, digits, '_', '-', '.', '/', ':', '=', ','."
+        });
+    }
+
     foreach (var platform in normalizedPlatforms)
     {
         // On Linux, UseProfiler triggers perf record via the platform agent module.
         // On non-Linux, we use BDN's built-in EventPipeProfiler instead (--profiler EP).
-        var useProfiler = request.UseProfiler;
+        // Asking for perf events only makes sense together with the profiler.
+        var useProfiler = request.UseProfiler || perfStatEvents is not null;
         var bdnArgs = request.BdnArguments;
         if (useProfiler)
         {
@@ -187,6 +236,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             BdnArguments = bdnArgs,
             BenchmarkCode = request.BenchmarkCode,
             UseProfiler = useProfiler,
+            PerfStatEvents = useProfiler ? perfStatEvents : null,
             Attempts = request.Attempts,
             RequestedBy = request.RequestedBy,
             SourceUrl = request.SourceUrl,
@@ -638,4 +688,7 @@ public partial class Program
 {
     [System.Text.RegularExpressions.GeneratedRegex(@"^[A-Za-z0-9_./~^-]+$")]
     private static partial System.Text.RegularExpressions.Regex SafeCommitRef();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[A-Za-z0-9_.:=/,-]+$")]
+    private static partial System.Text.RegularExpressions.Regex SafePerfEvents();
 }

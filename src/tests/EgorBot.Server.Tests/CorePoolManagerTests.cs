@@ -41,6 +41,33 @@ public class CorePoolManagerTests
     }
 
     [Fact]
+    public async Task AzurePool_CapacityIsIndependentOfWhichTargetRunsFirst()
+    {
+        // ubuntu24_azure_cobalt100 (20) and windows_azure_cobalt100 (60) share the
+        // "Standard_D{0}pds_v6" family, so the pool size must not depend on ordering.
+        var linuxFirst = NewPool();
+        await linuxFirst.RentAsync("ubuntu24_azure_cobalt100", 1);
+        var linuxTotal = linuxFirst.GetPoolState("windows_azure_cobalt100").Total;
+
+        var windowsFirst = NewPool();
+        await windowsFirst.RentAsync("windows_azure_cobalt100", 1);
+        var windowsTotal = windowsFirst.GetPoolState("ubuntu24_azure_cobalt100").Total;
+
+        Assert.Equal(linuxTotal, windowsTotal);
+    }
+
+    [Fact]
+    public async Task Rent_AboveAzurePoolCapacity_FailsFast()
+    {
+        // "cores 32" on an Azure D-series target can never be satisfied (20-core pool)
+        var pool = NewPool();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => pool.RentAsync("ubuntu24_azure_cobalt100", 32));
+        Assert.Contains("Lower the default core count", ex.Message);
+    }
+
+    [Fact]
     public async Task CancelledWaiter_DoesNotConsumeCores()
     {
         var pool = NewPool();
