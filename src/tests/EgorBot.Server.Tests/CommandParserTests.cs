@@ -139,6 +139,33 @@ public class CommandParserTests
         Assert.Equal("--filter *Foo*", cmd.BdnArguments);
     }
 
+    [Theory]
+    [InlineData("BenchmarkRunner.Run<ContendedCounters>();")]
+    [InlineData("BenchmarkRunner.Run< Foo >( );")]
+    [InlineData("BenchmarkSwitcher.FromAssembly(typeof(Foo).Assembly).Run();")]
+    public void EntrypointThatDropsArgs_IsRejected(string entrypoint)
+    {
+        var cmd = CommandParser.Parse($"@EgorBot -arm\n```cs\n{entrypoint}\n{Code}\n```");
+
+        Assert.NotNull(cmd);
+        Assert.NotNull(cmd!.ErrorMessage);
+        Assert.Contains("without passing `args`", cmd.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("BenchmarkSwitcher.FromAssembly(typeof(Foo).Assembly).Run(args);")]
+    [InlineData("BenchmarkRunner.Run<Foo>(args: args);")]
+    [InlineData("BenchmarkRunner.Run<Foo>(null, args);")]
+    [InlineData("// BenchmarkRunner.Run<Foo>();")]
+    [InlineData("")]
+    public void EntrypointThatForwardsArgs_IsAccepted(string entrypoint)
+    {
+        var cmd = CommandParser.Parse($"@EgorBot -arm\n```cs\n{entrypoint}\n{Code}\n```");
+
+        Assert.NotNull(cmd);
+        Assert.Null(cmd!.ErrorMessage);
+    }
+
     [Fact]
     public void PerfEvents_QuotedValue_IsAccepted()
     {

@@ -273,8 +273,27 @@ public sealed class JobOrchestrator(
             await AddLogAsync(db, jobId, "Cloud-init script generated.");
 
             // 2b. Acquire cores from the pool (waits if quota is exhausted)
-            var coresToRent = runtimeSettings.DefaultCores;
             var poolState = corePool.GetPoolState(job.Platform);
+            var requestedCores = runtimeSettings.DefaultCores;
+            var coresToRent = CoreCountPolicy.Negotiate(requestedCores, poolState.Total);
+
+            if (coresToRent == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot run on {job.Platform}: {requestedCores} cores were requested but the pool only " +
+                    $"holds {poolState.Total}, which is below the {CoreCountPolicy.MinimumClampedCores}-core minimum. " +
+                    $"Raise the cloud quota or lower the core count.");
+            }
+
+            if (coresToRent != requestedCores)
+            {
+                logger.LogWarning("[{JobId}] Requested {Requested} cores but the pool for {Platform} holds {Total} — using {Cores}",
+                    jobId, requestedCores, job.Platform, poolState.Total, coresToRent);
+                await AddLogAsync(db, jobId,
+                    $"Requested {requestedCores} cores, but this pool holds {poolState.Total} — " +
+                    $"running on {coresToRent} cores (largest power of two that fits).");
+            }
+
             logger.LogInformation("[{JobId}] Requesting {Cores} cores from pool for {Platform} (used {Used}/{Total}, {Waiters} waiting)...",
                 jobId, coresToRent, job.Platform, poolState.Used, poolState.Total, poolState.Waiters);
             await AddLogAsync(db, jobId,

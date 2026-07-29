@@ -52,8 +52,48 @@ public static partial class CommandParser
         var afterMention = body[(match.Index + match.Length)..];
         string? benchmarkCode = ExtractCodeBlock(afterMention);
 
+        var entrypointError = ValidateEntrypoint(benchmarkCode);
+        if (entrypointError is not null)
+            return new BotCommand { ErrorMessage = entrypointError };
+
         return ParseCommandLine(commandLine, benchmarkCode, contextPrNumber, mergeCommitSha);
     }
+
+    /// <summary>
+    /// Reject snippets whose entrypoint swallows the command line.
+    /// EgorBot drives BenchmarkDotNet with arguments (`--list flat` to discover benchmarks,
+    /// `--corerun` for the per-commit runtimes, `--filter`), so an entrypoint like
+    /// <c>BenchmarkRunner.Run&lt;T&gt;();</c> makes discovery run the whole suite instead of
+    /// listing it, and silently drops the runtime comparison.
+    /// </summary>
+    private static string? ValidateEntrypoint(string? benchmarkCode)
+    {
+        if (string.IsNullOrWhiteSpace(benchmarkCode))
+            return null;
+
+        // Ignore commented-out examples.
+        var code = Regex.Replace(benchmarkCode, @"//[^\r\n]*", "");
+
+        var runCalls = RunnerInvocation().Matches(code);
+        if (runCalls.Count == 0)
+            return null; // no entrypoint at all — EgorBot generates one that forwards args
+
+        // Be strict only about the unambiguous case: every call takes no arguments at all.
+        if (runCalls.Any(m => m.Groups["arguments"].Value.Trim().Length > 0))
+            return null;
+
+        return "the benchmark snippet calls `BenchmarkRunner.Run<...>()` without passing `args`, "
+             + "so EgorBot cannot pass the arguments it needs (`--list flat` to discover benchmarks, "
+             + "`--corerun` for each commit/PR). Discovery would run the whole suite and the "
+             + "comparison between runtimes would be silently dropped.\n\n"
+             + "Use:\n```cs\nBenchmarkSwitcher.FromAssembly(typeof(YourBenchmarkClass).Assembly).Run(args);\n```\n"
+             + "or simply delete the entrypoint line — EgorBot adds exactly that line when the snippet has none.";
+    }
+
+    /// <summary>Matches BenchmarkRunner.Run&lt;T&gt;(...) / BenchmarkSwitcher....Run(...) and captures the arguments.</summary>
+    [GeneratedRegex(@"Benchmark(?:Runner|Switcher)\b[^;]*?\.\s*Run\s*(?:<[^>]*>)?\s*\((?<arguments>[^)]*)\)",
+        RegexOptions.Singleline)]
+    private static partial Regex RunnerInvocation();
 
     /// <summary>
     /// Return the contents of the first fenced code block, preferring a C#-tagged one
