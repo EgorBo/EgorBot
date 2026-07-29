@@ -26,8 +26,32 @@ export PATH="${DOTNET_ROOT}:${DOTNET_ROOT}/tools:$PATH"
 export DOTNET_NUGET_SIGNATURE_VERIFICATION=false
 
 # ── Caddy ────────────────────────────────────────────────────────────────────
+# Everything that needs sudo lives in here. It is skipped entirely when the proxy
+# is already configured and running, so ordinary restarts need no privileges —
+# don't run this script under sudo (that resets HOME/SSH_AUTH_SOCK and breaks git
+# over ssh, and leaves egorbot.db and the artifacts owned by root).
 setup_caddy() {
     [ -z "$EGORBOT_DOMAIN" ] && return
+
+    if [ "${EGORBOT_SKIP_CADDY:-0}" = "1" ]; then
+        echo "Skipping Caddy setup (EGORBOT_SKIP_CADDY=1)"
+        return
+    fi
+
+    local desired
+    desired="${EGORBOT_DOMAIN} {
+    reverse_proxy localhost:${SERVER_PORT}
+}"
+
+    if command -v caddy &>/dev/null \
+       && systemctl is-active --quiet caddy 2>/dev/null \
+       && [ -r /etc/caddy/Caddyfile ] \
+       && [ "$(cat /etc/caddy/Caddyfile)" = "$desired" ]; then
+        echo "Caddy already serving ${EGORBOT_DOMAIN} — skipping setup (no sudo needed)"
+        return
+    fi
+
+    echo "Configuring Caddy for ${EGORBOT_DOMAIN} (needs sudo)..."
 
     if ! command -v caddy &>/dev/null; then
         sudo apt-get update -qq
@@ -38,11 +62,7 @@ setup_caddy() {
         sudo apt-get install -y -qq caddy
     fi
 
-    sudo tee /etc/caddy/Caddyfile >/dev/null <<EOF
-${EGORBOT_DOMAIN} {
-    reverse_proxy localhost:${SERVER_PORT}
-}
-EOF
+    printf '%s\n' "$desired" | sudo tee /etc/caddy/Caddyfile >/dev/null
 
     sudo ufw allow 80/tcp 2>/dev/null || true
     sudo ufw allow 443/tcp 2>/dev/null || true
