@@ -37,6 +37,7 @@ builder.Services.AddSingleton<INotificationService, TelegramNotificationService>
 builder.Services.AddHostedService<TelegramCommandService>();
 builder.Services.AddSingleton<JobOrchestrator>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobOrchestrator>());
+builder.Services.AddHostedService<QuotaSyncService>();
 
 var app = builder.Build();
 

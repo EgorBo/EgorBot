@@ -17,7 +17,8 @@ namespace EgorBot.Server.Services.CloudProviders;
 /// passes cloud-init as base64-encoded customData, then discovers the public IP.
 /// Deprovisioning deletes the entire resource group.
 /// </summary>
-public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloudProvider> logger) : ICloudProvider
+public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloudProvider> logger)
+    : ICloudProvider, ICoreQuotaProvider
 {
     private readonly SemaphoreSlim _semaphore = new(3, 3);
 
@@ -47,6 +48,163 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     {
         TokenCredential credential = new DefaultAzureCredential();
         return new ArmClient(credential);
+    }
+
+    // ── Quotas ───────────────────────────────────────────────────────────
+
+    /// <summary>Cached (region → family → quota) so we don't hit ARM on every provision.</summary>
+    private readonly Dictionary<string, (DateTime FetchedAt, List<CoreQuota> Quotas)> _quotaCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _quotaLock = new(1, 1);
+    private static readonly TimeSpan QuotaCacheTtl = TimeSpan.FromMinutes(10);
+    /// <summary>Retry a failing region sooner than a successful one, but not on every call.</summary>
+    private static readonly TimeSpan QuotaFailureTtl = TimeSpan.FromMinutes(5);
+    private ILogger QuotaLogger => logger;
+
+    /// <summary>Regions used by Azure targets in the catalog.</summary>
+    private static IEnumerable<string> AzureRegions() =>
+        TargetCatalog.GetAllTargetNames()
+            .Select(TargetCatalog.GetTarget)
+            .Where(t => t.CloudProvider.Equals("Azure", StringComparison.OrdinalIgnoreCase) && t.Region is not null)
+            .Select(t => t.Region!)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<IReadOnlyList<CoreQuota>> GetQuotasAsync(CancellationToken ct = default)
+    {
+        var all = new List<CoreQuota>();
+        foreach (var region in AzureRegions())
+        {
+            try
+            {
+                all.AddRange(await GetRegionQuotasAsync(region, ct));
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Azure: failed to read quotas for region {Region}", region);
+            }
+        }
+        return all;
+    }
+
+    public async Task<CoreQuota?> GetQuotaForPlatformAsync(string platform, CancellationToken ct = default)
+    {
+        var target = TargetCatalog.GetTarget(platform);
+        if (!target.CloudProvider.Equals("Azure", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var region = ResolveLocation(platform).ToString();
+        var family = ResolveQuotaFamily(target.InstanceName);
+        if (family is null) return null;
+
+        var quotas = await GetRegionQuotasAsync(region, ct);
+        return quotas.FirstOrDefault(q => q.Family.Equals(family, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Map a VM size template ("Standard_D{0}ads_v6") to the ARM usage family name
+    /// ("standardDADSv6Family"), which is what the quota API is keyed on.
+    /// </summary>
+    internal static string? ResolveQuotaFamily(string? vmSizeTemplate)
+    {
+        if (string.IsNullOrEmpty(vmSizeTemplate)) return null;
+
+        // "Standard_D{0}ads_v6" → letters before "_v" (minus the {0}) plus the version
+        var size = vmSizeTemplate.Replace("{0}", "", StringComparison.Ordinal);
+        var match = System.Text.RegularExpressions.Regex.Match(
+            size, @"^Standard_(?<prefix>[A-Za-z]+)_?v(?<version>\d+)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!match.Success) return null;
+
+        return $"standard{match.Groups["prefix"].Value.ToUpperInvariant()}v{match.Groups["version"].Value}Family";
+    }
+
+    private async Task<List<CoreQuota>> GetRegionQuotasAsync(string region, CancellationToken ct)
+    {
+        await _quotaLock.WaitAsync(ct);
+        try
+        {
+            if (_quotaCache.TryGetValue(region, out var cached)
+                && DateTime.UtcNow - cached.FetchedAt < (cached.Quotas.Count == 0 ? QuotaFailureTtl : QuotaCacheTtl))
+            {
+                return cached.Quotas;
+            }
+
+            var quotas = new List<CoreQuota>();
+            try
+            {
+                var armClient = CreateArmClient();
+                var subscription = await armClient.GetDefaultSubscriptionAsync(ct);
+
+                // Disambiguate: Network also has a GetUsagesAsync extension on SubscriptionResource.
+                await foreach (var usage in ComputeExtensions.GetUsagesAsync(subscription, new AzureLocation(region), ct))
+                {
+                    var name = usage.Name?.Value;
+                    if (string.IsNullOrEmpty(name) || !name.EndsWith("Family", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    quotas.Add(new CoreQuota(
+                        Provider: Name,
+                        Region: region,
+                        Family: name,
+                        DisplayName: usage.Name?.LocalizedValue ?? name,
+                        Used: (int)usage.CurrentValue,
+                        Limit: (int)usage.Limit));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // One concise line per region — a credential failure otherwise dumps a
+                // multi-hundred-line DefaultAzureCredential stack trace for every pool.
+                var reason = ex.Message.Split('\n')[0].Trim();
+                QuotaLogger.LogWarning("Azure: cannot read quotas for {Region} ({Type}: {Reason}) — " +
+                                       "falling back to the TargetCatalog core limits",
+                    region, ex.GetType().Name, reason);
+            }
+
+            _quotaCache[region] = (DateTime.UtcNow, quotas);
+            return quotas;
+        }
+        finally
+        {
+            _quotaLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Best-effort pre-flight: fail with a readable message instead of an opaque ARM
+    /// "QuotaExceeded" deployment error minutes later.
+    /// </summary>
+    private async Task EnsureQuotaAsync(string platform, int cores, string jobId, CancellationToken ct)
+    {
+        CoreQuota? quota;
+        try
+        {
+            quota = await GetQuotaForPlatformAsync(platform, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[{JobId}] Azure: quota pre-flight check failed, continuing anyway", jobId);
+            return;
+        }
+
+        if (quota is null) return;
+
+        logger.LogInformation("[{JobId}] Azure quota for {Family} in {Region}: {Used}/{Limit} vCPUs used",
+            jobId, quota.DisplayName, quota.Region, quota.Used, quota.Limit);
+
+        if (cores > quota.Limit)
+        {
+            throw new InvalidOperationException(
+                $"{cores} vCPUs requested but the '{quota.DisplayName}' quota in {quota.Region} is only {quota.Limit}. " +
+                $"Raise the quota in the Azure portal or lower the core count.");
+        }
+
+        if (cores > quota.Available)
+        {
+            throw new InvalidOperationException(
+                $"{cores} vCPUs requested but only {quota.Available} of the '{quota.DisplayName}' quota " +
+                $"in {quota.Region} are free ({quota.Used}/{quota.Limit} in use). " +
+                $"Wait for other VMs of that family to finish, or raise the quota.");
+        }
     }
 
     /// <summary>
@@ -252,8 +410,20 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             var subscription = await armClient.GetDefaultSubscriptionAsync(ct);
 
             var location = ResolveLocation(request.Platform);
-            var coresMax = 16; // safety cap
+
+            // Historically hard-coded to 16, which silently produced a 16-core VM for a job
+            // that had rented (and reported) far more. Configurable, and loud when it clamps.
+            var coresMax = config.GetValue("Azure:MaxCoresPerVm", 64);
             var cores = Math.Min(coresMax, request.Cores);
+            if (cores != request.Cores)
+            {
+                logger.LogWarning(
+                    "[{JobId}] Azure: clamping {Requested} cores to {Cores} (Azure:MaxCoresPerVm)",
+                    request.JobId, request.Cores, cores);
+            }
+
+            await EnsureQuotaAsync(request.Platform, cores, request.JobId, ct);
+
             var vmSize = ResolveVmSize(request.Platform, cores);
             var diskSize = Math.Max(request.DiskSizeGb, 64);
 

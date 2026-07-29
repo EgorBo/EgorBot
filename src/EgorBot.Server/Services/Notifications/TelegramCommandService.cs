@@ -3,6 +3,7 @@ using System.Text.Json;
 using EgorBot.Server.Data;
 using EgorBot.Server.Models;
 using EgorBot.Server.Services.CloudProviders;
+using EgorBot.Shared;
 using Microsoft.EntityFrameworkCore;
 
 namespace EgorBot.Server.Services.Notifications;
@@ -172,6 +173,10 @@ public sealed class TelegramCommandService(
             case "cancel":
                 await HandleCancelAllAsync(ct);
                 break;
+            case "quota":
+            case "quotas":
+                await HandleQuotaCommandAsync(ct);
+                break;
             case "quit":
             case "stop":
             case "shutdown":
@@ -190,6 +195,7 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`cores N` — set default core count (e.g. `cores 16`)");
                 sb.AppendLine("`pool` — show core pool usage (used/total + waiters)");
                 sb.AppendLine("`pool reset` — force-release leaked cores (use when jobs hang on \"Waiting for N cores\")");
+                sb.AppendLine("`quota` — show real cloud vCPU quotas (used/limit per family)");
                 sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
                 sb.AppendLine("`quit` — shut down the service");
                 sb.AppendLine("`help` — show this message");
@@ -387,6 +393,73 @@ public sealed class TelegramCommandService(
             logger.LogError(ex, "Custom command '{Name}' failed", name);
             await SendReplyAsync($"❌ `{EscapeMarkdown(name)}` failed: {EscapeMarkdown(ex.Message)}");
         }
+    }
+
+    private async Task HandleQuotaCommandAsync(CancellationToken ct)
+    {
+        await SendReplyAsync("🔍 Querying cloud quotas...");
+
+        using var scope = scopeFactory.CreateScope();
+        var quotaProviders = scope.ServiceProvider.GetServices<ICloudProvider>().OfType<ICoreQuotaProvider>().ToList();
+        if (quotaProviders.Count == 0)
+        {
+            await SendReplyAsync("No cloud provider reports quotas.");
+            return;
+        }
+
+        // Only show families the bot can actually use.
+        var usedFamilies = TargetCatalog.GetAllTargetNames()
+            .Select(TargetCatalog.GetTarget)
+            .Where(t => t.InstanceName is not null)
+            .Select(t => t.InstanceName!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var sb = new StringBuilder();
+        sb.AppendLine("📊 *Cloud vCPU quotas:*");
+
+        foreach (var provider in quotaProviders)
+        {
+            try
+            {
+                var quotas = await provider.GetQuotasAsync(ct);
+                var relevant = quotas
+                    .Where(q => q.Limit > 0 && (q.Used > 0 || usedFamilies.Any(f => FamilyMatches(f, q.Family))))
+                    .OrderByDescending(q => q.Used)
+                    .ThenBy(q => q.DisplayName)
+                    .Take(25)
+                    .ToList();
+
+                sb.AppendLine();
+                sb.AppendLine($"*{provider.Name}*");
+                if (relevant.Count == 0)
+                {
+                    sb.AppendLine("  (no matching families)");
+                    continue;
+                }
+
+                foreach (var q in relevant)
+                    sb.AppendLine($"  `{EscapeMarkdown(q.DisplayName)}` ({q.Region}): {q.Used}/{q.Limit}");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to read quotas from {Provider}", provider.Name);
+                sb.AppendLine();
+                sb.AppendLine($"*{provider.Name}*: ❌ {EscapeMarkdown(ex.Message)}");
+            }
+        }
+
+        await SendReplyAsync(sb.ToString());
+    }
+
+    /// <summary>Loose match between a VM size template ("Standard_D{0}ads_v6") and a quota family name.</summary>
+    private static bool FamilyMatches(string vmSizeTemplate, string quotaFamily)
+    {
+        var compact = vmSizeTemplate.Replace("{0}", "", StringComparison.Ordinal)
+                                    .Replace("_", "", StringComparison.Ordinal);
+        return quotaFamily.Replace("_", "", StringComparison.Ordinal)
+                          .Contains(compact.Replace("Standard", "", StringComparison.OrdinalIgnoreCase),
+                                    StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task HandlePoolCommandAsync(string command)

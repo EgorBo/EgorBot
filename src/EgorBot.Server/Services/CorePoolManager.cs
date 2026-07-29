@@ -30,7 +30,7 @@ public sealed class CorePoolManager : IDisposable
     /// <summary>Internal state for one pool (one instance family).</summary>
     private sealed class PoolEntry
     {
-        public required int TotalCores { get; init; }
+        public required int TotalCores { get; set; }
         public int UsedCores { get; set; }
         public int AvailableCores => TotalCores - UsedCores;
 
@@ -99,6 +99,28 @@ public sealed class CorePoolManager : IDisposable
                 key, string.Join(", ", siblings.Select(t => $"{t.Name}={t.TotalCores}")), min);
         }
         return min;
+    }
+
+    /// <summary>
+    /// Override a pool's capacity (e.g. from the cloud provider's real quota) and wake
+    /// anyone who now fits. Returns the previous capacity.
+    /// </summary>
+    public int SetCapacity(string platform, int totalCores, string reason)
+    {
+        var target = TargetCatalog.GetTarget(platform);
+        lock (_lock)
+        {
+            var pool = GetOrCreatePool(target);
+            var previous = pool.TotalCores;
+            if (previous == totalCores)
+                return previous;
+
+            pool.TotalCores = totalCores;
+            _logger.LogInformation("CorePool: pool '{Key}' capacity {Old} → {New} ({Reason})",
+                GetPoolKey(target), previous, totalCores, reason);
+            DrainWaiters(pool);
+            return previous;
+        }
     }
 
     /// <summary>Current usage of the pool backing <paramref name="platform"/>, for diagnostics.</summary>
