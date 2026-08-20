@@ -49,6 +49,26 @@ BENCH_URL_PATH = "/about"
 ACCEPT_HEADER = ("Accept: text/plain,text/html;q=0.9,application/xhtml+xml;q=0.9,"
                  "application/xml;q=0.8,*/*;q=0.7")
 
+# perf sampling (profiling run only). The whole app is sampled across every core it
+# uses, so a modest frequency already yields plenty of samples; the low-frequency
+# pass keeps the speedscope profile small enough for the browser.
+# perf sampling (profiling run only). The whole app is sampled across every core it
+# uses, so the frequency is derived from the core count: a fixed one would produce a
+# few MB on an 8-core VM but hundreds of MB on a 96-core one, which makes
+# `perf report`/`perf script` take longer than the benchmark itself.
+PERF_SAMPLE_BUDGET = 60000
+# The speedscope pass gets its own (much smaller) budget: every sample becomes a
+# full collapsed stack line, and ASP.NET stacks are deep, so the file grows into
+# tens of MB long before the sample count looks large.
+PERF_SPEEDSCOPE_BUDGET = 3000
+PERF_FREQ_MIN = 99
+PERF_FREQ_MAX = 999
+PERF_LOW_FREQ_MIN = 19
+PERF_RECORD_SECS = 10
+PERF_LOW_SECS = 5
+PERF_STAT_SECS = 6
+MAX_PROFILED_RUNTIMES = 4
+
 # Environment for the benchmarked app. AutoSetup provisions the tenant on the
 # first request so the run needs no manual setup step.
 ORCHARD_ENV = {
@@ -123,6 +143,10 @@ def _cpu_list(cpus: list) -> str:
     """Format an explicit CPU list for `taskset -c` (never a range: the mask may
     be sparse)."""
     return ",".join(str(c) for c in cpus)
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
 
 
 def _taskset_prefix(cpus: list) -> list:
@@ -254,18 +278,26 @@ def _make_run_dir(label: str, publish_dir: Path, core_root) -> Path:
         return run_dir
 
     replaced = 0
+    symbols = 0
     for src in sorted(Path(core_root).iterdir()):
         if not src.is_file():
             continue
         dst = run_dir / src.name
         if not dst.exists():
+            # Separate debug info (libcoreclr.so.dbg, ...) has no counterpart in the
+            # publish folder, but perf resolves native runtime frames through it via
+            # .gnu_debuglink — without it a profile is a wall of raw addresses.
+            if src.name.endswith(".dbg"):
+                shutil.copy2(src, dst)
+                symbols += 1
             continue
         # The tree is hard-linked: write through would corrupt the pristine publish.
         dst.unlink()
         shutil.copy2(src, dst)
         replaced += 1
 
-    common.post_log(f"[ORCHARD] [{label}] Replaced {replaced} runtime file(s) from Core_Root")
+    common.post_log(f"[ORCHARD] [{label}] Replaced {replaced} runtime file(s) from Core_Root"
+                    f"{f' (+{symbols} debug symbol file(s))' if symbols else ''}")
     if replaced == 0:
         raise RuntimeError(f"No runtime files were replaced from {core_root} — "
                            f"the app would silently run on the SDK runtime")
@@ -285,7 +317,7 @@ def _free_port(port: int):
     common.kill_process_by_name("OrchardCore")
 
 
-def _start_server(run_dir: Path, app_cpus: list, log_path: Path):
+def _start_server(run_dir: Path, app_cpus: list, log_path: Path, extra_env: dict = None):
     """Start the OrchardCore host pinned to *app_cpus*."""
     exe = run_dir / "OrchardCore.Cms.Web"
     if exe.exists():
@@ -297,7 +329,7 @@ def _start_server(run_dir: Path, app_cpus: list, log_path: Path):
     cmd += ["--urls", f"http://{SERVER_HOST}:{SERVER_PORT}"]
     cmd = _taskset_prefix(app_cpus) + cmd
 
-    env = {**os.environ, **ORCHARD_ENV}
+    env = {**os.environ, **ORCHARD_ENV, **(extra_env or {})}
     # A stale SQLite/App_Data from a previous runtime must not leak into this run.
     shutil.rmtree(run_dir / "App_Data", ignore_errors=True)
 
@@ -373,10 +405,8 @@ def _wait_until_ready(proc, url: str, timeout: int = 600) -> bool:
 #  Load generation
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _run_load(bombardier: Path, load_cpus: list, connections: int,
-              duration: int, url: str, out_file):
-    """Run bombardier once and return the parsed `result` object (or None)."""
-    cmd = _taskset_prefix(load_cpus) + [
+def _load_cmd(bombardier: Path, load_cpus: list, connections: int, duration: int, url: str) -> list:
+    return _taskset_prefix(load_cpus) + [
         str(bombardier),
         "-d", f"{duration}s",
         "-c", str(connections),
@@ -390,6 +420,12 @@ def _run_load(bombardier: Path, load_cpus: list, connections: int,
         "--header", "Connection: keep-alive",
         url,
     ]
+
+
+def _run_load(bombardier: Path, load_cpus: list, connections: int,
+              duration: int, url: str, out_file):
+    """Run bombardier once and return the parsed `result` object (or None)."""
+    cmd = _load_cmd(bombardier, load_cpus, connections, duration, url)
     proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
     output = proc.stdout.strip()
 
@@ -408,6 +444,26 @@ def _run_load(bombardier: Path, load_cpus: list, connections: int,
     except Exception as ex:
         common.post_log(f"[ORCHARD] Could not parse bombardier output ({ex}): {output[:500]}")
         return None
+
+
+def _start_load(bombardier: Path, load_cpus: list, connections: int, duration: int, url: str):
+    """Start bombardier in the background — the profiler needs the app under load
+    while it samples it."""
+    return subprocess.Popen(_load_cmd(bombardier, load_cpus, connections, duration, url),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _stop_load(proc):
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def _rps(result) -> float:
@@ -533,6 +589,98 @@ def _write_report(summaries: list, cfg_rows: list, used_core_roots: bool) -> Pat
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Profiling (a separate run — perf's JIT knobs would skew the RPS numbers)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _run_profiling(bombardier: Path, entries: list, run_dirs: dict, app_cpus: list,
+                   load_cpus: list, connections: int, url: str, logs_dir: Path):
+    """Sample each runtime under load and produce hot asm, flamegraphs and counters.
+
+    This runs after the measurement phase and with its own server processes: the
+    JIT knobs perf needs (frame pointers, no W^X, perf maps) change the numbers,
+    so they must not be present while RPS is measured.
+    """
+    platform_mod = common._platform_mod
+    if platform_mod is None or not hasattr(platform_mod, "ensure_perf"):
+        common.post_log("[ORCHARD] Profiling was requested but this platform has no perf support — skipping")
+        return
+
+    perf = platform_mod.ensure_perf()
+    if perf is None:
+        return
+
+    flamegraph_dir = platform_mod.ensure_flamegraph(common.WORK_DIR)
+    perf_out_dir = common.ARTIFACTS_DIR / "perf"
+    common.ensure_dirs(perf_out_dir)
+    platform_mod.dump_perf_events(perf, perf_out_dir)
+
+    # Directory name = the group the service renders the artifact table under.
+    bench_dir = perf_out_dir / "OrchardCore.Cms"
+    common.ensure_dirs(bench_dir)
+
+    perf_env = platform_mod.perf_profiling_env()
+    warmup = common.CFG.orchard_warmup
+    # Keep the load running until well past the last perf command.
+    load_secs = (warmup + PERF_RECORD_SECS + PERF_LOW_SECS + PERF_STAT_SECS + 30)
+
+    # Sampling frequency per core, chosen so the whole run stays around
+    # PERF_SAMPLE_BUDGET samples no matter how many cores the VM has.
+    cores = max(1, len(app_cpus))
+    high_freq = _clamp(PERF_SAMPLE_BUDGET // (cores * PERF_RECORD_SECS), PERF_FREQ_MIN, PERF_FREQ_MAX)
+    # The speedscope profile has to stay small enough for a browser to open.
+    low_freq = _clamp(PERF_SPEEDSCOPE_BUDGET // (cores * PERF_LOW_SECS), PERF_LOW_FREQ_MIN, PERF_FREQ_MAX)
+    common.post_log(f"[ORCHARD] Sampling {cores} core(s) at -F {high_freq} for {PERF_RECORD_SECS}s "
+                    f"(speedscope pass: -F {low_freq} for {PERF_LOW_SECS}s)")
+
+    # Each runtime costs a full start + warmup + sampling + symbolization pass, so a
+    # 10-commit range would spend an hour here. Profile the first few (the baseline
+    # and what it is compared against) and say so.
+    profiled = entries[:MAX_PROFILED_RUNTIMES]
+    if len(profiled) < len(entries):
+        common.post_log(f"[ORCHARD] Profiling only the first {len(profiled)} of {len(entries)} "
+                        f"runtimes: {', '.join(l for l, _ in profiled)}")
+
+    for label, _ in profiled:
+        common.post_log(f"[ORCHARD] === Profiling {label} ===")
+        _free_port(SERVER_PORT)
+        log_path = logs_dir / f"{_safe(label)}_perf_server.log"
+        proc = None
+        load = None
+        try:
+            proc = _start_server(run_dirs[label], app_cpus, log_path, extra_env=perf_env)
+            if not _wait_until_ready(proc, url):
+                common.post_log(f"[ORCHARD] [{label}] The app failed to start under the profiler, skipping")
+                continue
+
+            load = _start_load(bombardier, load_cpus, connections, load_secs, url)
+            common.post_log(f"[ORCHARD] [{label}] Warming up for {warmup}s before sampling...")
+            time.sleep(warmup)
+
+            if proc.poll() is not None or load.poll() is not None:
+                common.post_log(f"[ORCHARD] [{label}] App or load generator died before sampling, skipping")
+                continue
+
+            platform_mod.record_perf_data(
+                perf, proc.pid, bench_dir, label,
+                high_freq=high_freq, high_secs=PERF_RECORD_SECS,
+                low_freq=low_freq, low_secs=PERF_LOW_SECS,
+                stat_secs=PERF_STAT_SECS)
+        finally:
+            _stop_load(load)
+            # perf inject needs the *complete* jitdump file, so the app has to be
+            # gone before the recorded data is symbolized.
+            _stop_server(proc, log_path)
+            time.sleep(3)
+
+        common.post_log(f"[ORCHARD] [{label}] Symbolizing and rendering artifacts...")
+        # A whole web app spreads its time much thinner than a microbenchmark, so a
+        # 2% cut-off would leave the annotated assembly nearly empty.
+        platform_mod.postprocess_perf_data(perf, bench_dir, label, flamegraph_dir, percent_limit=1)
+
+    common.post_log("[ORCHARD] Profiling completed ✓")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Pipeline
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -647,3 +795,12 @@ def run_orchard_benchmarks():
 
     if not any(s["count"] for s in summaries):
         raise RuntimeError("The OrchardCore benchmark produced no measurements at all")
+
+    # Profiling is best-effort: it must never cost the user the results above.
+    if cfg.perf_enabled:
+        try:
+            _run_profiling(bombardier, entries, run_dirs, app_cpus, load_cpus,
+                           connections, url, logs_dir)
+        except Exception as ex:
+            common.post_log(f"[ORCHARD] Profiling failed ({type(ex).__name__}: {ex}) — "
+                            f"the benchmark results are unaffected")

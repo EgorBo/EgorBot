@@ -232,16 +232,21 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
 
     foreach (var platform in normalizedPlatforms)
     {
-        // The OrchardCore benchmark is a fixed workload: no snippet, no BDN arguments,
-        // and perf profiling is not wired up for it.
+        // The OrchardCore benchmark is a fixed workload: no snippet, no BDN arguments.
+        // Profiling runs as a separate pass on the VM (the JIT knobs perf needs would
+        // otherwise skew the measured RPS), and the target is always Linux, so the
+        // BDN EventPipe fallback below never applies.
         if (request.Kind == BenchmarkKind.Orchard)
         {
+            var orchardProfiler = request.UseProfiler || perfStatEvents is not null;
             var orchardJob = new BenchmarkJob
             {
                 GroupId = groupId,
                 Platform = platform,
                 Kind = request.Kind,
                 CommitsAndPrs = commitsAndPrs,
+                UseProfiler = orchardProfiler,
+                PerfStatEvents = orchardProfiler ? perfStatEvents : null,
                 Attempts = request.Attempts,
                 RequestedBy = request.RequestedBy,
                 SourceUrl = request.SourceUrl,

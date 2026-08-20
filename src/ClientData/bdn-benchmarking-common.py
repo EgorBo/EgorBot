@@ -539,10 +539,12 @@ def build_core_roots():
 
         # Install deps via runtime's own script (most deps come from here)
         if TARGET_OS != "windows":
-            # The script calls apt-get internally; prefix with sudo if not root
+            # The script calls apt-get internally; prefix with sudo if not root.
+            # -n so a machine whose sudo asks for a password fails fast instead of
+            # blocking on /dev/tty until the job times out.
             prefix = ""
             if TARGET_OS != "osx" and os.getuid() != 0 and shutil.which("sudo"):
-                prefix = "sudo "
+                prefix = "sudo -n "
             run(f"{prefix}eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
 
         # Make it more resilient to warnings in case if we build old commits

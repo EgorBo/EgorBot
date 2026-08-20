@@ -166,12 +166,20 @@ No code snippet and no BDN arguments are needed (both are rejected). What happen
 |---|---|
 | Targets | **Linux x64 and Linux arm64 only.** `-arm` means `ubuntu24_azure_cobalt100` here (not macOS), the default when no target is given |
 | Commits | required — run it from a PR, or pass `-pr <number>` / `-commits SHA1,SHA2` |
-| `-profiler` | not supported yet |
+| `-profiler` | supported — see below |
+| `-perf_events a,b,c` | supported — custom events for `perf stat` (implies `-profiler`) |
+
+With `-profiler`, an extra pass runs after the measurements: each runtime is started again
+(this time with frame pointers, perf maps and W^X disabled), warmed up, put under load and
+sampled with `perf record` / `perf stat`. It produces the same artifacts as a BDN run —
+annotated hot assembly, flamegraph, function report, counters and a speedscope profile per
+runtime. It is a *separate* run precisely because those JIT knobs would skew the RPS numbers.
 
 Example:
 
 ```
 @EgorBot orchard -amd -commits abc1234,abc1234~1
+@EgorBot orchard -arm -profiler
 ```
 
 

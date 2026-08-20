@@ -331,7 +331,7 @@ public static partial class CommandParser
 
         if (kind == BenchmarkKind.Orchard)
         {
-            var orchardError = ValidateOrchard(targets, bdnTokens, useProfiler);
+            var orchardError = ValidateOrchard(targets, bdnTokens);
             if (orchardError is not null)
                 return new BotCommand { ErrorMessage = orchardError };
 
@@ -361,7 +361,7 @@ public static partial class CommandParser
     /// Reject OrchardCore requests the agent could not honour, instead of silently
     /// running something else (a different machine, or a BDN run with no snippet).
     /// </summary>
-    private static string? ValidateOrchard(List<string> targets, List<string> bdnTokens, bool useProfiler)
+    private static string? ValidateOrchard(List<string> targets, List<string> bdnTokens)
     {
         var unsupported = targets
             .Where(t => !BenchmarkKind.Orchard.SupportsTarget(t))
@@ -372,16 +372,12 @@ public static partial class CommandParser
                  + $"so {string.Join(", ", unsupported.Select(t => $"`{t}`"))} cannot be used.";
         }
 
-        if (useProfiler)
-        {
-            return "the `orchard` benchmark does not support `-profiler` / `-perf_events` yet.";
-        }
-
         if (bdnTokens.Count > 0)
         {
             return $"the `orchard` benchmark takes no BenchmarkDotNet arguments, but got "
                  + $"{string.Join(", ", bdnTokens.Select(t => $"`{t}`"))}. "
-                 + "Supported options: targets (`-arm`, `-amd`, `-intel`, ...), `-pr`, `-commits`.";
+                 + "Supported options: targets (`-arm`, `-amd`, `-intel`, ...), `-pr`, `-commits`, "
+                 + "`-profiler`, `-perf_events a,b,c`.";
         }
 
         return null;

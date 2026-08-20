@@ -273,13 +273,26 @@ public class CommandParserTests
     [Theory]
     [InlineData("@EgorBot orchard -arm -profiler")]
     [InlineData("@EgorBot orchard -arm -perf_events cycles")]
-    public void Orchard_RejectsTheProfiler(string body)
+    public void Orchard_AcceptsTheProfiler(string body)
     {
         var cmd = CommandParser.Parse(body, contextPrNumber: 42);
 
         Assert.NotNull(cmd);
-        Assert.NotNull(cmd!.ErrorMessage);
-        Assert.Contains("profiler", cmd.ErrorMessage);
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Equal(BenchmarkKind.Orchard, cmd.Kind);
+        Assert.True(cmd.UseProfiler);
+        Assert.Null(cmd.BdnArguments);
+    }
+
+    [Fact]
+    public void Orchard_KeepsCustomPerfEvents()
+    {
+        var cmd = CommandParser.Parse("@EgorBot orchard -amd -perf_events l1d_cache,cycles", contextPrNumber: 42);
+
+        Assert.NotNull(cmd);
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Equal("l1d_cache,cycles", cmd.PerfStatEvents);
+        Assert.True(cmd.UseProfiler);
     }
 
     [Fact]

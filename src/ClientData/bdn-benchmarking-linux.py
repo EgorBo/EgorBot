@@ -41,10 +41,15 @@ def setup_platform():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _sudo() -> str:
-    """Return 'sudo' if available and we're not already root, else ''."""
+    """Return 'sudo -n' if available and we're not already root, else ''.
+
+    Non-interactive on purpose: cloud-init runs as root, but on a machine where the
+    agent is a normal user (Helix, a dev box) an interactive sudo prompt reads from
+    /dev/tty and would hang the job until the server-side timeout.
+    """
     if os.getuid() == 0:
         return ""
-    return "sudo " if shutil.which("sudo") else ""
+    return "sudo -n " if shutil.which("sudo") else ""
 
 
 def install_platform_deps():
@@ -134,6 +139,154 @@ def _perf() -> str:
     return PERF_BIN if PERF_BIN else (shutil.which("perf") or "perf")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Reusable perf building blocks (shared by the BDN and OrchardCore pipelines)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def ensure_perf():
+    """Make a working perf available and relax the kernel restrictions it needs.
+
+    Returns the perf binary path, or None when profiling cannot run at all.
+    """
+    # Ubuntu ships /etc/debuginfod/*.urls, so perf queries a debuginfod server for
+    # every unresolved build-id even when DEBUGINFOD_URLS is unset. On a VM that
+    # turns `perf report`/`annotate` into minutes of network waiting for debug info
+    # we don't need (managed frames come from the jitdump). An empty value is the
+    # documented way to switch the client off.
+    os.environ["DEBUGINFOD_URLS"] = ""
+
+    sudo = _sudo()
+    common.run(f"{sudo}sysctl -w kernel.perf_event_paranoid=-1", check=False)
+    common.run(f"{sudo}sysctl -w kernel.kptr_restrict=0", check=False)
+
+    if not PERF_BIN and not _system_perf_works():
+        # Nothing usable yet (e.g. --skip_deps, a non-apt distro, or the deps marker
+        # already existed) — try building it now rather than silently dropping the
+        # profiling the user explicitly asked for.
+        common.post_log("[PERF] No usable perf found, attempting to build it now...")
+        _build_perf_from_source()
+
+    if not PERF_BIN and not _system_perf_works():
+        common.post_log("[PERF] ERROR: perf is not available on this machine — "
+                        "profiling was requested but cannot run. No profiling artifacts will be produced.")
+        return None
+
+    perf = _perf()
+    common.post_log(f"[PERF] using perf: {perf}")
+    return perf
+
+
+def perf_profiling_env() -> dict:
+    """DOTNET_* knobs the JIT needs for symbolized, unwindable perf data."""
+    return {
+        "DOTNET_JitEnableOptionalRelocs": "0",
+        "DOTNET_JitStdOutFile": "",
+        "DOTNET_PerfMapShowOptimizationTiers": "1",
+        "DOTNET_PerfMapStubGranularity": "3",
+        "DOTNET_JitFramed": "1",
+        "DOTNET_PerfMapEnabled": "1",
+        "DOTNET_EnableWriteXorExecute": "0",
+    }
+
+
+def ensure_flamegraph(dest_parent: Path) -> Path:
+    """Clone Brendan Gregg's FlameGraph scripts (once) and return their directory."""
+    flamegraph_dir = dest_parent / "FlameGraph"
+    if not flamegraph_dir.is_dir():
+        common.run(f'git clone --depth 1 https://github.com/brendangregg/FlameGraph "{flamegraph_dir}"',
+                   check=False)
+    return flamegraph_dir
+
+
+def dump_perf_events(perf: str, out_dir: Path):
+    """Dump the events this machine supports, so users can pick ones for -perf_events."""
+    perf_events_file = out_dir / "perf_events.txt"
+    common.post_log(f"[PERF] Dumping supported perf events to {perf_events_file.name}...")
+    common.run(f"{perf} list", check=False, stdout_file=perf_events_file)
+
+
+def record_perf_data(perf: str, pid: int, out_dir: Path, label: str, *,
+                     high_freq: int, high_secs: int = 5,
+                     low_freq: int = 299, low_secs: int = 3,
+                     stat_secs: int = 6, record_args: str = ""):
+    """Sample a *running* process: two `perf record` passes plus `perf stat`.
+
+    The high-frequency pass drives the report/annotation/flamegraph, the
+    low-frequency one keeps the speedscope profile small enough to load.
+    Call `postprocess_perf_data` once the process has exited.
+    """
+    perf_data = out_dir / "perf.data"
+    perf_small = out_dir / "perf_small.data"
+
+    common.post_log(f"[PERF]   Recording high-freq (-F {high_freq}) for {high_secs}s...")
+    common.run(f"{perf} record {record_args} -k 1 -g -F {high_freq} -p {pid} -o {perf_data} sleep {high_secs}",
+               check=False)
+    time.sleep(2)
+
+    common.post_log(f"[PERF]   Recording low-freq (-F {low_freq}) for {low_secs}s...")
+    common.run(f"{perf} record {record_args} -k 1 -g -F {low_freq} -p {pid} -o {perf_small} sleep {low_secs}",
+               check=False)
+    time.sleep(2)
+
+    # Perf stat — default to explicit portable events to avoid "topdown" PMU
+    # errors on VMs/AMD; -perf_events lets the user pick machine-specific ones
+    # (see the perf_events.txt artifact for the full supported list).
+    stats_file = out_dir / f"{label}.stats"
+    stat_events = common.CFG.perf_stat_events or DEFAULT_STAT_EVENTS
+    stat_result = common.run(f"{perf} stat -e {stat_events} -o {stats_file} -p {pid} sleep {stat_secs}", check=False)
+    if stat_result.returncode != 0:
+        common.post_log(f"[PERF]   WARNING: 'perf stat -e {stat_events}' failed "
+                        f"(exit {stat_result.returncode}) — verify the event names against "
+                        f"the perf_events.txt artifact for this machine.")
+
+
+def postprocess_perf_data(perf: str, out_dir: Path, label: str, flamegraph_dir: Path,
+                          percent_limit: int = 2):
+    """Symbolize the recorded data and turn it into the artifacts users consume.
+
+    Must run *after* the profiled process exited: `perf inject --jit` needs the
+    complete jitdump file the runtime wrote for it.
+    """
+    perf_data = out_dir / "perf.data"
+    perf_small = out_dir / "perf_small.data"
+    perfjit = out_dir / "perfjit.data"
+    perfjit_small = out_dir / "perfjit_small.data"
+
+    common.run(f"{perf} inject --input {perf_data} --jit --output {perfjit}", check=False)
+    common.run(f"{perf} inject --input {perf_small} --jit --output {perfjit_small}", check=False)
+
+    # Function report
+    functions_file = out_dir / f"{label}_functions.txt"
+    common.run(f"{perf} report --input {perfjit} --no-children --percent-limit {percent_limit} --stdio",
+               check=False, stdout_file=functions_file)
+
+    # Hot assembly annotation
+    asm_file = out_dir / f"{label}.asm"
+    common.run(f"{perf} annotate --stdio2 -i {perfjit} --percent-limit {percent_limit} -M intel",
+               check=False, stdout_file=asm_file)
+
+    # Flamegraph (interactive SVG)
+    svg_file = out_dir / f"{label}_flamegraph.svg"
+    common.run(f"{perf} script -i {perfjit} | "
+               f"{flamegraph_dir}/stackcollapse-perf.pl | "
+               f"{flamegraph_dir}/flamegraph.pl",
+               check=False, stdout_file=svg_file)
+
+    # Speedscope (collapsed stacks)
+    speedscope_file = out_dir / f"speedscope_{label}_{common.CFG.job_id}.speedscope"
+    common.run(f"{perf} script -i {perfjit_small} | "
+               f"{flamegraph_dir}/stackcollapse-perf.pl",
+               check=False, stdout_file=speedscope_file)
+
+    # Clean up large binary perf data files
+    for f in [perf_data, perf_small, perfjit, perfjit_small]:
+        if f.exists():
+            try:
+                f.unlink()
+            except Exception:
+                pass
+
+
 def _sync_roslyn_into_core_root(core_root: Path, app_dir: Path):
     """Make the benchmark app's Roslyn win over the one shipped in Core_Root.
 
@@ -166,31 +319,13 @@ def run_perf_profiling():
         common.post_log("[PERF] Profiling is not supported for dotnet/performance benchmarks, skipping")
         return
 
-    # Relax perf restrictions
-    sudo = _sudo()
-    common.run(f"{sudo}sysctl -w kernel.perf_event_paranoid=-1", check=False)
-    common.run(f"{sudo}sysctl -w kernel.kptr_restrict=0", check=False)
-
-    perf = _perf()
-    if not PERF_BIN and not _system_perf_works():
-        # Nothing usable yet (e.g. --skip_deps, a non-apt distro, or the deps marker
-        # already existed) — try building it now rather than silently dropping the
-        # profiling the user explicitly asked for.
-        common.post_log("[PERF] No usable perf found, attempting to build it now...")
-        _build_perf_from_source()
-        perf = _perf()
-
-    if not PERF_BIN and not _system_perf_works():
-        common.post_log("[PERF] ERROR: perf is not available on this machine — "
-                        "profiling was requested but cannot run. No profiling artifacts will be produced.")
+    # Relax perf restrictions and make sure a working perf exists
+    perf = ensure_perf()
+    if perf is None:
         return
 
-    common.post_log(f"[PERF] using perf: {perf}")
-
     # Clone FlameGraph repo
-    flamegraph_dir = common.DIR_BENCHAPP / "FlameGraph"
-    if not flamegraph_dir.is_dir():
-        common.run(f'git clone --depth 1 https://github.com/brendangregg/FlameGraph "{flamegraph_dir}"')
+    flamegraph_dir = ensure_flamegraph(common.DIR_BENCHAPP)
 
     # Build/publish the benchmark app for profiling.
     # When we have core_roots (corerun), we do a *framework-dependent* build
@@ -252,9 +387,7 @@ def run_perf_profiling():
 
     # Dump the full list of perf events supported by this machine once, so it
     # is uploaded as an artifact and users can pick events for -perf_events.
-    perf_events_file = perf_out_dir / "perf_events.txt"
-    common.post_log(f"[PERF] Dumping supported perf events to {perf_events_file.name}...")
-    common.run(f"{perf} list", check=False, stdout_file=perf_events_file)
+    dump_perf_events(perf, perf_out_dir)
 
     for label, corerun_path in run_entries:
         for bdnline in benchmarks:
@@ -270,13 +403,7 @@ def run_perf_profiling():
 
             perf_env = {
                 **os.environ,
-                "DOTNET_JitEnableOptionalRelocs": "0",
-                "DOTNET_JitStdOutFile": "",
-                "DOTNET_PerfMapShowOptimizationTiers": "1",
-                "DOTNET_PerfMapStubGranularity": "3",
-                "DOTNET_JitFramed": "1",
-                "DOTNET_PerfMapEnabled": "1",
-                "DOTNET_EnableWriteXorExecute": "0",
+                **perf_profiling_env(),
             }
 
             bdn_artifacts = bench_dir / "bdn_scratch"
@@ -328,32 +455,10 @@ def run_perf_profiling():
                     pass
                 continue
 
-            pid = proc.pid
-            perf_data = bench_dir / "perf.data"
-            perf_small = bench_dir / "perf_small.data"
-
-            # High-frequency perf record
-            common.post_log(f"[PERF]   Recording high-freq (-F {high_freq}) for 5s...")
-            common.run(f"{perf} record {perf_record_args} -k 1 -g -F {high_freq} -p {pid} -o {perf_data} sleep 5",
-                       check=False)
-            time.sleep(2)
-
-            # Low-frequency perf record (for speedscope)
-            common.post_log(f"[PERF]   Recording low-freq (-F {low_freq}) for 3s...")
-            common.run(f"{perf} record {perf_record_args} -k 1 -g -F {low_freq} -p {pid} -o {perf_small} sleep 3",
-                       check=False)
-            time.sleep(2)
-
-            # Perf stat — default to explicit portable events to avoid "topdown" PMU
-            # errors on VMs/AMD; -perf_events lets the user pick machine-specific ones
-            # (see the perf_events.txt artifact for the full supported list).
-            stats_file = bench_dir / f"{label}.stats"
-            stat_events = common.CFG.perf_stat_events or DEFAULT_STAT_EVENTS
-            stat_result = common.run(f"{perf} stat -e {stat_events} -o {stats_file} -p {pid} sleep 6", check=False)
-            if stat_result.returncode != 0:
-                common.post_log(f"[PERF]   WARNING: 'perf stat -e {stat_events}' failed "
-                                f"(exit {stat_result.returncode}) — verify the event names against "
-                                f"the perf_events.txt artifact for this machine.")
+            record_perf_data(perf, proc.pid, bench_dir, label,
+                             high_freq=high_freq, high_secs=5,
+                             low_freq=low_freq, low_secs=3,
+                             stat_secs=6, record_args=perf_record_args)
 
             # Kill the benchmark process
             common.post_log("[PERF]   Killing benchmark process...")
@@ -365,42 +470,7 @@ def run_perf_profiling():
             common.kill_process_by_name(target_process)
             time.sleep(2)
 
-            # Symbolize with perf inject
-            perfjit = bench_dir / "perfjit.data"
-            perfjit_small = bench_dir / "perfjit_small.data"
-            common.run(f"{perf} inject --input {perf_data} --jit --output {perfjit}", check=False)
-            common.run(f"{perf} inject --input {perf_small} --jit --output {perfjit_small}", check=False)
-
-            # Function report
-            functions_file = bench_dir / f"{label}_functions.txt"
-            common.run(f"{perf} report --input {perfjit} --no-children --percent-limit 2 --stdio",
-                       check=False, stdout_file=functions_file)
-
-            # Hot assembly annotation
-            asm_file = bench_dir / f"{label}.asm"
-            common.run(f"{perf} annotate --stdio2 -i {perfjit} --percent-limit 2 -M intel",
-                       check=False, stdout_file=asm_file)
-
-            # Flamegraph (interactive SVG)
-            svg_file = bench_dir / f"{label}_flamegraph.svg"
-            common.run(f"{perf} script -i {perfjit} | "
-                       f"{flamegraph_dir}/stackcollapse-perf.pl | "
-                       f"{flamegraph_dir}/flamegraph.pl",
-                       check=False, stdout_file=svg_file)
-
-            # Speedscope (collapsed stacks)
-            speedscope_file = bench_dir / f"speedscope_{label}_{common.CFG.job_id}.speedscope"
-            common.run(f"{perf} script -i {perfjit_small} | "
-                       f"{flamegraph_dir}/stackcollapse-perf.pl",
-                       check=False, stdout_file=speedscope_file)
-
-            # Clean up large binary perf data files
-            for f in [perf_data, perf_small, perfjit, perfjit_small]:
-                if f.exists():
-                    try:
-                        f.unlink()
-                    except Exception:
-                        pass
+            postprocess_perf_data(perf, bench_dir, label, flamegraph_dir)
 
             # Clean up BDN scratch directory
             if bdn_artifacts.exists():
