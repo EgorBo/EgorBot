@@ -62,6 +62,9 @@ using (var scope = app.Services.CreateScope())
     (string Table, string Column, string Type)[] addedColumns =
     [
         ("Jobs", "PerfStatEvents", "TEXT NULL"),
+        // NOT NULL + default: the column is read back into a non-nullable enum,
+        // so pre-existing rows must not be left as NULL.
+        ("Jobs", "Kind", "TEXT NOT NULL DEFAULT 'Bdn'"),
     ];
 
     var connection = db.Database.GetDbConnection();
@@ -164,12 +167,37 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             });
         }
 
-        var normalized = TargetCatalog.Resolve(raw);
+        // Linux-only kinds read bare CPU shorthands (e.g. "arm") as Linux targets.
+        var normalized = request.Kind == BenchmarkKind.Orchard && TargetCatalog.TryResolveLinux(raw, out var linuxTarget)
+            ? linuxTarget!
+            : TargetCatalog.Resolve(raw);
+
+        if (!request.Kind.SupportsTarget(normalized))
+        {
+            log.LogWarning("Validation failed: {Kind} does not support target '{Target}'", request.Kind, normalized);
+            return Results.BadRequest(new
+            {
+                error = $"The '{request.Kind.ToAgentArg()}' benchmark runs on " +
+                        $"{request.Kind.SupportedTargetsDescription()} — '{normalized}' is not supported."
+            });
+        }
+
         normalizedPlatforms.Add(normalized);
     }
 
     // CommitsAndPrs can be empty — the agent will run benchmarks with the default SDK runtime
     var commitsAndPrs = request.CommitsAndPrs ?? "";
+
+    // Macro-benchmarks always compare runtime builds: without commits there is
+    // nothing to compare, and the run would just measure the installed SDK.
+    if (request.Kind == BenchmarkKind.Orchard && string.IsNullOrWhiteSpace(commitsAndPrs))
+    {
+        log.LogWarning("Validation failed: {Kind} requires commits/PRs", request.Kind);
+        return Results.BadRequest(new
+        {
+            error = $"The '{request.Kind.ToAgentArg()}' benchmark requires at least one commit or PR to build."
+        });
+    }
 
     // These end up interpolated into the VM bootstrap command line
     // (CloudInitBuilder → --gh_commits_and_prs "..."), so anything that could break
@@ -204,6 +232,31 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
 
     foreach (var platform in normalizedPlatforms)
     {
+        // The OrchardCore benchmark is a fixed workload: no snippet, no BDN arguments,
+        // and perf profiling is not wired up for it.
+        if (request.Kind == BenchmarkKind.Orchard)
+        {
+            var orchardJob = new BenchmarkJob
+            {
+                GroupId = groupId,
+                Platform = platform,
+                Kind = request.Kind,
+                CommitsAndPrs = commitsAndPrs,
+                Attempts = request.Attempts,
+                RequestedBy = request.RequestedBy,
+                SourceUrl = request.SourceUrl,
+            };
+
+            db.Jobs.Add(orchardJob);
+            await db.SaveChangesAsync();
+            log.LogInformation("Job {JobId} ({Kind}) saved to DB for platform {Platform}",
+                orchardJob.Id, request.Kind, platform);
+
+            orchestrator.Enqueue(orchardJob.Id);
+            jobs.Add(new { id = orchardJob.Id, platform });
+            continue;
+        }
+
         // On Linux, UseProfiler triggers perf record via the platform agent module.
         // On non-Linux, we use BDN's built-in EventPipeProfiler instead (--profiler EP).
         // Asking for perf events only makes sense together with the profiler.
@@ -233,6 +286,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
         {
             GroupId = groupId,
             Platform = platform,
+            Kind = request.Kind,
             CommitsAndPrs = commitsAndPrs,
             BdnArguments = bdnArgs,
             BenchmarkCode = request.BenchmarkCode,
@@ -315,6 +369,7 @@ api.MapGet("/jobs/{id:guid}/status", async (Guid id, AppDbContext db) =>
         job.Id,
         Status = job.Status.ToString(),
         job.Platform,
+        Kind = job.Kind.ToString(),
         job.CommitsAndPrs,
         job.CreatedAt,
         job.StartedAt,

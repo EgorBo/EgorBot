@@ -1,4 +1,5 @@
 using EgorBot.Github.Services;
+using EgorBot.Shared;
 
 namespace EgorBot.Server.Tests;
 
@@ -173,5 +174,145 @@ public class CommandParserTests
 
         Assert.NotNull(cmd);
         Assert.Equal("cycles,instructions", cmd!.PerfStatEvents);
+    }
+
+    // ── OrchardCore macro-benchmark ──────────────────────────────────────
+
+    [Theory]
+    [InlineData("orchard")]
+    [InlineData("-orchard")]
+    [InlineData("orchardcore")]
+    [InlineData("OrchardCMS")]
+    public void Orchard_IsRecognizedAsABenchmarkKind(string token)
+    {
+        var cmd = CommandParser.Parse($"@EgorBot {token} -arm", contextPrNumber: 42);
+
+        Assert.NotNull(cmd);
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Equal(BenchmarkKind.Orchard, cmd.Kind);
+        Assert.Null(cmd.BdnArguments);
+    }
+
+    [Theory]
+    // "-arm" alone means macOS/Helix, which cannot run OrchardCore at all.
+    [InlineData("orchard -arm", "ubuntu24_azure_cobalt100")]
+    [InlineData("orchard -arm64", "ubuntu24_azure_cobalt100")]
+    [InlineData("-amd orchard", "ubuntu24_azure_turin")]
+    [InlineData("orchard -intel", "ubuntu24_azure_emeraldrapids")]
+    [InlineData("orchard -azure_ampere", "ubuntu24_azure_ampere")]
+    [InlineData("orchard -aws_graviton4", "ubuntu24_aws_graviton4")]
+    [InlineData("orchard", "ubuntu24_azure_cobalt100")]   // default target
+    public void Orchard_ResolvesTargetsToLinux(string commandLine, string expectedTarget)
+    {
+        var cmd = CommandParser.Parse($"@EgorBot {commandLine}", contextPrNumber: 42);
+
+        Assert.NotNull(cmd);
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Equal([expectedTarget], cmd.Targets);
+    }
+
+    [Theory]
+    [InlineData("orchard -osx_arm64")]
+    [InlineData("orchard -windows_x64")]
+    [InlineData("orchard -macos15_helix_arm64")]
+    [InlineData("orchard -ubuntu24_helix_arm32")]
+    public void Orchard_RejectsNonLinuxTargets(string commandLine)
+    {
+        var cmd = CommandParser.Parse($"@EgorBot {commandLine}", contextPrNumber: 42);
+
+        Assert.NotNull(cmd);
+        Assert.NotNull(cmd!.ErrorMessage);
+        Assert.Contains("Linux", cmd.ErrorMessage);
+    }
+
+    [Fact]
+    public void Orchard_InAPullRequest_ComparesMainAndThePr()
+    {
+        var cmd = CommandParser.Parse("@EgorBot orchard -arm", contextPrNumber: 12345);
+
+        Assert.NotNull(cmd);
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Equal("main;PR_12345", cmd.CommitsAndPrs);
+        Assert.Null(CommandParser.ValidateRunnable(cmd));
+    }
+
+    [Fact]
+    public void Orchard_WithoutAnyCommit_IsReportedAsNotRunnable()
+    {
+        var cmd = CommandParser.Parse("@EgorBot orchard -arm");
+
+        Assert.NotNull(cmd);
+        // Parsing succeeds: the PR may still be inferred from a tracking issue.
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Equal("", cmd.CommitsAndPrs);
+
+        var error = CommandParser.ValidateRunnable(cmd);
+        Assert.NotNull(error);
+        Assert.Contains("needs a PR or commits", error);
+    }
+
+    [Fact]
+    public void Bdn_WithoutCommits_StaysRunnable()
+    {
+        var cmd = CommandParser.Parse($"@EgorBot -arm\n```cs\n{Code}\n```");
+
+        Assert.NotNull(cmd);
+        Assert.Null(CommandParser.ValidateRunnable(cmd!));
+    }
+
+    [Fact]
+    public void Orchard_RejectsBdnArguments()
+    {
+        var cmd = CommandParser.Parse("@EgorBot orchard -arm --filter *Foo*", contextPrNumber: 42);
+
+        Assert.NotNull(cmd);
+        Assert.NotNull(cmd!.ErrorMessage);
+        Assert.Contains("no BenchmarkDotNet arguments", cmd.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("@EgorBot orchard -arm -profiler")]
+    [InlineData("@EgorBot orchard -arm -perf_events cycles")]
+    public void Orchard_RejectsTheProfiler(string body)
+    {
+        var cmd = CommandParser.Parse(body, contextPrNumber: 42);
+
+        Assert.NotNull(cmd);
+        Assert.NotNull(cmd!.ErrorMessage);
+        Assert.Contains("profiler", cmd.ErrorMessage);
+    }
+
+    [Fact]
+    public void Orchard_IgnoresASnippetInsteadOfValidatingIt()
+    {
+        // The snippet is meaningless here — and must not trigger BDN entrypoint validation.
+        var body = $"@EgorBot orchard -arm\n```cs\nBenchmarkRunner.Run<Foo>();\n{Code}\n```";
+
+        var cmd = CommandParser.Parse(body, contextPrNumber: 42);
+
+        Assert.NotNull(cmd);
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Null(cmd.BenchmarkCode);
+    }
+
+    [Fact]
+    public void Orchard_TakesCommitsLikeABdnRun()
+    {
+        var cmd = CommandParser.Parse("@EgorBot orchard -amd -commits abc123,abc123~1");
+
+        Assert.NotNull(cmd);
+        Assert.Null(cmd!.ErrorMessage);
+        Assert.Equal("abc123;abc123~1", cmd.CommitsAndPrs);
+        Assert.Equal(["ubuntu24_azure_turin"], cmd.Targets);
+    }
+
+    [Fact]
+    public void WithoutTheOrchardToken_TheKindStaysBdn()
+    {
+        var cmd = CommandParser.Parse($"@EgorBot -arm\n```cs\n{Code}\n```");
+
+        Assert.NotNull(cmd);
+        Assert.Equal(BenchmarkKind.Bdn, cmd!.Kind);
+        Assert.Equal("macos15_helix_arm64", cmd.Targets.Single());
     }
 }

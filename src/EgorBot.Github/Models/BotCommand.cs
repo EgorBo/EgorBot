@@ -1,5 +1,7 @@
 namespace EgorBot.Github.Models;
 
+using EgorBot.Shared;
+
 /// <summary>
 /// Parsed @EgorBot command extracted from a GitHub comment or issue/PR body.
 /// </summary>
@@ -16,6 +18,9 @@ public sealed class BotCommand
 
     /// <summary>Optional C# benchmark snippet from a markdown code block.</summary>
     public string? BenchmarkCode { get; init; }
+
+    /// <summary>What to benchmark: BDN microbenchmarks (default) or a macro-benchmark like OrchardCore.</summary>
+    public BenchmarkKind Kind { get; init; } = BenchmarkKind.Bdn;
 
     /// <summary>Enable perf profiler.</summary>
     public bool UseProfiler { get; init; }

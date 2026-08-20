@@ -263,6 +263,21 @@ def _to_ps_arg(arg: str) -> str:
 #  Dynamic platform module loading
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def load_sibling_module(filename: str, module_name: str):
+    """Load a module that ships next to this script and inject the *common*
+    module into it as ``mod.common``."""
+    mod_path = Path(__file__).parent / filename
+    if not mod_path.exists():
+        post_log(f"WARNING: Module not found: {mod_path}")
+        return None
+
+    spec = importlib.util.spec_from_file_location(module_name, mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.common = _common_ref
+    return mod
+
+
 def load_platform_module(target_os: str):
     """
     Dynamically load the platform-specific module from the same directory.

@@ -230,6 +230,11 @@ public sealed class CloudInitBuilder(IConfiguration config)
             $"--job_id \"{job.Id}\"",
         };
 
+        if (job.Kind != BenchmarkKind.Bdn)
+        {
+            parts.Add($"--benchmark_kind {job.Kind.ToAgentArg()}");
+        }
+
         if (!string.IsNullOrWhiteSpace(job.CommitsAndPrs))
         {
             parts.Add($"--gh_commits_and_prs \"{job.CommitsAndPrs}\"");
@@ -253,7 +258,11 @@ public sealed class CloudInitBuilder(IConfiguration config)
 
         if (job.Attempts > 1)
         {
-            parts.Add($"--attempts {job.Attempts}");
+            // The OrchardCore benchmark repeats by restarting the server process
+            // (each restart is a fresh JIT/GC layout), not by re-running BDN.
+            parts.Add(job.Kind == BenchmarkKind.Orchard
+                ? $"--orchard_processes {job.Attempts}"
+                : $"--attempts {job.Attempts}");
         }
 
         if (!string.IsNullOrWhiteSpace(job.BdnArguments))

@@ -38,6 +38,7 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 
 | Option | Description |
 |---|---|
+| `orchard` | Run the [OrchardCore CMS](https://github.com/OrchardCMS/OrchardCore) throughput benchmark instead of BenchmarkDotNet (see below). |
 | `-commits SHA1,SHA2,...` | Commits to compare (comma or semicolon-separated). Supports `SHA~N` syntax and ranges. Example: `530201,530201~1` (compare 530201 vs previous commit) or `07e1dc...530201` (range of commits) |
 | `-pr <number>` | Target a specific PR (this argument is implied when running in a PR context). |
 | `-profiler` | Enable perf profiler (Linux only, quite fragile, use `[EventPipeProfiler(EventPipeProfile.CpuSampling)]` instead). |
@@ -137,6 +138,40 @@ Compare a specific commit against its previous commit on Cobalt 100:
 Compare a range of commits on Apple Silicon via Helix for a specific dotnet/performance benchmark:
 ```
 @EgorBot -arm -commits abc1234...def5678 --filter "*MyBench*"
+```
+
+## OrchardCore benchmark (`orchard`)
+
+Instead of microbenchmarks, EgorBot can run a full ASP.NET Core app —
+[OrchardCore CMS](https://github.com/OrchardCMS/OrchardCore) (Blog recipe, SQLite) — and report
+requests/sec for each runtime build:
+
+```
+@EgorBot orchard -arm
+```
+
+No code snippet and no BDN arguments are needed (both are rejected). What happens on the machine:
+
+1. OrchardCore is cloned at a pinned commit and published **self-contained** for the target RID.
+2. For every commit/PR, the runtime files in a private copy of that publish are replaced with the
+   ones from its `Core_Root` — so the same app binaries run on each runtime under test.
+3. The app is pinned with `taskset` to all cores but one; [bombardier](https://github.com/codesenberg/bombardier)
+   runs on the remaining core with `8 × app-cores` connections. The affinity is computed from the
+   cores the agent is actually allowed to use, so it adapts to whatever VM size the job gets.
+4. After a warmup, several measured intervals are collected across two server processes. The report
+   contains mean RPS, standard deviation, the coefficient of variation (**noise level**),
+   min/max and latency percentiles.
+
+| | |
+|---|---|
+| Targets | **Linux x64 and Linux arm64 only.** `-arm` means `ubuntu24_azure_cobalt100` here (not macOS), the default when no target is given |
+| Commits | required — run it from a PR, or pass `-pr <number>` / `-commits SHA1,SHA2` |
+| `-profiler` | not supported yet |
+
+Example:
+
+```
+@EgorBot orchard -amd -commits abc1234,abc1234~1
 ```
 
 

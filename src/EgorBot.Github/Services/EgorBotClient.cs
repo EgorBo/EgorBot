@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EgorBot.Github.Models;
+using EgorBot.Shared;
 
 namespace EgorBot.Github.Services;
 
@@ -17,6 +18,9 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
     {
         [JsonPropertyName("platforms")]
         public required List<string> Platforms { get; init; }
+
+        [JsonPropertyName("kind")]
+        public BenchmarkKind Kind { get; init; } = BenchmarkKind.Bdn;
 
         [JsonPropertyName("commitsAndPrs")]
         public required string CommitsAndPrs { get; init; }
@@ -91,6 +95,7 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
         var request = new StartJobRequest
         {
             Platforms = command.Targets,
+            Kind = command.Kind,
             CommitsAndPrs = command.CommitsAndPrs,
             BdnArguments = command.BdnArguments,
             BenchmarkCode = command.BenchmarkCode,
@@ -103,8 +108,8 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
 
         try
         {
-            logger.LogInformation("Submitting job to EgorBot.Server: targets=[{Targets}], commits={Commits}",
-                string.Join(",", command.Targets), command.CommitsAndPrs);
+            logger.LogInformation("Submitting job to EgorBot.Server: kind={Kind}, targets=[{Targets}], commits={Commits}",
+                command.Kind, string.Join(",", command.Targets), command.CommitsAndPrs);
 
             var response = await http.PostAsJsonAsync("/api/jobs", request);
             var body = await response.Content.ReadAsStringAsync();

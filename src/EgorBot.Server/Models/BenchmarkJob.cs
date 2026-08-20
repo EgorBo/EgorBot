@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using EgorBot.Shared;
 
 namespace EgorBot.Server.Models;
 
@@ -20,6 +21,9 @@ public class BenchmarkJob
     /// <summary>Target platform, e.g. "linux_x64", "local_x64".</summary>
     [MaxLength(32)]
     public string Platform { get; set; } = "";
+
+    /// <summary>What the agent runs: BDN microbenchmarks (default) or a macro-benchmark like OrchardCore.</summary>
+    public BenchmarkKind Kind { get; set; } = BenchmarkKind.Bdn;
 
     /// <summary>Semicolon-separated commits/PRs, e.g. "PR_12345;main".</summary>
     public string CommitsAndPrs { get; set; } = "";

@@ -52,11 +52,17 @@ public static partial class CommandParser
         var afterMention = body[(match.Index + match.Length)..];
         string? benchmarkCode = ExtractCodeBlock(afterMention);
 
-        var entrypointError = ValidateEntrypoint(benchmarkCode);
-        if (entrypointError is not null)
-            return new BotCommand { ErrorMessage = entrypointError };
+        var command = ParseCommandLine(commandLine, benchmarkCode, contextPrNumber, mergeCommitSha);
 
-        return ParseCommandLine(commandLine, benchmarkCode, contextPrNumber, mergeCommitSha);
+        // Only the BDN pipeline consumes the snippet; macro-benchmarks ignore it.
+        if (command.Kind == BenchmarkKind.Bdn && command.ErrorMessage is null)
+        {
+            var entrypointError = ValidateEntrypoint(benchmarkCode);
+            if (entrypointError is not null)
+                return new BotCommand { ErrorMessage = entrypointError };
+        }
+
+        return command;
     }
 
     /// <summary>
@@ -112,12 +118,13 @@ public static partial class CommandParser
 
     private static BotCommand ParseCommandLine(string commandLine, string? benchmarkCode, int? contextPrNumber, string? mergeCommitSha = null)
     {
-        var targets = new List<string>();
+        var targetTokens = new List<string>();
         var commits = new List<string>();
         bool useProfiler = false;
         bool isHelp = false;
         int attempts = 1;
         string? perfStatEvents = null;
+        var kind = BenchmarkKind.Bdn;
 
         var tokens = Tokenize(commandLine);
 
@@ -257,15 +264,34 @@ public static partial class CommandParser
                     break;
 
                 default:
-                    // Check if it's a resolvable target
-                    if (TargetCatalog.TryResolve(normalized, out var resolvedTarget))
+                    // Benchmark kind (e.g. "orchard") — a different workload, not a BDN run
+                    if (BenchmarkKinds.TryParseToken(normalized, out var parsedKind))
                     {
                         consumed[i] = true;
-                        targets.Add(resolvedTarget!);
+                        kind = parsedKind;
+                    }
+                    // Check if it's a resolvable target. Resolution itself happens after the
+                    // loop: it depends on the benchmark kind, which may appear later on the line.
+                    else if (TargetCatalog.TryResolve(normalized, out _))
+                    {
+                        consumed[i] = true;
+                        targetTokens.Add(normalized);
                     }
                     // else: not consumed — will be included in BDN args
                     break;
             }
+        }
+
+        // Resolve targets now that the benchmark kind is known.
+        var targets = new List<string>();
+        foreach (var token in targetTokens)
+        {
+            var resolved = kind == BenchmarkKind.Orchard
+                ? (TargetCatalog.TryResolveLinux(token, out var linuxTarget) ? linuxTarget : null)
+                : (TargetCatalog.TryResolve(token, out var anyTarget) ? anyTarget : null);
+
+            if (resolved is not null && !targets.Contains(resolved))
+                targets.Add(resolved);
         }
 
         // Collect unconsumed tokens as BDN args
@@ -280,7 +306,11 @@ public static partial class CommandParser
 
         // Default target if none specified
         if (targets.Count == 0)
-            targets.Add("macos15_helix_arm64");
+        {
+            targets.Add(kind == BenchmarkKind.Orchard
+                ? TargetCatalog.Resolve("linux_arm64")   // ubuntu24_azure_cobalt100
+                : "macos15_helix_arm64");
+        }
 
         // If we're in a PR context and no commits specified:
         //  - Merged PR: use the merge commit SHA and its parent (SHA~1)
@@ -299,6 +329,17 @@ public static partial class CommandParser
             }
         }
 
+        if (kind == BenchmarkKind.Orchard)
+        {
+            var orchardError = ValidateOrchard(targets, bdnTokens, useProfiler);
+            if (orchardError is not null)
+                return new BotCommand { ErrorMessage = orchardError };
+
+            // A fixed macro-benchmark: no snippet, no BDN arguments.
+            benchmarkCode = null;
+            bdnArgs = null;
+        }
+
         // If still no commits, leave empty — the agent will run benchmarks
         // with the default SDK runtime (no core_root build, no --corerun)
 
@@ -308,11 +349,59 @@ public static partial class CommandParser
             CommitsAndPrs = string.Join(";", commits),
             BdnArguments = string.IsNullOrWhiteSpace(bdnArgs) ? null : bdnArgs,
             BenchmarkCode = benchmarkCode,
+            Kind = kind,
             UseProfiler = useProfiler,
             PerfStatEvents = perfStatEvents,
             Attempts = attempts,
             IsHelp = isHelp,
         };
+    }
+
+    /// <summary>
+    /// Reject OrchardCore requests the agent could not honour, instead of silently
+    /// running something else (a different machine, or a BDN run with no snippet).
+    /// </summary>
+    private static string? ValidateOrchard(List<string> targets, List<string> bdnTokens, bool useProfiler)
+    {
+        var unsupported = targets
+            .Where(t => !BenchmarkKind.Orchard.SupportsTarget(t))
+            .ToList();
+        if (unsupported.Count > 0)
+        {
+            return $"the `orchard` benchmark runs on {BenchmarkKind.Orchard.SupportedTargetsDescription()}, "
+                 + $"so {string.Join(", ", unsupported.Select(t => $"`{t}`"))} cannot be used.";
+        }
+
+        if (useProfiler)
+        {
+            return "the `orchard` benchmark does not support `-profiler` / `-perf_events` yet.";
+        }
+
+        if (bdnTokens.Count > 0)
+        {
+            return $"the `orchard` benchmark takes no BenchmarkDotNet arguments, but got "
+                 + $"{string.Join(", ", bdnTokens.Select(t => $"`{t}`"))}. "
+                 + "Supported options: targets (`-arm`, `-amd`, `-intel`, ...), `-pr`, `-commits`.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Final check once the commits are known — a mention inside an EgorBot tracking
+    /// issue only gets its PR after <c>JobTrackerService</c> infers it from the issue
+    /// title, so "no commits" cannot be decided while parsing.
+    /// Returns an error message, or null when the command can run.
+    /// </summary>
+    public static string? ValidateRunnable(BotCommand command)
+    {
+        if (command.Kind == BenchmarkKind.Orchard && string.IsNullOrWhiteSpace(command.CommitsAndPrs))
+        {
+            return "the `orchard` benchmark compares runtime builds, so it needs a PR or commits. "
+                 + "Run it from a PR comment, or pass `-pr <number>` / `-commits SHA1,SHA2`.";
+        }
+
+        return null;
     }
 
     /// <summary>Comma-separated perf event names, e.g. "l1d_cache,l1d_cache_refill,cycles".</summary>

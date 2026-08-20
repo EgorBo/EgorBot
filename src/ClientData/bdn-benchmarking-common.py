@@ -57,6 +57,7 @@ make_exe              = _helpers.make_exe
 make_script           = _helpers.make_script
 dotnet_install_cmd    = _helpers.dotnet_install_cmd
 load_platform_module  = _helpers.load_platform_module
+load_sibling_module   = _helpers.load_sibling_module
 kill_process_by_name  = _helpers.kill_process_by_name
 start_callback_sender = _helpers.start_callback_sender
 stop_callback_sender  = _helpers.stop_callback_sender
@@ -89,6 +90,7 @@ def __getattr__(name):
 class Config:
     work_dir: str
     job_tag: str
+    benchmark_kind: str
     gh_commits_and_prs: List[str]
     bench_code_file: str
     bench_csproj_file: str
@@ -103,6 +105,16 @@ class Config:
     job_id: str
     skip_deps: bool
     attempts: int
+    orchard_warmup: int
+    orchard_rounds: int
+    orchard_round_duration: int
+    orchard_processes: int
+    orchard_connections: int
+
+    @property
+    def is_orchard(self) -> bool:
+        """OrchardCore CMS macro-benchmark instead of the BDN pipeline."""
+        return self.benchmark_kind == "orchard"
 
     @property
     def bench_use_dotnet_performance(self) -> bool:
@@ -122,6 +134,9 @@ class Config:
                         help="Working directory (default: script directory)")
         p.add_argument("--job_tag", default="test",
                         help="Name to distinguish artifacts (default: test)")
+        p.add_argument("--benchmark_kind", choices=["bdn", "orchard"], default="bdn",
+                        help="bdn = BenchmarkDotNet microbenchmarks, "
+                             "orchard = OrchardCore CMS throughput benchmark (Linux only)")
         p.add_argument("--gh_commits_and_prs",
                         default="",
                         help='Semicolon-separated commits/PRs to compare. PRs prefixed with "PR_", '
@@ -158,12 +173,24 @@ class Config:
                         help="1 = skip dependency and .NET SDK installation (default: 0)")
         p.add_argument("--attempts", type=int, default=1,
                         help="Number of times to run all benchmarks (default: 1)")
+        p.add_argument("--orchard_warmup", type=int, default=90,
+                        help="[orchard] Warmup load duration in seconds (default: 90)")
+        p.add_argument("--orchard_rounds", type=int, default=3,
+                        help="[orchard] Measured intervals per server process (default: 3)")
+        p.add_argument("--orchard_round_duration", type=int, default=15,
+                        help="[orchard] Duration of one measured interval in seconds (default: 15)")
+        p.add_argument("--orchard_processes", type=int, default=2,
+                        help="[orchard] Server restarts per runtime — captures process-to-process "
+                             "noise (default: 2)")
+        p.add_argument("--orchard_connections", type=int, default=0,
+                        help="[orchard] Load generator connections (default: 0 = 8 per app core)")
 
         args = p.parse_args(argv)
 
         return Config(
             work_dir=args.work_dir,
             job_tag=args.job_tag,
+            benchmark_kind=args.benchmark_kind,
             gh_commits_and_prs=[s.strip() for s in args.gh_commits_and_prs.split(";") if s.strip()],
             bench_code_file=args.bench_code_file,
             bench_csproj_file=args.bench_csproj_file,
@@ -178,6 +205,11 @@ class Config:
             job_id=args.job_id,
             skip_deps=bool(args.skip_deps),
             attempts=max(1, args.attempts),
+            orchard_warmup=max(1, args.orchard_warmup),
+            orchard_rounds=max(1, args.orchard_rounds),
+            orchard_round_duration=max(1, args.orchard_round_duration),
+            orchard_processes=max(1, args.orchard_processes),
+            orchard_connections=max(0, args.orchard_connections),
         )
 
 
@@ -610,6 +642,36 @@ def run_benchmarks(bench_args: List[str], attempt: int = 1, total_attempts: int 
 
 
 # =============================================================================
+#  Stage 6 (alternative) -- OrchardCore CMS throughput benchmark
+# =============================================================================
+
+def run_orchard(cfg: Config):
+    """Run the OrchardCore macro-benchmark instead of the BDN pipeline.
+
+    Stages 1-3 (environment, dependencies, SDKs) are shared; the benchmark itself
+    lives in ``orchard-benchmarking.py``.
+    """
+    if cfg.gh_commits_and_prs:
+        post_log("[STAGE 4/5] Building core_roots for all commits/PRs...")
+        build_core_roots()
+        post_log("[STAGE 4/5] Core_roots built ✓")
+    else:
+        # Only reachable when the agent is driven manually: the service always
+        # requires commits/PRs for this benchmark kind.
+        post_log("[STAGE 4/5] No commits/PRs specified -- running on the installed SDK runtime")
+
+    post_log("[STAGE 5/5] Running the OrchardCore benchmark...")
+    orchard = load_sibling_module("orchard-benchmarking.py", "orchard_benchmarking")
+    if orchard is None:
+        raise RuntimeError("orchard-benchmarking.py is missing from the agent payload")
+    orchard.run_orchard_benchmarks()
+    post_log("[STAGE 5/5] OrchardCore benchmark completed ✓")
+
+    post_log("Finalizing -- uploading results...")
+    send_results(success=True)
+
+
+# =============================================================================
 #  Entry point
 # =============================================================================
 
@@ -626,24 +688,30 @@ def main(cfg: Optional[Config] = None):
 
     cpu_count = os.cpu_count() or "?"
     post_log(f"[STAGE 1/6] Environment set up. OS={TARGET_OS}, Arch={TARGET_ARCH}, CPUs={cpu_count}, WorkDir={WORK_DIR}")
+    post_log(f"  Kind: {cfg.benchmark_kind}")
     post_log(f"  Commits/PRs: {cfg.gh_commits_and_prs}")
     post_log(f"  BenchCodeFile: {cfg.bench_code_file or '(none)'}")
     post_log(f"  Callback: {cfg.callback_url or '(none)'}, JobId: {cfg.job_id or '(none)'}")
 
-    # Read BDN_ARGS.rsp (from user-provided path, or download a default)
-    if cfg.bdn_args_file:
-        rsp = Path(cfg.bdn_args_file).resolve()
+    bench_args: List[str] = []
+    if cfg.is_orchard:
+        # The OrchardCore benchmark is a fixed workload — no BDN, no arguments.
+        post_log("  BDN args: (not used by the OrchardCore benchmark)")
     else:
-        rsp = WORK_DIR / "BDN_ARGS.rsp"
-        if not rsp.exists():
-            download("https://gist.github.com/EgorBo/1f99f41c39ad790294c164306001fb66/raw", rsp)
-    bench_args = read_lines(rsp)
-    # RSP lines may contain shell-style quotes (e.g. --filter "Foo*").
-    # When passed as list elements to subprocess with shell=False, literal
-    # quotes are NOT stripped, so BDN receives "Foo*" (with quotes) as the
-    # filter value and matches nothing.  Use shlex.split to parse properly.
-    bench_args = shlex.split(" ".join(bench_args), posix=True)
-    post_log(f"  BDN args: {bench_args}")
+        # Read BDN_ARGS.rsp (from user-provided path, or download a default)
+        if cfg.bdn_args_file:
+            rsp = Path(cfg.bdn_args_file).resolve()
+        else:
+            rsp = WORK_DIR / "BDN_ARGS.rsp"
+            if not rsp.exists():
+                download("https://gist.github.com/EgorBo/1f99f41c39ad790294c164306001fb66/raw", rsp)
+        bench_args = read_lines(rsp)
+        # RSP lines may contain shell-style quotes (e.g. --filter "Foo*").
+        # When passed as list elements to subprocess with shell=False, literal
+        # quotes are NOT stripped, so BDN receives "Foo*" (with quotes) as the
+        # filter value and matches nothing.  Use shlex.split to parse properly.
+        bench_args = shlex.split(" ".join(bench_args), posix=True)
+        post_log(f"  BDN args: {bench_args}")
 
     if cfg.skip_deps:
         post_log("[STAGE 2/6] Skipping dependency installation (--skip_deps)")
@@ -656,6 +724,10 @@ def main(cfg: Optional[Config] = None):
         post_log("[STAGE 3/6] Installing .NET SDKs...")
         install_dotnet_sdks()
         post_log("[STAGE 3/6] .NET SDKs installed ✓")
+
+    if cfg.is_orchard:
+        run_orchard(cfg)
+        return
 
     post_log("[STAGE 4/6] Building benchmarks...")
     build_benchmarks(bench_args)

@@ -180,6 +180,31 @@ public static class TargetCatalog
                 $"Cannot resolve target: '{input}'. Valid targets: {string.Join(", ", GetAllTargetNames())}");
 
     /// <summary>
+    /// Try to resolve user input to a canonical target name, preferring a Linux target.
+    /// </summary>
+    /// <remarks>
+    /// Bare CPU shorthands lean towards macOS/Helix (<c>-arm</c> → <c>macos15_helix_arm64</c>),
+    /// which is useless for a Linux-only benchmark. Retry the input as if the user had
+    /// written <c>linux_&lt;input&gt;</c> first, and only fall back to the normal resolution
+    /// (so the caller can report "that target is not supported" instead of silently
+    /// running somewhere else).
+    /// </remarks>
+    public static bool TryResolveLinux(string input, out string? canonicalName)
+    {
+        canonicalName = null;
+        var clean = input.ToLowerInvariant().TrimStart('-').Trim().Replace('-', '_');
+        if (string.IsNullOrEmpty(clean)) return false;
+
+        if (!IsOsToken(clean.Split('_')[0]) && TryResolve("linux_" + clean, out var linuxName))
+        {
+            canonicalName = linuxName;
+            return true;
+        }
+
+        return TryResolve(clean, out canonicalName);
+    }
+
+    /// <summary>
     /// Try to resolve user input to a canonical target name.
     /// </summary>
     public static bool TryResolve(string input, out string? canonicalName)

@@ -147,6 +147,7 @@
                     <span class="meta-label">Platform</span>
                     <span class="meta-value">${escapeHtml(job.platform)}</span>
                 </div>
+                ${job.kind && job.kind !== 'Bdn' ? `<div class="meta-row"><span class="meta-label">Benchmark</span><span class="meta-value">${escapeHtml(job.kind)}</span></div>` : ''}
                 <div class="meta-row">
                     <span class="meta-label">Commits/PRs</span>
                     <span class="meta-value">${escapeHtml(job.commitsAndPrs)}</span>

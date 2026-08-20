@@ -15,6 +15,7 @@ Start one or more benchmark jobs.
 ```json
 {
   "platforms": ["arm", "windows_x64"],
+  "kind": "bdn",
   "commitsAndPrs": "PR_12345;main",
   "bdnArguments": "--filter *MyBenchmark*",
   "benchmarkCode": "using BenchmarkDotNet.Attributes; ...",
@@ -27,10 +28,12 @@ Start one or more benchmark jobs.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `platforms` | `string[]` | **Yes** | Target platforms/aliases. At least one required. Examples: `"arm"`, `"aws_graviton4"`, `"windows_x64"`, `"osx"`. |
+| `kind` | `string` | No | `"bdn"` (default) — BenchmarkDotNet microbenchmarks, or `"orchard"` — OrchardCore CMS throughput. `"orchard"` requires a Linux x64/arm64 platform and a non-empty `commitsAndPrs`, and ignores `bdnArguments`, `benchmarkCode` and `useProfiler`. |
 | `commitsAndPrs` | `string` | **Yes** | Semicolon-separated commits or PRs to compare. PRs prefixed with `PR_`. Can be empty (runs with default SDK). |
 | `bdnArguments` | `string?` | No | Extra BenchmarkDotNet CLI arguments (e.g. `--filter *Span*`). |
 | `benchmarkCode` | `string?` | No | C# benchmark source code. If omitted, uses `dotnet/performance` benchmarks. |
 | `useProfiler` | `bool` | No | Enable perf profiler recording. Default: `false`. |
+| `attempts` | `int` | No | Repeat count. For `"orchard"` it is the number of server processes per runtime. Default: `1`. |
 | `requestedBy` | `string?` | No | Display name of the requester. |
 | `sourceUrl` | `string?` | No | URL of the originating GitHub comment. |
 
@@ -50,7 +53,7 @@ Start one or more benchmark jobs.
 
 | Status | Condition |
 |---|---|
-| `400` | No platforms specified, unknown target, or local target in production. |
+| `400` | No platforms specified, unknown target, local target in production, a target the requested `kind` cannot run on, or `"orchard"` without commits. |
 
 ---
 

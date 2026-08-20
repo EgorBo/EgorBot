@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using EgorBot.Github.Models;
+using EgorBot.Shared;
 using Octokit;
 
 namespace EgorBot.Github.Services;
@@ -46,6 +47,14 @@ public sealed class JobTrackerService(
         // If the mention is in a tracking issue (in the tracking repo), try to infer
         // the source PR context from the issue title (e.g. "Benchmarks for dotnet/runtime#124445 ...")
         var effectiveCommand = await TryInferPrFromTrackingIssueAsync(source, command);
+
+        // Some checks can only run once the commits are known (see above).
+        var runnableError = CommandParser.ValidateRunnable(effectiveCommand);
+        if (runnableError is not null)
+        {
+            await PostErrorCommentAsync(source, $"⚠️ {runnableError}");
+            return;
+        }
 
         // 1. Submit job to EgorBot.Server
         var response = await botClient.StartJobAsync(effectiveCommand, source.Author, source.HtmlUrl);
@@ -153,6 +162,7 @@ public sealed class JobTrackerService(
                 CommitsAndPrs = $"main;PR_{number}",
                 BdnArguments = command.BdnArguments,
                 BenchmarkCode = command.BenchmarkCode,
+                Kind = command.Kind,
                 UseProfiler = command.UseProfiler,
                 PerfStatEvents = command.PerfStatEvents,
                 Attempts = command.Attempts,
@@ -168,6 +178,12 @@ public sealed class JobTrackerService(
     }
 
     // ── Tracking issue lifecycle ────────────────────────────────────────
+
+    /// <summary>Name the workload when it isn't the default BDN run.</summary>
+    private static string KindLine(BotCommand command) =>
+        command.Kind == BenchmarkKind.Orchard
+            ? "**Benchmark:** OrchardCore CMS (requests/sec)\n"
+            : "";
 
     private async Task CreateTrackingIssueAsync(TrackedJob tracked)
     {
@@ -187,7 +203,7 @@ public sealed class JobTrackerService(
             var body = $"""
                 Processing benchmark request from [{sourceType} {sourceRef}]({tracked.Source.HtmlUrl}).
 
-                **Targets:** {string.Join(", ", tracked.Command.Targets)}
+                {KindLine(tracked.Command)}**Targets:** {string.Join(", ", tracked.Command.Targets)}
                 **Commits:** `{tracked.Command.CommitsAndPrs}`
 
                 {logsLinks}
@@ -569,6 +585,11 @@ public sealed class JobTrackerService(
             `-commits SHA1,SHA2,...` — specify commits to compare (`SHA~1` = its parent)
             `-attempts <n>` — repeat the run n times
             `-help` — show this help
+
+            **Other benchmarks:**
+            `orchard` — OrchardCore CMS throughput (requests/sec) instead of BenchmarkDotNet,
+            e.g. `@EgorBot orchard -arm`. Linux x64/arm64 only, needs a PR or `-commits`,
+            and takes no snippet or BDN arguments.
 
             Targets can be prefixed with OS: `-windows_arm`, `-linux_intel`
             Anything on the `@EgorBot` line that isn't a target or an option is passed to
