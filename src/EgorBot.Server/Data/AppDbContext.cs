@@ -18,6 +18,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     public DbSet<BenchmarkJob> Jobs => Set<BenchmarkJob>();
     public DbSet<JobLogEntry> JobLogs => Set<JobLogEntry>();
+    public DbSet<JobAdmission> JobAdmissions => Set<JobAdmission>();
+    public DbSet<UserJobLimit> UserJobLimits => Set<UserJobLimit>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -31,6 +33,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         });
 
         modelBuilder.Entity<JobLogEntry>(e => e.HasIndex(l => new { l.JobId, l.Id }));
+
+        modelBuilder.Entity<JobAdmission>(e =>
+        {
+            e.Property(a => a.UserKey).UseCollation("NOCASE");
+            e.HasIndex(a => new { a.UserKey, a.AdmittedAt });
+            e.HasOne(a => a.Job)
+                .WithOne()
+                .HasForeignKey<JobAdmission>(a => a.JobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserJobLimit>(e =>
+        {
+            e.Property(l => l.UserKey).UseCollation("NOCASE");
+        });
 
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {

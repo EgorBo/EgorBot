@@ -34,7 +34,7 @@ Start one or more benchmark jobs.
 | `benchmarkCode` | `string?` | No | C# benchmark source code. If omitted, uses `dotnet/performance` benchmarks. |
 | `useProfiler` | `bool` | No | Enable perf profiler recording. Default: `false`. |
 | `attempts` | `int` | No | Repeat count. For `"orchard"` it is the number of server processes per runtime. Default: `1`. |
-| `requestedBy` | `string?` | No | Display name of the requester. |
+| `requestedBy` | `string?` | No | GitHub login used for the rolling per-user job limit. Missing values share the `(anonymous)` limit bucket. |
 | `sourceUrl` | `string?` | No | URL of the originating GitHub comment. |
 
 ### Response — `200 OK`
@@ -54,6 +54,24 @@ Start one or more benchmark jobs.
 | Status | Condition |
 |---|---|
 | `400` | No platforms specified, unknown target, local target in production, a target the requested `kind` cannot run on, or `"orchard"` without commits. |
+| `429` | The request would exceed the requester's rolling 24-hour job limit. One job is counted per target platform. |
+
+The global limit is configured with `EgorBot:MaxJobsPerUser24Hours` and defaults
+to 16. A `429` response includes the normalized user, current usage, effective
+limit, requested job count, and the earliest retry time when one is available:
+
+```json
+{
+  "code": "job_limit_reached",
+  "error": "@jkotas has used 16 of 16 jobs in the rolling 24-hour window.",
+  "user": "jkotas",
+  "limit": 16,
+  "used": 16,
+  "requested": 1,
+  "windowHours": 24,
+  "retryAt": "2026-08-22T10:15:00Z"
+}
+```
 
 ---
 

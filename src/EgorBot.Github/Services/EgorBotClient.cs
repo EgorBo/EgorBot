@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EgorBot.Github.Models;
@@ -56,6 +57,13 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
         public List<JobEntry> Jobs { get; set; } = [];
     }
 
+    public sealed class StartJobResult
+    {
+        public StartJobResponse? Response { get; init; }
+        public JobRateLimitResponse? RateLimit { get; init; }
+        public string? Error { get; init; }
+    }
+
     public sealed class JobEntry
     {
         [JsonPropertyName("id")]
@@ -88,9 +96,8 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
 
     // ── API calls ────────────────────────────────────────────────────────
 
-    /// <summary>Submit a benchmark job to EgorBot.Server. Returns the response or null on failure.</summary>
-    /// <summary>Submit a benchmark job to EgorBot.Server. Returns the response or null on failure.</summary>
-    public async Task<StartJobResponse?> StartJobAsync(BotCommand command, string? requestedBy, string? sourceUrl)
+    /// <summary>Submit a benchmark job to EgorBot.Server.</summary>
+    public async Task<StartJobResult> StartJobAsync(BotCommand command, string? requestedBy, string? sourceUrl)
     {
         var request = new StartJobRequest
         {
@@ -116,19 +123,34 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
 
             if (!response.IsSuccessStatusCode)
             {
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    var rateLimit = JsonSerializer.Deserialize<JobRateLimitResponse>(body);
+                    logger.LogWarning(
+                        "Job limit reached for {User}: {Used}/{Limit}, requested {Requested}",
+                        rateLimit?.User, rateLimit?.Used, rateLimit?.Limit, rateLimit?.Requested);
+                    return new StartJobResult
+                    {
+                        RateLimit = rateLimit,
+                        Error = rateLimit?.Error ?? body,
+                    };
+                }
+
                 logger.LogError("EgorBot.Server returned {Status}: {Body}", response.StatusCode, body);
-                return null;
+                return new StartJobResult { Error = body };
             }
 
             var result = JsonSerializer.Deserialize<StartJobResponse>(body);
             logger.LogInformation("Job submitted: groupId={GroupId}, {Count} job(s)",
                 result?.GroupId, result?.Jobs.Count);
-            return result;
+            return result is null
+                ? new StartJobResult { Error = "EgorBot.Server returned an invalid response." }
+                : new StartJobResult { Response = result };
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to submit job to EgorBot.Server");
-            return null;
+            return new StartJobResult { Error = ex.Message };
         }
     }
 

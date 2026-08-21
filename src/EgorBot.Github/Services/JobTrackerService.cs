@@ -57,10 +57,19 @@ public sealed class JobTrackerService(
         }
 
         // 1. Submit job to EgorBot.Server
-        var response = await botClient.StartJobAsync(effectiveCommand, source.Author, source.HtmlUrl);
+        var submission = await botClient.StartJobAsync(effectiveCommand, source.Author, source.HtmlUrl);
+        if (submission.RateLimit is { } rateLimit)
+        {
+            await HandleRateLimitedRequestAsync(source, effectiveCommand, rateLimit);
+            return;
+        }
+
+        var response = submission.Response;
         if (response is null)
         {
-            logger.LogError("Failed to submit job for {Owner}/{Repo}#{Number}", source.Owner, source.Repo, source.Number);
+            logger.LogError(
+                "Failed to submit job for {Owner}/{Repo}#{Number}: {Error}",
+                source.Owner, source.Repo, source.Number, submission.Error);
             // Report on the source issue/PR too: otherwise the user outside the tracking
             // repo just sees the 👀 reaction and never hears back.
             await PostErrorCommentAsync(source, "❌ Failed to submit the benchmark job to EgorBot. Please try again later.");
@@ -179,6 +188,64 @@ public sealed class JobTrackerService(
 
     // ── Tracking issue lifecycle ────────────────────────────────────────
 
+    private async Task HandleRateLimitedRequestAsync(
+        MentionSource source,
+        BotCommand command,
+        JobRateLimitResponse rateLimit)
+    {
+        var tracked = new TrackedJob
+        {
+            Source = source,
+            Command = command,
+            Jobs = [],
+        };
+
+        if (IsTrackingRepo(source.Owner, source.Repo))
+        {
+            tracked.TrackingIssueNumber = source.Number;
+        }
+        else
+        {
+            tracked.TrackingIssueNumber = await CreateRateLimitedTrackingIssueAsync(tracked);
+        }
+
+        var comment = FormatRateLimitComment(source, rateLimit);
+
+        if (tracked.TrackingIssueNumber is not null)
+        {
+            await PostCommentOnTrackingIssueAsync(tracked, comment);
+        }
+        else
+        {
+            await PostErrorCommentAsync(source, comment);
+        }
+
+        logger.LogInformation(
+            "Rejected benchmark request from {User}: {Used}/{Limit} jobs in rolling window, requested {Requested}",
+            rateLimit.User, rateLimit.Used, rateLimit.Limit, rateLimit.Requested);
+    }
+
+    internal static string FormatRateLimitComment(
+        MentionSource source,
+        JobRateLimitResponse rateLimit)
+    {
+        var retryText = rateLimit.RetryAt is { } retryAt
+            ? $"Enough capacity is expected after **{retryAt.ToUniversalTime():yyyy-MM-dd HH:mm 'UTC'}**."
+            : $"This request itself exceeds the {rateLimit.Limit}-job limit; reduce its targets or ask an administrator to raise the limit.";
+
+        return $"""
+            ## Job limit reached
+
+            @{source.Author}, no jobs were started.
+
+            This request would create **{rateLimit.Requested}** job(s), while
+            `@{rateLimit.User}` has used **{rateLimit.Used} of {rateLimit.Limit}**
+            in the rolling {rateLimit.WindowHours}-hour window.
+
+            {retryText}
+            """;
+    }
+
     /// <summary>Name the workload when it isn't the default BDN run.</summary>
     private static string KindLine(BotCommand command) =>
         command.Kind == BenchmarkKind.Orchard
@@ -233,6 +300,38 @@ public sealed class JobTrackerService(
             await PostErrorCommentAsync(tracked.Source,
                 "⚠️ The benchmark job was submitted, but I could not create a tracking issue, " +
                 $"so results won't be posted automatically. Follow the run here:\n\n{logsLinks}");
+        }
+    }
+
+    private async Task<int?> CreateRateLimitedTrackingIssueAsync(TrackedJob tracked)
+    {
+        try
+        {
+            var ghClient = CreateGitHubClient();
+            var (trackingOwner, trackingRepo) = GetTrackingRepo();
+            var sourceType = tracked.Source.IsPullRequest ? "PR" : "issue";
+            var sourceRef = $"{tracked.Source.Owner}/{tracked.Source.Repo}#{tracked.Source.Number}";
+            var title = $"Benchmarks for {sourceRef} (for @{tracked.Source.Author})";
+            var body = $"""
+                Benchmark request from [{sourceType} {sourceRef}]({tracked.Source.HtmlUrl}).
+
+                {KindLine(tracked.Command)}**Targets:** {string.Join(", ", tracked.Command.Targets)}
+                **Commits:** `{tracked.Command.CommitsAndPrs}`
+
+                No jobs were started because the request exceeded the user's rolling job limit.
+                """;
+
+            var issue = await ghClient.Issue.Create(
+                trackingOwner, trackingRepo, new NewIssue(title) { Body = body });
+            logger.LogInformation(
+                "Created rate-limited tracking issue #{IssueNumber} in {Owner}/{Repo}",
+                issue.Number, trackingOwner, trackingRepo);
+            return issue.Number;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to create tracking issue for rate-limited request");
+            return null;
         }
     }
 

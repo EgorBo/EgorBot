@@ -28,6 +28,8 @@ builder.Services.AddSingleton<CloudProviderFactory>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<CloudInitBuilder>();
 builder.Services.AddSingleton<RuntimeSettings>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<JobRateLimitService>();
 builder.Services.AddSingleton<CorePoolManager>();
 builder.Services.AddSingleton<ResultProcessor>();
 builder.Services.AddSingleton<LogUploadService>();
@@ -54,45 +56,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var dbLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Database");
-    await db.Database.EnsureCreatedAsync();
-
-    // EnsureCreated() never alters an existing database, so columns added to the model
-    // after the file was created have to be patched in by hand — otherwise every query
-    // fails with "SQLite Error 1: 'no such column'".
-    (string Table, string Column, string Type)[] addedColumns =
-    [
-        ("Jobs", "PerfStatEvents", "TEXT NULL"),
-        // NOT NULL + default: the column is read back into a non-nullable enum,
-        // so pre-existing rows must not be left as NULL.
-        ("Jobs", "Kind", "TEXT NOT NULL DEFAULT 'Bdn'"),
-    ];
-
-    var connection = db.Database.GetDbConnection();
-    await connection.OpenAsync();
-    foreach (var (table, column, type) in addedColumns)
-    {
-        var exists = false;
-        await using (var check = connection.CreateCommand())
-        {
-            check.CommandText = $"PRAGMA table_info({table});";
-            await using var reader = await check.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
-                {
-                    exists = true;
-                    break;
-                }
-            }
-        }
-
-        if (exists) continue;
-
-        // Values are compile-time constants from the list above, not user input.
-        var alterSql = "ALTER TABLE " + table + " ADD COLUMN " + column + " " + type + ";";
-        await db.Database.ExecuteSqlRawAsync(alterSql);
-        dbLogger.LogWarning("Added missing column {Table}.{Column} to the existing database", table, column);
-    }
+    await DatabaseInitializer.InitializeAsync(db, dbLogger);
 }
 
 // ── Request logging middleware ───────────────────────────────────────────────
@@ -139,7 +103,12 @@ app.UseStaticFiles();
 var api = app.MapGroup("/api");
 
 // POST /api/jobs — Start a new benchmark job
-api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchestrator orchestrator, ILoggerFactory loggerFactory) =>
+api.MapPost("/jobs", async (
+    StartJobRequest request,
+    JobRateLimitService rateLimiter,
+    JobOrchestrator orchestrator,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
 {
     var log = loggerFactory.CreateLogger("StartJob");
     log.LogInformation("POST /api/jobs called. Platforms=[{Platforms}], CommitsAndPrs={Commits}, HasCode={HasCode}",
@@ -212,7 +181,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
     }
 
     var groupId = Guid.NewGuid();
-    var jobs = new List<object>();
+    var pendingJobs = new List<BenchmarkJob>();
     log.LogInformation("Creating job group {GroupId}", groupId);
 
     // Custom perf events end up in a `perf stat -e ...` command line on the VM.
@@ -249,13 +218,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
                 SourceUrl = request.SourceUrl,
             };
 
-            db.Jobs.Add(orchardJob);
-            await db.SaveChangesAsync();
-            log.LogInformation("Job {JobId} ({Kind}) saved to DB for platform {Platform}",
-                orchardJob.Id, request.Kind, platform);
-
-            orchestrator.Enqueue(orchardJob.Id);
-            jobs.Add(new { id = orchardJob.Id, platform });
+            pendingJobs.Add(orchardJob);
             continue;
         }
 
@@ -299,16 +262,53 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             SourceUrl = request.SourceUrl,
         };
 
-        db.Jobs.Add(job);
-        await db.SaveChangesAsync();
-        log.LogInformation("Job {JobId} saved to DB for platform {Platform}", job.Id, platform);
-
-        orchestrator.Enqueue(job.Id);
-        log.LogInformation("Job {JobId} enqueued to orchestrator", job.Id);
-        jobs.Add(new { id = job.Id, platform });
+        pendingJobs.Add(job);
     }
 
-    log.LogInformation("Returning {Count} jobs for group {GroupId}", jobs.Count, groupId);
+    JobAdmissionResult admission;
+    try
+    {
+        admission = await rateLimiter.TryAdmitAsync(
+            request.RequestedBy, pendingJobs, cancellationToken);
+    }
+    catch (ArgumentException ex)
+    {
+        log.LogWarning(ex, "Validation failed for requestedBy");
+        return Results.BadRequest(new { error = ex.Message });
+    }
+
+    if (!admission.Accepted)
+    {
+        var error = admission.Requested > admission.Limit
+            ? $"This request contains {admission.Requested} jobs, which exceeds the " +
+              $"{admission.Limit}-job limit for @{admission.UserKey}."
+            : $"@{admission.UserKey} has used {admission.Used} of {admission.Limit} jobs " +
+              "in the rolling 24-hour window.";
+
+        return Results.Json(
+            new JobRateLimitResponse
+            {
+                Error = error,
+                User = admission.UserKey,
+                Limit = admission.Limit,
+                Used = admission.Used,
+                Requested = admission.Requested,
+                WindowHours = (int)JobRateLimitService.Window.TotalHours,
+                RetryAt = admission.RetryAtUtc,
+            },
+            statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
+    foreach (var job in pendingJobs)
+    {
+        log.LogInformation("Job {JobId} ({Kind}) saved to DB for platform {Platform}",
+            job.Id, job.Kind, job.Platform);
+        orchestrator.Enqueue(job.Id);
+        log.LogInformation("Job {JobId} enqueued to orchestrator", job.Id);
+    }
+
+    var jobs = pendingJobs.Select(job => new { id = job.Id, platform = job.Platform });
+    log.LogInformation("Returning {Count} jobs for group {GroupId}", pendingJobs.Count, groupId);
     return Results.Ok(new { groupId, jobs });
 });
 

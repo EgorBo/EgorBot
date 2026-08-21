@@ -12,6 +12,7 @@ namespace EgorBot.Server.Services.Notifications;
 /// Background service that polls the Telegram Bot API for incoming messages from admins.
 /// Supported commands:
 ///   jobs   — list active (non-terminal) jobs
+///   set_max_jobs_per_user USER N — persist a rolling 24h limit override
 ///   quit   — gracefully shut down the application
 ///   help   — show available commands
 /// Only messages from the configured AdminChatId are accepted.
@@ -21,6 +22,7 @@ public sealed class TelegramCommandService(
     IServiceScopeFactory scopeFactory,
     JobOrchestrator orchestrator,
     RuntimeSettings runtimeSettings,
+    JobRateLimitService jobRateLimits,
     CorePoolManager corePool,
     IHostApplicationLifetime appLifetime,
     IHttpClientFactory httpFactory,
@@ -160,6 +162,21 @@ public sealed class TelegramCommandService(
         if (command.Length == 0)
             return;
 
+        const string setMaxJobsCommand = "set_max_jobs_per_user";
+        if (command.StartsWith(setMaxJobsCommand, StringComparison.Ordinal))
+        {
+            var argument = command[setMaxJobsCommand.Length..];
+            if (argument.StartsWith('@'))
+            {
+                var separator = argument.IndexOf(' ');
+                argument = separator >= 0 ? argument[separator..] : "";
+            }
+
+            await HandleSetMaxJobsPerUserAsync(
+                string.IsNullOrWhiteSpace(argument) ? null : argument.Trim(), ct);
+            return;
+        }
+
         switch (command)
         {
             case "jobs":
@@ -196,6 +213,8 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`pool` — show core pool usage (used/total + waiters)");
                 sb.AppendLine("`pool reset` — force-release leaked cores (use when jobs hang on \"Waiting for N cores\")");
                 sb.AppendLine("`quota` — show real cloud vCPU quotas (used/limit per family)");
+                sb.AppendLine("`set_max_jobs_per_user USER N` — override a user's rolling 24h job limit");
+                sb.AppendLine("`set_max_jobs_per_user USER default` — remove the override");
                 sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
                 sb.AppendLine("`quit` — shut down the service");
                 sb.AppendLine("`help` — show this message");
@@ -516,6 +535,54 @@ public sealed class TelegramCommandService(
         }
     }
 
+    private async Task HandleSetMaxJobsPerUserAsync(string? argument, CancellationToken ct)
+    {
+        var parts = argument?.Split(
+            ' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
+        if (parts.Length != 2)
+        {
+            await SendReplyAsync(
+                "❌ Usage: `set_max_jobs_per_user <github-user> <max-jobs|default>`");
+            return;
+        }
+
+        var user = parts[0];
+        if (parts[1] is "default" or "reset" or "remove")
+        {
+            try
+            {
+                var removed = await jobRateLimits.RemoveUserLimitAsync(user, ct);
+                var normalized = JobRateLimitService.NormalizeUserKey(user);
+                await SendReplyAsync(removed
+                    ? $"✅ Removed the override for `@{EscapeMarkdown(normalized)}`. " +
+                      $"The global limit is *{jobRateLimits.GlobalLimit} jobs per rolling 24h*."
+                    : $"No override exists for `@{EscapeMarkdown(normalized)}`.");
+            }
+            catch (ArgumentException ex)
+            {
+                await SendReplyAsync($"❌ {EscapeMarkdown(ex.Message)}");
+            }
+            return;
+        }
+
+        if (!int.TryParse(parts[1], out var maxJobs) || maxJobs < 0)
+        {
+            await SendReplyAsync("❌ The maximum job count must be a non-negative integer.");
+            return;
+        }
+
+        try
+        {
+            await jobRateLimits.SetUserLimitAsync(user, maxJobs, ct);
+            var normalized = JobRateLimitService.NormalizeUserKey(user);
+            await SendReplyAsync(
+                $"✅ `@{EscapeMarkdown(normalized)}` can start *{maxJobs} jobs per rolling 24h*.");
+        }
+        catch (ArgumentException ex)
+        {
+            await SendReplyAsync($"❌ {EscapeMarkdown(ex.Message)}");
+        }
+    }
     private async Task SendReplyAsync(string text)
     {
         if (_botToken is null || _adminChatId is null) return;
