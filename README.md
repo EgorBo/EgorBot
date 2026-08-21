@@ -178,8 +178,9 @@ runtime. It is a *separate* run precisely because those JIT knobs would skew the
 
 With `-gcprofiler`, each runtime gets another independent server process and load pass.
 After warmup, EgorBot captures a 30-second `dotnet-trace` GC trace and reports collection
-counts by generation, total/max/p95/p99 pause time, time paused, peak managed heap, and
-allocated bytes. Raw `.nettrace` and metrics JSON files are linked from the tracking issue.
+counts by generation, p95/p99 and total pause time, time paused, and allocated bytes.
+Outlier-prone maximum-pause and peak-heap metrics are omitted from the comparison table.
+Raw `.nettrace` and metrics JSON files are linked from the tracking issue.
 `-gcprofiler` and `-profiler` can be enabled together.
 
 Example:

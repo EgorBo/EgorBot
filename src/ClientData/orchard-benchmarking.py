@@ -614,19 +614,17 @@ def _write_gc_report(rows: list, errors: list = None) -> Path:
 
     if rows:
         lines.extend([
-            "| Runtime | GCs (Gen0 / Gen1 / Gen2) | Max pause | p95 / p99 pause | "
-            "Total pause | Time paused | Peak managed heap | Allocated |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|",
+            "| Runtime | GCs (Gen0 / Gen1 / Gen2) | p95 / p99 pause | "
+            "Total pause | Time paused | Allocated |",
+            "|---|---:|---:|---:|---:|---:|",
         ])
         for row in rows:
             lines.append(
                 f"| {row['label']} | {row['gcCount']} "
                 f"({row['gen0Count']} / {row['gen1Count']} / {row['gen2Count']}) | "
-                f"{row['maxPauseMilliseconds']:.2f} ms | "
                 f"{row['p95PauseMilliseconds']:.2f} / {row['p99PauseMilliseconds']:.2f} ms | "
                 f"{row['totalPauseMilliseconds']:.2f} ms | "
                 f"{row['pauseTimePercent']:.2f}% | "
-                f"{row['peakHeapMegabytes']:.2f} MB | "
                 f"{row['totalAllocatedMegabytes']:.2f} MB |"
             )
         lines.extend([
@@ -635,8 +633,9 @@ def _write_gc_report(rows: list, errors: list = None) -> Path:
             "OrchardCore warmup. Collection used dotnet-trace's low-overhead `gc-collect` profile. "
             "These diagnostics runs are separate from the throughput measurements above.",
             "",
-            "`Peak managed heap` and pause rollups come from TraceEvent's GC analysis. "
-            "Pause percentiles are calculated from complete GC events in the trace.",
+            "Pause rollups come from TraceEvent's GC analysis. Pause percentiles are "
+            "calculated from complete GC events in the trace. Outlier-prone maximum pause "
+            "and peak-heap high-water marks are intentionally omitted.",
         ])
     else:
         lines.append("⚠️ GC profiling was requested, but no GC metrics were produced.")
@@ -901,8 +900,9 @@ def _run_gc_profiling(bombardier: Path, entries: list, run_dirs: dict, app_cpus:
             rows.append(row)
             common.post_log(
                 f"[ORCHARD-GC] [{label}] {row['gcCount']} GCs, "
-                f"max pause {row['maxPauseMilliseconds']:.2f} ms, "
-                f"peak heap {row['peakHeapMegabytes']:.2f} MB")
+                f"p95/p99 pause {row['p95PauseMilliseconds']:.2f}/"
+                f"{row['p99PauseMilliseconds']:.2f} ms, "
+                f"{row['pauseTimePercent']:.2f}% paused")
         except Exception as ex:
             message = f"{label}: could not read analyzer output ({ex})"
             errors.append(message)
