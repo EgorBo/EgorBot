@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OrchardCore CMS throughput benchmark for the EgorBot agent (Linux x64/arm64 only).
+OrchardCore CMS throughput benchmark for the EgorBot agent (Linux/macOS x64/arm64).
 
 Ported from https://gist.github.com/EgorBo/7add052cc65b786bfc66dafd4c676d8c
 
@@ -16,6 +16,7 @@ Exports:
 import json
 import os
 import re
+import signal
 import shutil
 import socket
 import statistics
@@ -150,10 +151,13 @@ def _clamp(value: int, low: int, high: int) -> int:
 
 
 def _taskset_prefix(cpus: list) -> list:
-    if not shutil.which("taskset"):
-        common.post_log("[ORCHARD] WARNING: taskset not found — running without CPU affinity!")
+    if common.TARGET_OS != "linux" or not shutil.which("taskset"):
         return []
     return ["taskset", "-c", _cpu_list(cpus)]
+
+
+def _cpu_affinity_available() -> bool:
+    return common.TARGET_OS == "linux" and shutil.which("taskset") is not None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -167,7 +171,8 @@ def _bombardier_path() -> Path:
         return dest
 
     arch = "arm64" if common.TARGET_ARCH == "arm64" else "amd64"
-    url = BOMBARDIER_URL.format(ver=BOMBARDIER_VERSION, os=common.TARGET_OS, arch=arch)
+    asset_os = "darwin" if common.TARGET_OS == "osx" else common.TARGET_OS
+    url = BOMBARDIER_URL.format(ver=BOMBARDIER_VERSION, os=asset_os, arch=arch)
     common.post_log(f"[ORCHARD] Downloading bombardier ({arch})...")
     common.download(url, dest)
     dest.chmod(0o755)
@@ -311,14 +316,24 @@ def _make_run_dir(label: str, publish_dir: Path, core_root) -> Path:
 def _free_port(port: int):
     """Kill whatever still listens on the benchmark port (leftovers from a
     previous run would silently serve the load)."""
-    if shutil.which("fuser"):
+    if common.TARGET_OS == "linux" and shutil.which("fuser"):
         subprocess.run(f"fuser -n tcp -k {port}", shell=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif common.TARGET_OS == "osx" and shutil.which("lsof"):
+        result = subprocess.run(
+            ["lsof", f"-tiTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True, text=True, errors="replace",
+        )
+        for value in result.stdout.splitlines():
+            try:
+                os.kill(int(value), signal.SIGTERM)
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
     common.kill_process_by_name("OrchardCore")
 
 
 def _start_server(run_dir: Path, app_cpus: list, log_path: Path, extra_env: dict = None):
-    """Start the OrchardCore host pinned to *app_cpus*."""
+    """Start the OrchardCore host, applying CPU affinity when supported."""
     exe = run_dir / "OrchardCore.Cms.Web"
     if exe.exists():
         exe.chmod(0o755)
@@ -690,7 +705,9 @@ def _runtimes() -> list:
     entries = []
     for item in common.CFG.gh_commits_and_prs:
         core_root = common.CORE_ROOTS_DIR / item
-        if (core_root / "corerun").exists() or (core_root / "libcoreclr.so").exists():
+        if ((core_root / "corerun").exists()
+                or (core_root / "libcoreclr.so").exists()
+                or (core_root / "libcoreclr.dylib").exists()):
             entries.append((item, core_root))
         else:
             common.post_log(f"[ORCHARD] WARNING: no Core_Root for '{item}' — skipping")
@@ -701,17 +718,30 @@ def _runtimes() -> list:
 
 
 def run_orchard_benchmarks():
-    if common.TARGET_OS != "linux":
-        raise RuntimeError(f"The OrchardCore benchmark is Linux-only (got {common.TARGET_OS})")
+    if common.TARGET_OS not in ("linux", "osx"):
+        raise RuntimeError(f"The OrchardCore benchmark does not support {common.TARGET_OS}")
 
     cfg = common.CFG
     cpus = _available_cpus()
-    app_cpus, load_cpus = _split_cpus(cpus)
+    affinity_available = _cpu_affinity_available()
+    if affinity_available:
+        app_cpus, load_cpus = _split_cpus(cpus)
+    else:
+        app_cpus = load_cpus = cpus
     connections = cfg.orchard_connections or max(8, 8 * len(app_cpus))
     url = f"http://{SERVER_HOST}:{SERVER_PORT}{BENCH_URL_PATH}"
 
     common.post_log(f"[ORCHARD] CPUs available: {len(cpus)} ({_cpu_list(cpus)})")
-    common.post_log(f"[ORCHARD] App cores: {_cpu_list(app_cpus)} | load generator core(s): {_cpu_list(load_cpus)}")
+    if affinity_available:
+        common.post_log(
+            f"[ORCHARD] App cores: {_cpu_list(app_cpus)} | "
+            f"load generator core(s): {_cpu_list(load_cpus)}"
+        )
+    else:
+        common.post_log(
+            "[ORCHARD] CPU affinity is unavailable; the app and load generator "
+            "share all scheduler-visible CPUs"
+        )
     common.post_log(f"[ORCHARD] Connections: {connections}, warmup: {cfg.orchard_warmup}s, "
                     f"{cfg.orchard_processes} process(es) x {cfg.orchard_rounds} x {cfg.orchard_round_duration}s")
 
@@ -780,11 +810,17 @@ def run_orchard_benchmarks():
             common.post_log(f"[ORCHARD] {s['label']}: {s['mean']:,.0f} RPS "
                             f"± {s['stdev']:,.0f} ({s['cv']:.1f}%) over {s['count']} intervals")
 
+    affinity_row = (
+        f"{len(cpus)} core(s) visible — app pinned to `{_cpu_list(app_cpus)}`, "
+        f"bombardier pinned to `{_cpu_list(load_cpus)}`"
+        if affinity_available
+        else f"{len(cpus)} core(s) visible — CPU affinity unavailable; "
+             "app and bombardier shared all scheduler-visible CPUs"
+    )
     cfg_rows = [
         f"OrchardCore `{ORCHARD_COMMIT[:8]}`, Blog recipe, SQLite, `{BENCH_URL_PATH}`, "
         f"{common.TARGET_OS}-{common.TARGET_ARCH}, {cfg.bench_tfm}, self-contained",
-        f"{len(cpus)} core(s) visible — app pinned to `{_cpu_list(app_cpus)}`, "
-        f"bombardier pinned to `{_cpu_list(load_cpus)}`",
+        affinity_row,
         f"{connections} connections, {cfg.orchard_warmup}s warmup, "
         f"{cfg.orchard_processes} process(es) x {cfg.orchard_rounds} x {cfg.orchard_round_duration}s measured",
         "`DOTNET_GCDynamicAdaptationMode=0` (DATAS off), `DOTNET_HillClimbing_Disable=1`, "

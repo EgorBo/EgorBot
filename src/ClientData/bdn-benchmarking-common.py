@@ -137,7 +137,7 @@ class Config:
                         help="Name to distinguish artifacts (default: test)")
         p.add_argument("--benchmark_kind", choices=["bdn", "orchard"], default="bdn",
                         help="bdn = BenchmarkDotNet microbenchmarks, "
-                             "orchard = OrchardCore CMS throughput benchmark (Linux only)")
+                             "orchard = OrchardCore CMS throughput benchmark")
         p.add_argument("--gh_commits_and_prs",
                         default="",
                         help='Semicolon-separated commits/PRs to compare. PRs prefixed with "PR_", '

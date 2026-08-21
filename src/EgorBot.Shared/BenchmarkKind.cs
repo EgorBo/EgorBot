@@ -13,7 +13,7 @@ public enum BenchmarkKind
 
     /// <summary>
     /// OrchardCore CMS throughput (requests/sec) macro-benchmark.
-    /// Linux x64/arm64 only, and always compares runtime builds (commits/PRs).
+    /// Linux/macOS x64/arm64 only, and always compares runtime builds (commits/PRs).
     /// </summary>
     Orchard,
 }
@@ -58,18 +58,19 @@ public static class BenchmarkKinds
         if (kind != BenchmarkKind.Orchard)
             return true;
 
-        // The benchmark drives a real ASP.NET Core server with taskset/bombardier,
-        // which only exists in the Linux agent module. 32-bit arm is far too slow.
+        // The benchmark drives a real ASP.NET Core server with bombardier.
+        // Windows and 32-bit targets are not supported.
         if (!TargetCatalog.TryGetTarget(canonicalTarget, out var target) || target is null)
             return false;
 
-        return target.OsFamily.Equals("linux", StringComparison.OrdinalIgnoreCase)
+        return (target.OsFamily.Equals("linux", StringComparison.OrdinalIgnoreCase)
+                || target.OsFamily.Equals("osx", StringComparison.OrdinalIgnoreCase))
                && target.Arch is VmArch.X64 or VmArch.Arm64;
     }
 
     /// <summary>Human-readable list of targets a kind can run on (for error messages).</summary>
     public static string SupportedTargetsDescription(this BenchmarkKind kind) =>
         kind == BenchmarkKind.Orchard
-            ? "Linux x64 and Linux arm64 targets only (e.g. `-arm`, `-amd`, `-intel`, `-azure_cobalt100`)"
+            ? "Linux and macOS x64/arm64 targets (e.g. `-arm`, `-amd`, `-intel`, `-azure_cobalt100`)"
             : "any target";
 }

@@ -167,10 +167,7 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
             });
         }
 
-        // Linux-only kinds read bare CPU shorthands (e.g. "arm") as Linux targets.
-        var normalized = request.Kind == BenchmarkKind.Orchard && TargetCatalog.TryResolveLinux(raw, out var linuxTarget)
-            ? linuxTarget!
-            : TargetCatalog.Resolve(raw);
+        var normalized = TargetCatalog.Resolve(raw);
 
         if (!request.Kind.SupportsTarget(normalized))
         {
@@ -234,8 +231,8 @@ api.MapPost("/jobs", async (StartJobRequest request, AppDbContext db, JobOrchest
     {
         // The OrchardCore benchmark is a fixed workload: no snippet, no BDN arguments.
         // Profiling runs as a separate pass on the VM (the JIT knobs perf needs would
-        // otherwise skew the measured RPS), and the target is always Linux, so the
-        // BDN EventPipe fallback below never applies.
+        // otherwise skew the measured RPS), so the BDN EventPipe fallback below
+        // never applies.
         if (request.Kind == BenchmarkKind.Orchard)
         {
             var orchardProfiler = request.UseProfiler || perfStatEvents is not null;

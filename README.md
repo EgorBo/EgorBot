@@ -155,19 +155,19 @@ No code snippet and no BDN arguments are needed (both are rejected). What happen
 1. OrchardCore is cloned at a pinned commit and published **self-contained** for the target RID.
 2. For every commit/PR, the runtime files in a private copy of that publish are replaced with the
    ones from its `Core_Root` — so the same app binaries run on each runtime under test.
-3. The app is pinned with `taskset` to all cores but one; [bombardier](https://github.com/codesenberg/bombardier)
-   runs on the remaining core with `8 × app-cores` connections. The affinity is computed from the
-   cores the agent is actually allowed to use, so it adapts to whatever VM size the job gets.
+3. On Linux, the app is pinned with `taskset` to all cores but one and
+   [bombardier](https://github.com/codesenberg/bombardier) runs on the remaining core. macOS has no
+   equivalent hard CPU affinity, so both processes use all scheduler-visible CPUs.
 4. After a warmup, several measured intervals are collected across two server processes. The report
    contains mean RPS, standard deviation, the coefficient of variation (**noise level**),
    min/max and latency percentiles.
 
 | | |
 |---|---|
-| Targets | **Linux x64 and Linux arm64 only.** `-arm` means `ubuntu24_azure_cobalt100` here (not macOS), the default when no target is given |
+| Targets | **Linux and macOS x64/arm64.** `-arm` and the default target mean `macos15_helix_arm64`, as with other benchmarks |
 | Commits | required — run it from a PR, or pass `-pr <number>` / `-commits SHA1,SHA2` |
-| `-profiler` | supported — see below |
-| `-perf_events a,b,c` | supported — custom events for `perf stat` (implies `-profiler`) |
+| `-profiler` | supported on Linux — see below; skipped on macOS |
+| `-perf_events a,b,c` | supported on Linux — custom events for `perf stat` (implies `-profiler`) |
 
 With `-profiler`, an extra pass runs after the measurements: each runtime is started again
 (this time with frame pointers, perf maps and W^X disabled), warmed up, put under load and

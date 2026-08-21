@@ -194,15 +194,16 @@ public class CommandParserTests
     }
 
     [Theory]
-    // "-arm" alone means macOS/Helix, which cannot run OrchardCore at all.
-    [InlineData("orchard -arm", "ubuntu24_azure_cobalt100")]
-    [InlineData("orchard -arm64", "ubuntu24_azure_cobalt100")]
+    [InlineData("orchard -arm", "macos15_helix_arm64")]
+    [InlineData("orchard -arm64", "macos15_helix_arm64")]
     [InlineData("-amd orchard", "ubuntu24_azure_turin")]
     [InlineData("orchard -intel", "ubuntu24_azure_emeraldrapids")]
     [InlineData("orchard -azure_ampere", "ubuntu24_azure_ampere")]
     [InlineData("orchard -aws_graviton4", "ubuntu24_aws_graviton4")]
-    [InlineData("orchard", "ubuntu24_azure_cobalt100")]   // default target
-    public void Orchard_ResolvesTargetsToLinux(string commandLine, string expectedTarget)
+    [InlineData("orchard -macos15_helix_arm64", "macos15_helix_arm64")]
+    [InlineData("orchard -macos15_helix_x64", "macos15_helix_x64")]
+    [InlineData("orchard", "macos15_helix_arm64")]
+    public void Orchard_UsesNormalTargetResolution(string commandLine, string expectedTarget)
     {
         var cmd = CommandParser.Parse($"@EgorBot {commandLine}", contextPrNumber: 42);
 
@@ -212,17 +213,15 @@ public class CommandParserTests
     }
 
     [Theory]
-    [InlineData("orchard -osx_arm64")]
     [InlineData("orchard -windows_x64")]
-    [InlineData("orchard -macos15_helix_arm64")]
     [InlineData("orchard -ubuntu24_helix_arm32")]
-    public void Orchard_RejectsNonLinuxTargets(string commandLine)
+    public void Orchard_RejectsUnsupportedTargets(string commandLine)
     {
         var cmd = CommandParser.Parse($"@EgorBot {commandLine}", contextPrNumber: 42);
 
         Assert.NotNull(cmd);
         Assert.NotNull(cmd!.ErrorMessage);
-        Assert.Contains("Linux", cmd.ErrorMessage);
+        Assert.Contains("Linux and macOS", cmd.ErrorMessage);
     }
 
     [Fact]

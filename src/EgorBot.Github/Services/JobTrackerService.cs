@@ -588,9 +588,9 @@ public sealed class JobTrackerService(
 
             **Other benchmarks:**
             `orchard` — OrchardCore CMS throughput (requests/sec) instead of BenchmarkDotNet,
-            e.g. `@EgorBot orchard -arm`. Linux x64/arm64 only, needs a PR or `-commits`,
-            and takes no snippet or BDN arguments. `-profiler` adds a separate profiling
-            pass (hot asm, flamegraphs, counters).
+            e.g. `@EgorBot orchard -arm`. Linux/macOS x64/arm64 only, needs a PR or
+            `-commits`, and takes no snippet or BDN arguments. `-profiler` adds a separate
+            profiling pass on Linux (hot asm, flamegraphs, counters).
 
             Targets can be prefixed with OS: `-windows_arm`, `-linux_intel`
             Anything on the `@EgorBot` line that isn't a target or an option is passed to

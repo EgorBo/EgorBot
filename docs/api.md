@@ -28,7 +28,7 @@ Start one or more benchmark jobs.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `platforms` | `string[]` | **Yes** | Target platforms/aliases. At least one required. Examples: `"arm"`, `"aws_graviton4"`, `"windows_x64"`, `"osx"`. |
-| `kind` | `string` | No | `"bdn"` (default) — BenchmarkDotNet microbenchmarks, or `"orchard"` — OrchardCore CMS throughput. `"orchard"` requires a Linux x64/arm64 platform and a non-empty `commitsAndPrs`, and ignores `bdnArguments`, `benchmarkCode` and `useProfiler`. |
+| `kind` | `string` | No | `"bdn"` (default) — BenchmarkDotNet microbenchmarks, or `"orchard"` — OrchardCore CMS throughput. `"orchard"` requires a Linux/macOS x64/arm64 platform and a non-empty `commitsAndPrs`, and ignores `bdnArguments` and `benchmarkCode`. Profiling is Linux-only. |
 | `commitsAndPrs` | `string` | **Yes** | Semicolon-separated commits or PRs to compare. PRs prefixed with `PR_`. Can be empty (runs with default SDK). |
 | `bdnArguments` | `string?` | No | Extra BenchmarkDotNet CLI arguments (e.g. `--filter *Span*`). |
 | `benchmarkCode` | `string?` | No | C# benchmark source code. If omitted, uses `dotnet/performance` benchmarks. |

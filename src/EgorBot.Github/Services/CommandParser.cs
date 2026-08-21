@@ -286,9 +286,7 @@ public static partial class CommandParser
         var targets = new List<string>();
         foreach (var token in targetTokens)
         {
-            var resolved = kind == BenchmarkKind.Orchard
-                ? (TargetCatalog.TryResolveLinux(token, out var linuxTarget) ? linuxTarget : null)
-                : (TargetCatalog.TryResolve(token, out var anyTarget) ? anyTarget : null);
+            var resolved = TargetCatalog.TryResolve(token, out var target) ? target : null;
 
             if (resolved is not null && !targets.Contains(resolved))
                 targets.Add(resolved);
@@ -307,9 +305,7 @@ public static partial class CommandParser
         // Default target if none specified
         if (targets.Count == 0)
         {
-            targets.Add(kind == BenchmarkKind.Orchard
-                ? TargetCatalog.Resolve("linux_arm64")   // ubuntu24_azure_cobalt100
-                : "macos15_helix_arm64");
+            targets.Add("macos15_helix_arm64");
         }
 
         // If we're in a PR context and no commits specified:
