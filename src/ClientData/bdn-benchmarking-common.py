@@ -18,6 +18,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -455,6 +456,64 @@ def _build_custom_benchmarks(bench_args: List[str]):
 #  Stage 5 -- Build core_roots for all commits/PRs
 # =============================================================================
 
+RUNTIME_DEPS_ATTEMPTS = 3
+RUNTIME_DEPS_TIMEOUT_SECONDS = 15 * 60
+RUNTIME_DEPS_RETRY_DELAY_SECONDS = 30
+
+
+def _install_runtime_dependencies(runtime_dir: Path):
+    prefix = ""
+    if TARGET_OS != "osx" and os.getuid() != 0 and shutil.which("sudo"):
+        prefix = "sudo -n "
+
+    script = "eng/common/native/./install-dependencies.sh"
+    if TARGET_OS != "osx" and shutil.which("timeout"):
+        # Keep timeout inside sudo so it can terminate privileged apt children.
+        command = (
+            f"{prefix}timeout -s TERM -k 10 "
+            f"{RUNTIME_DEPS_TIMEOUT_SECONDS} {script}"
+        )
+        runner_timeout = RUNTIME_DEPS_TIMEOUT_SECONDS + 15
+    else:
+        command = f"{prefix}{script}"
+        runner_timeout = RUNTIME_DEPS_TIMEOUT_SECONDS
+
+    for attempt in range(1, RUNTIME_DEPS_ATTEMPTS + 1):
+        post_log(
+            f"Installing runtime native dependencies "
+            f"(attempt {attempt}/{RUNTIME_DEPS_ATTEMPTS}, "
+            f"timeout {RUNTIME_DEPS_TIMEOUT_SECONDS // 60}m)..."
+        )
+        result = run(
+            command,
+            cwd=runtime_dir,
+            check=False,
+            timeout_seconds=runner_timeout,
+        )
+        if result.returncode == 0:
+            return
+
+        failure = (
+            f"timed out after {RUNTIME_DEPS_TIMEOUT_SECONDS // 60} minutes"
+            if result.returncode == 124
+            else f"exited with code {result.returncode}"
+        )
+        if attempt < RUNTIME_DEPS_ATTEMPTS:
+            post_log(
+                f"Runtime native dependency installation {failure}; "
+                f"retrying in {RUNTIME_DEPS_RETRY_DELAY_SECONDS}s..."
+            )
+            time.sleep(RUNTIME_DEPS_RETRY_DELAY_SECONDS)
+            continue
+
+        error = (
+            f"Runtime native dependency installation failed after "
+            f"{RUNTIME_DEPS_ATTEMPTS} attempts: {failure}"
+        )
+        post_log(f"ERROR: {error}")
+        send_results(success=False, exit_code=result.returncode, error=error)
+
+
 def clone_runtime():
     runtime_dir = WORK_DIR / "runtime"
     if not runtime_dir.is_dir():
@@ -539,13 +598,7 @@ def build_core_roots():
 
         # Install deps via runtime's own script (most deps come from here)
         if TARGET_OS != "windows":
-            # The script calls apt-get internally; prefix with sudo if not root.
-            # -n so a machine whose sudo asks for a password fails fast instead of
-            # blocking on /dev/tty until the job times out.
-            prefix = ""
-            if TARGET_OS != "osx" and os.getuid() != 0 and shutil.which("sudo"):
-                prefix = "sudo -n "
-            run(f"{prefix}eng/common/native/./install-dependencies.sh", cwd=runtime_dir, check=False)
+            _install_runtime_dependencies(runtime_dir)
 
         # Make it more resilient to warnings in case if we build old commits
         dbp = runtime_dir / "Directory.Build.props"

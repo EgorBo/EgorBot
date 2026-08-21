@@ -22,6 +22,7 @@ import io
 import json
 import os
 import platform
+import signal
 import shutil
 import subprocess
 import sys
@@ -72,15 +73,21 @@ def run(
     env: Optional[dict] = None,
     shell: bool = True,
     stdout_file: Optional[Path] = None,
+    timeout_seconds: Optional[float] = None,
 ) -> subprocess.CompletedProcess:
     """
     Run *cmd* with live stdout/stderr streaming to the terminal.
 
     If *stdout_file* is set, stdout is written to that file instead of the
     terminal (cross-platform replacement for ``> file`` shell redirect).
+    If *timeout_seconds* is set, the command and its process group are stopped
+    when the timeout expires and return code 124 is used.
     If *check* is True (default) and the command exits non-zero,
     ``send_results`` is called with the error code and the script exits.
     """
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be greater than zero")
+
     merged_env = {**os.environ, **(env or {})}
     label = cmd if isinstance(cmd, str) else " ".join(cmd)
     if stdout_file:
@@ -88,25 +95,68 @@ def run(
     else:
         print(f"\n▶ {label}", flush=True)
 
-    if stdout_file:
-        with open(stdout_file, "w", encoding="utf-8") as fout:
-            result = subprocess.run(
-                cmd, cwd=cwd, env=merged_env, shell=shell,
-                stdout=fout,
-            )
-    else:
-        # Stream subprocess output line-by-line through Python's sys.stdout
-        # so TeeWriter captures it for the callback log sender.
+    timed_out = threading.Event()
+    process_done = threading.Event()
+
+    def stop_after_timeout(proc: subprocess.Popen):
+        if process_done.wait(timeout_seconds):
+            return
+        if process_done.is_set() or proc.poll() is not None:
+            return
+
+        timed_out.set()
+        try:
+            if os.name == "posix":
+                os.killpg(proc.pid, signal.SIGTERM)
+            else:
+                proc.terminate()
+        except OSError:
+            return
+
+        if process_done.wait(10):
+            return
+        try:
+            if os.name == "posix":
+                os.killpg(proc.pid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except OSError:
+            pass
+
+    with open(stdout_file, "w", encoding="utf-8") if stdout_file else io.StringIO() as fout:
+        stdout = fout if stdout_file else subprocess.PIPE
+        stderr = None if stdout_file else subprocess.STDOUT
         proc = subprocess.Popen(
             cmd, cwd=cwd, env=merged_env, shell=shell,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            stdout=stdout, stderr=stderr,
             bufsize=1, text=True, errors="replace",
+            start_new_session=timeout_seconds is not None and os.name == "posix",
         )
-        for line in proc.stdout:
-            sys.stdout.write(line)
-            sys.stdout.flush()
-        proc.wait()
-        result = subprocess.CompletedProcess(cmd, proc.returncode)
+
+        timeout_thread = None
+        if timeout_seconds is not None:
+            timeout_thread = threading.Thread(
+                target=stop_after_timeout, args=(proc,), daemon=True,
+            )
+            timeout_thread.start()
+
+        try:
+            if proc.stdout is not None:
+                # Stream subprocess output through Python's sys.stdout so
+                # TeeWriter captures it for the callback log sender.
+                for line in proc.stdout:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+            proc.wait()
+        finally:
+            process_done.set()
+            if timeout_thread is not None:
+                timeout_thread.join()
+
+    returncode = 124 if timed_out.is_set() else proc.returncode
+    result = subprocess.CompletedProcess(cmd, returncode)
+    if timed_out.is_set():
+        print(f"\n❌ Command timed out after {timeout_seconds:g}s: {label}")
 
     if check and result.returncode != 0:
         print(f"\n❌ Command failed (exit {result.returncode}): {label}")
