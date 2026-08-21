@@ -767,15 +767,23 @@ def _ensure_gc_tools():
             raise RuntimeError(
                 f"dotnet-trace installation failed with exit code {result.returncode}")
 
+    analyzer_source_dir = common.WORK_DIR / "gc_trace_analyzer_src"
     analyzer_dir = common.WORK_DIR / "gc_trace_analyzer"
     analyzer_dll = analyzer_dir / "gc-trace-analyzer.dll"
     if not analyzer_dll.exists():
         common.post_log("[ORCHARD-GC] Building GC trace analyzer...")
+        common.ensure_dirs(analyzer_source_dir)
+        analyzer_project = analyzer_source_dir / "gc-trace-analyzer.csproj"
+        shutil.copy2(common.WORK_DIR / "gc-trace-analyzer.csproj", analyzer_project)
+        shutil.copy2(
+            common.WORK_DIR / "gc-trace-analyzer.cs",
+            analyzer_source_dir / "gc-trace-analyzer.cs")
         result = common.run(
             [
-                "dotnet", "build", str(common.WORK_DIR / "gc-trace-analyzer.csproj"),
+                "dotnet", "build", str(analyzer_project),
                 "-c", "Release", "-o", str(analyzer_dir),
             ],
+            cwd=analyzer_source_dir,
             shell=False,
             check=False,
             env=tool_env,

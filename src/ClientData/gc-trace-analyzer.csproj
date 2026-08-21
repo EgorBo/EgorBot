@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RollForward>Major</RollForward>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultItems>false</EnableDefaultItems>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="gc-trace-analyzer.cs" />
