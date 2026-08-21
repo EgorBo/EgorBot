@@ -749,6 +749,7 @@ def _ensure_gc_tools():
                 "--tool-path", str(tools_dir),
                 "--version", DOTNET_TRACE_VERSION,
             ],
+            cwd=tools_dir,
             shell=False,
             check=False,
             env=tool_env,
