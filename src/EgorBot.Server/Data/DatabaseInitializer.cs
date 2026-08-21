@@ -19,6 +19,7 @@ public static class DatabaseInitializer
         (string Table, string Column, string Type)[] addedColumns =
         [
             ("Jobs", "PerfStatEvents", "TEXT NULL"),
+            ("Jobs", "UseGcProfiler", "INTEGER NOT NULL DEFAULT 0"),
             // NOT NULL + default: the column is read back into a non-nullable enum,
             // so pre-existing rows must not be left as NULL.
             ("Jobs", "Kind", "TEXT NOT NULL DEFAULT 'Bdn'"),

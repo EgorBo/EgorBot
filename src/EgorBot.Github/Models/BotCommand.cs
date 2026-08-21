@@ -25,6 +25,9 @@ public sealed class BotCommand
     /// <summary>Enable perf profiler.</summary>
     public bool UseProfiler { get; init; }
 
+    /// <summary>Enable the OrchardCore dotnet-trace GC profiling pass.</summary>
+    public bool UseGcProfiler { get; init; }
+
     /// <summary>
     /// Optional comma-separated event list for `perf stat -e`
     /// (e.g. "l1d_cache,l1d_cache_refill,cycles"). Implies <see cref="UseProfiler"/>.

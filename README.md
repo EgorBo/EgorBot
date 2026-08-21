@@ -167,6 +167,7 @@ No code snippet and no BDN arguments are needed (both are rejected). What happen
 | Targets | **Linux and macOS x64/arm64.** `-arm` and the default target mean `macos15_helix_arm64`, as with other benchmarks |
 | Commits | required — run it from a PR, or pass `-pr <number>` / `-commits SHA1,SHA2` |
 | `-profiler` | supported on Linux — see below; skipped on macOS |
+| `-gcprofiler` | supported on Linux and macOS — separate dotnet-trace GC pass |
 | `-perf_events a,b,c` | supported on Linux — custom events for `perf stat` (implies `-profiler`) |
 
 With `-profiler`, an extra pass runs after the measurements: each runtime is started again
@@ -175,11 +176,19 @@ sampled with `perf record` / `perf stat`. It produces the same artifacts as a BD
 annotated hot assembly, flamegraph, function report, counters and a speedscope profile per
 runtime. It is a *separate* run precisely because those JIT knobs would skew the RPS numbers.
 
+With `-gcprofiler`, each runtime gets another independent server process and load pass.
+After warmup, EgorBot captures a 30-second `dotnet-trace` GC trace and reports collection
+counts by generation, total/max/p95/p99 pause time, time paused, peak managed heap, and
+allocated bytes. Raw `.nettrace` and metrics JSON files are linked from the tracking issue.
+`-gcprofiler` and `-profiler` can be enabled together.
+
 Example:
 
 ```
 @EgorBot orchard -amd -commits abc1234,abc1234~1
 @EgorBot orchard -arm -profiler
+@EgorBot orchard -arm -gcprofiler
+@EgorBot orchard -amd -profiler -gcprofiler
 ```
 
 

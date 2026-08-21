@@ -8,7 +8,7 @@ namespace EgorBot.Github.Services;
 /// Parses @EgorBot commands from GitHub comment/issue/PR body text.
 ///
 /// Format:
-///   @EgorBot [targets] [-commits SHA,main,SHA~2] [-profiler] [BDN args]
+///   @EgorBot [targets] [-commits SHA,main,SHA~2] [-profiler] [-gcprofiler] [BDN args]
 ///   ```[cs|csharp|c#]
 ///   benchmark code
 ///   ```
@@ -121,6 +121,7 @@ public static partial class CommandParser
         var targetTokens = new List<string>();
         var commits = new List<string>();
         bool useProfiler = false;
+        bool useGcProfiler = false;
         bool isHelp = false;
         int attempts = 1;
         string? perfStatEvents = null;
@@ -142,6 +143,11 @@ public static partial class CommandParser
                 // Profiler
                 case "profiler" or "profile" or "perf":
                     useProfiler = true;
+                    consumed[i] = true;
+                    break;
+
+                case "gcprofiler" or "gcprofile" or "gc_profiler":
+                    useGcProfiler = true;
                     consumed[i] = true;
                     break;
 
@@ -335,6 +341,13 @@ public static partial class CommandParser
             benchmarkCode = null;
             bdnArgs = null;
         }
+        else if (useGcProfiler)
+        {
+            return new BotCommand
+            {
+                ErrorMessage = "`-gcprofiler` is supported only by the `orchard` benchmark.",
+            };
+        }
 
         // If still no commits, leave empty — the agent will run benchmarks
         // with the default SDK runtime (no core_root build, no --corerun)
@@ -347,6 +360,7 @@ public static partial class CommandParser
             BenchmarkCode = benchmarkCode,
             Kind = kind,
             UseProfiler = useProfiler,
+            UseGcProfiler = useGcProfiler,
             PerfStatEvents = perfStatEvents,
             Attempts = attempts,
             IsHelp = isHelp,
@@ -373,7 +387,7 @@ public static partial class CommandParser
             return $"the `orchard` benchmark takes no BenchmarkDotNet arguments, but got "
                  + $"{string.Join(", ", bdnTokens.Select(t => $"`{t}`"))}. "
                  + "Supported options: targets (`-arm`, `-amd`, `-intel`, ...), `-pr`, `-commits`, "
-                 + "`-profiler`, `-perf_events a,b,c`.";
+                 + "`-profiler`, `-gcprofiler`, `-perf_events a,b,c`.";
         }
 
         return null;

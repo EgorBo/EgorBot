@@ -116,6 +116,7 @@ public sealed class JobRateLimitServiceTests
 
         await db.Database.ExecuteSqlRawAsync("""DROP TABLE "JobAdmissions";""");
         await db.Database.ExecuteSqlRawAsync("""DROP TABLE "UserJobLimits";""");
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Jobs" DROP COLUMN "UseGcProfiler";""");
 
         await DatabaseInitializer.InitializeAsync(db, NullLogger.Instance);
 
@@ -124,6 +125,7 @@ public sealed class JobRateLimitServiceTests
         Assert.Equal("jkotas", admission.UserKey);
         Assert.Equal(existingJob.CreatedAt, admission.AdmittedAt);
         Assert.False(await db.UserJobLimits.AnyAsync());
+        Assert.False((await db.Jobs.AsNoTracking().SingleAsync()).UseGcProfiler);
     }
 
     private static List<BenchmarkJob> CreateJobs(int count) =>

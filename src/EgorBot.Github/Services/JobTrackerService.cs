@@ -173,6 +173,7 @@ public sealed class JobTrackerService(
                 BenchmarkCode = command.BenchmarkCode,
                 Kind = command.Kind,
                 UseProfiler = command.UseProfiler,
+                UseGcProfiler = command.UseGcProfiler,
                 PerfStatEvents = command.PerfStatEvents,
                 Attempts = command.Attempts,
                 IsHelp = command.IsHelp,
@@ -677,6 +678,7 @@ public sealed class JobTrackerService(
 
             **Options:**
             `-profiler` — enable perf profiler
+            `-gcprofiler` — collect OrchardCore GC metrics with dotnet-trace
             `-perf_events a,b,c` — custom `perf stat` events (implies `-profiler`),
             e.g. `-perf_events l1d_cache,l1d_cache_refill,l2d_cache_refill,cycles,instructions`.
             The events a machine supports are listed in the `perf_events.txt` artifact.
@@ -689,7 +691,8 @@ public sealed class JobTrackerService(
             `orchard` — OrchardCore CMS throughput (requests/sec) instead of BenchmarkDotNet,
             e.g. `@EgorBot orchard -arm`. Linux/macOS x64/arm64 only, needs a PR or
             `-commits`, and takes no snippet or BDN arguments. `-profiler` adds a separate
-            profiling pass on Linux (hot asm, flamegraphs, counters).
+            profiling pass on Linux (hot asm, flamegraphs, counters); `-gcprofiler` adds a
+            separate cross-platform dotnet-trace GC pass. Both can be used together.
 
             Targets can be prefixed with OS: `-windows_arm`, `-linux_intel`
             Anything on the `@EgorBot` line that isn't a target or an option is passed to

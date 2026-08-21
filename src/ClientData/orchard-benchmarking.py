@@ -69,6 +69,8 @@ PERF_RECORD_SECS = 10
 PERF_LOW_SECS = 5
 PERF_STAT_SECS = 6
 MAX_PROFILED_RUNTIMES = 4
+DOTNET_TRACE_VERSION = "9.0.661903"
+GC_TRACE_SECS = 30
 
 # Environment for the benchmarked app. AutoSetup provisions the tenant on the
 # first request so the run needs no manual setup step.
@@ -603,6 +605,43 @@ def _write_report(summaries: list, cfg_rows: list, used_core_roots: bool) -> Pat
     return report
 
 
+def _write_gc_report(rows: list) -> Path:
+    lines = [
+        "### OrchardCore GC profile — dotnet-trace",
+        "",
+        "| Runtime | GCs (Gen0 / Gen1 / Gen2) | Max pause | p95 / p99 pause | "
+        "Total pause | Time paused | Peak managed heap | Allocated |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+
+    for row in rows:
+        lines.append(
+            f"| {row['label']} | {row['gcCount']} "
+            f"({row['gen0Count']} / {row['gen1Count']} / {row['gen2Count']}) | "
+            f"{row['maxPauseMilliseconds']:.2f} ms | "
+            f"{row['p95PauseMilliseconds']:.2f} / {row['p99PauseMilliseconds']:.2f} ms | "
+            f"{row['totalPauseMilliseconds']:.2f} ms | "
+            f"{row['pauseTimePercent']:.2f}% | "
+            f"{row['peakHeapMegabytes']:.2f} MB | "
+            f"{row['totalAllocatedMegabytes']:.2f} MB |"
+        )
+
+    lines.extend([
+        "",
+        f"Each runtime was traced in a separate process for {GC_TRACE_SECS}s after the normal "
+        "OrchardCore warmup. Collection used dotnet-trace's low-overhead `gc-collect` profile. "
+        "These diagnostics runs are separate from the throughput measurements above.",
+        "",
+        "`Peak managed heap` and pause rollups come from TraceEvent's GC analysis. "
+        "Pause percentiles are calculated from complete GC events in the trace.",
+        "",
+    ])
+
+    report = common.ARTIFACTS_DIR / "OrchardCore-GC-report-github.md"
+    report.write_text("\n".join(lines), encoding="utf-8")
+    return report
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Profiling (a separate run — perf's JIT knobs would skew the RPS numbers)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -693,6 +732,165 @@ def _run_profiling(bombardier: Path, entries: list, run_dirs: dict, app_cpus: li
         platform_mod.postprocess_perf_data(perf, bench_dir, label, flamegraph_dir, percent_limit=1)
 
     common.post_log("[ORCHARD] Profiling completed ✓")
+
+
+def _ensure_gc_tools():
+    tools_dir = common.WORK_DIR / "gc_tools"
+    common.ensure_dirs(tools_dir)
+    dotnet_trace = tools_dir / common.make_exe("dotnet-trace")
+    tool_env = {"DOTNET_ROLL_FORWARD": "Major"}
+
+    if not dotnet_trace.exists():
+        common.post_log(
+            f"[ORCHARD-GC] Installing dotnet-trace {DOTNET_TRACE_VERSION}...")
+        result = common.run(
+            [
+                "dotnet", "tool", "install", "dotnet-trace",
+                "--tool-path", str(tools_dir),
+                "--version", DOTNET_TRACE_VERSION,
+            ],
+            shell=False,
+            check=False,
+            env=tool_env,
+        )
+        if result.returncode != 0 or not dotnet_trace.exists():
+            common.post_log("[ORCHARD-GC] dotnet-trace installation failed — skipping")
+            return None
+
+    analyzer_dir = common.WORK_DIR / "gc_trace_analyzer"
+    analyzer_dll = analyzer_dir / "gc-trace-analyzer.dll"
+    if not analyzer_dll.exists():
+        common.post_log("[ORCHARD-GC] Building GC trace analyzer...")
+        result = common.run(
+            [
+                "dotnet", "build", str(common.WORK_DIR / "gc-trace-analyzer.csproj"),
+                "-c", "Release", "-o", str(analyzer_dir),
+            ],
+            shell=False,
+            check=False,
+            env=tool_env,
+        )
+        if result.returncode != 0 or not analyzer_dll.exists():
+            common.post_log("[ORCHARD-GC] GC trace analyzer build failed — skipping")
+            return None
+
+    return dotnet_trace, analyzer_dll, tool_env
+
+
+def _trace_duration(seconds: int) -> str:
+    days, remainder = divmod(seconds, 24 * 60 * 60)
+    hours, remainder = divmod(remainder, 60 * 60)
+    minutes, secs = divmod(remainder, 60)
+    return f"{days:02d}:{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _run_gc_profiling(bombardier: Path, entries: list, run_dirs: dict, app_cpus: list,
+                      load_cpus: list, connections: int, url: str, logs_dir: Path):
+    tools = _ensure_gc_tools()
+    if tools is None:
+        return
+    dotnet_trace, analyzer_dll, tool_env = tools
+
+    gc_dir = common.ARTIFACTS_DIR / "gc"
+    common.ensure_dirs(gc_dir)
+    warmup = common.CFG.orchard_warmup
+    load_secs = warmup + GC_TRACE_SECS + 30
+    rows = []
+
+    profiled = entries[:MAX_PROFILED_RUNTIMES]
+    if len(profiled) < len(entries):
+        common.post_log(
+            f"[ORCHARD-GC] Profiling only the first {len(profiled)} of {len(entries)} "
+            f"runtimes: {', '.join(label for label, _ in profiled)}")
+
+    for label, _ in profiled:
+        common.post_log(f"[ORCHARD-GC] === Profiling {label} ===")
+        _free_port(SERVER_PORT)
+        safe_label = _safe(label)
+        log_path = logs_dir / f"{safe_label}_gc_server.log"
+        trace_path = gc_dir / f"{safe_label}.nettrace"
+        metrics_path = gc_dir / f"{safe_label}.json"
+        proc = None
+        load = None
+        trace_succeeded = False
+        process_id = 0
+
+        try:
+            proc = _start_server(run_dirs[label], app_cpus, log_path)
+            process_id = proc.pid
+            if not _wait_until_ready(proc, url):
+                common.post_log(
+                    f"[ORCHARD-GC] [{label}] The app failed to start, skipping")
+                continue
+
+            load = _start_load(bombardier, load_cpus, connections, load_secs, url)
+            common.post_log(
+                f"[ORCHARD-GC] [{label}] Warming up for {warmup}s before tracing...")
+            time.sleep(warmup)
+
+            if proc.poll() is not None or load.poll() is not None:
+                common.post_log(
+                    f"[ORCHARD-GC] [{label}] App or load generator died before tracing")
+                continue
+
+            result = common.run(
+                [
+                    str(dotnet_trace), "collect",
+                    "--process-id", str(process_id),
+                    "--profile", "gc-collect",
+                    "--duration", _trace_duration(GC_TRACE_SECS),
+                    "--buffersize", "64",
+                    "--output", str(trace_path),
+                ],
+                shell=False,
+                check=False,
+                env=tool_env,
+            )
+            trace_succeeded = result.returncode == 0 and trace_path.exists()
+            if not trace_succeeded:
+                common.post_log(
+                    f"[ORCHARD-GC] [{label}] dotnet-trace failed "
+                    f"(exit {result.returncode})")
+        finally:
+            _stop_load(load)
+            _stop_server(proc, log_path)
+            time.sleep(3)
+
+        if not trace_succeeded:
+            continue
+
+        result = common.run(
+            [
+                "dotnet", str(analyzer_dll),
+                str(trace_path), str(metrics_path), str(process_id),
+            ],
+            shell=False,
+            check=False,
+            env=tool_env,
+        )
+        if result.returncode != 0 or not metrics_path.exists():
+            common.post_log(
+                f"[ORCHARD-GC] [{label}] Trace analysis failed "
+                f"(exit {result.returncode})")
+            continue
+
+        try:
+            row = json.loads(metrics_path.read_text(encoding="utf-8"))
+            row["label"] = label
+            rows.append(row)
+            common.post_log(
+                f"[ORCHARD-GC] [{label}] {row['gcCount']} GCs, "
+                f"max pause {row['maxPauseMilliseconds']:.2f} ms, "
+                f"peak heap {row['peakHeapMegabytes']:.2f} MB")
+        except Exception as ex:
+            common.post_log(
+                f"[ORCHARD-GC] [{label}] Could not read analyzer output: {ex}")
+
+    if rows:
+        report = _write_gc_report(rows)
+        common.post_log(f"[ORCHARD-GC] Report written to {report.name}")
+    else:
+        common.post_log("[ORCHARD-GC] No GC profiles were produced")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -839,4 +1037,12 @@ def run_orchard_benchmarks():
                            connections, url, logs_dir)
         except Exception as ex:
             common.post_log(f"[ORCHARD] Profiling failed ({type(ex).__name__}: {ex}) — "
+                            f"the benchmark results are unaffected")
+
+    if cfg.gc_profiler:
+        try:
+            _run_gc_profiling(bombardier, entries, run_dirs, app_cpus, load_cpus,
+                              connections, url, logs_dir)
+        except Exception as ex:
+            common.post_log(f"[ORCHARD-GC] Profiling failed ({type(ex).__name__}: {ex}) — "
                             f"the benchmark results are unaffected")

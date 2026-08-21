@@ -86,11 +86,55 @@ public sealed class EgorBotClientTests
         Assert.Contains("no jobs were started", comment);
     }
 
+    [Fact]
+    public async Task StartJobAsync_SendsGcProfilerIndependently()
+    {
+        var handler = new StubHandler(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"groupId":"11111111-1111-1111-1111-111111111111","jobs":[]}""",
+                    Encoding.UTF8,
+                    "application/json"),
+            });
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://example.test"),
+        };
+        var client = new EgorBotClient(
+            http,
+            new ConfigurationBuilder().Build(),
+            NullLogger<EgorBotClient>.Instance);
+
+        var result = await client.StartJobAsync(
+            new BotCommand
+            {
+                Targets = ["macos15_helix_arm64"],
+                Kind = BenchmarkKind.Orchard,
+                CommitsAndPrs = "main",
+                UseGcProfiler = true,
+                UseProfiler = false,
+            },
+            requestedBy: "jkotas",
+            sourceUrl: null);
+
+        Assert.NotNull(result.Response);
+        Assert.Contains("\"useGcProfiler\":true", handler.RequestBody);
+        Assert.Contains("\"useProfiler\":false", handler.RequestBody);
+    }
+
     private sealed class StubHandler(HttpResponseMessage response) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(
+        public string RequestBody { get; private set; } = "";
+
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(response);
+            CancellationToken cancellationToken)
+        {
+            RequestBody = request.Content is null
+                ? ""
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            return response;
+        }
     }
 }

@@ -19,11 +19,14 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
     }
 
     /// <summary>
-    /// Extract profiling artifacts (.asm, .svg, .speedscope, etc.) from the artifacts zip,
+    /// Extract profiling artifacts (.asm, .svg, .nettrace, etc.) from the artifacts zip,
     /// save them to the local filesystem, and return a markdown section with links.
     /// Returns null if no profiling artifacts are found.
     /// </summary>
-    public async Task<string?> UploadPerfArtifactsAsync(Stream zipStream, Guid jobId, CancellationToken ct = default)
+    public async Task<string?> UploadProfilingArtifactsAsync(
+        Stream zipStream,
+        Guid jobId,
+        CancellationToken ct = default)
     {
         var baseUrl = config["EgorBot:ServiceBaseUrl"];
         if (string.IsNullOrEmpty(baseUrl))
@@ -36,40 +39,42 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
         {
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
 
-            // Collect perf artifacts (files under perf/ directory)
-            var perfEntries = archive.Entries
-                .Where(e => e.FullName.StartsWith("perf/", StringComparison.OrdinalIgnoreCase)
-                            && !string.IsNullOrEmpty(e.Name)
-                            && (e.Name.EndsWith(".asm", StringComparison.OrdinalIgnoreCase)
-                                || e.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
-                                || e.Name.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase)
-                                || e.Name.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase)
-                                || e.Name.EndsWith(".stats", StringComparison.OrdinalIgnoreCase)
-                                || e.Name.Equals("perf_events.txt", StringComparison.OrdinalIgnoreCase)))
+            var profilingEntries = archive.Entries
+                .Where(e => !string.IsNullOrEmpty(e.Name)
+                            && (IsPerfArtifact(e) || IsGcArtifact(e)))
                 .ToList();
 
-            if (perfEntries.Count == 0)
+            if (profilingEntries.Count == 0)
             {
-                logger.LogWarning("No perf entries found in artifacts zip for job {JobId}. Zip entries: [{Entries}]",
+                logger.LogWarning("No profiling entries found in artifacts zip for job {JobId}. Zip entries: [{Entries}]",
                     jobId, string.Join(", ", archive.Entries.Select(e => e.FullName).Take(30)));
                 return null;
             }
 
-            logger.LogInformation("Found {Count} perf entries in zip for job {JobId}: [{Entries}]",
-                perfEntries.Count, jobId, string.Join(", ", perfEntries.Select(e => e.FullName)));
+            logger.LogInformation("Found {Count} profiling entries in zip for job {JobId}: [{Entries}]",
+                profilingEntries.Count, jobId, string.Join(", ", profilingEntries.Select(e => e.FullName)));
 
-            // Read all entry data into memory
-            var perfData = new List<(string FullName, string Name, byte[] Data)>(perfEntries.Count);
-            foreach (var entry in perfEntries)
+            var perfData = new List<(string FullName, string Name, byte[] Data)>();
+            var gcData = new List<(string FullName, string Name, byte[] Data)>();
+            foreach (var entry in profilingEntries)
             {
                 using var entryStream = entry.Open();
                 using var ms = new MemoryStream();
                 await entryStream.CopyToAsync(ms, ct);
-                perfData.Add((entry.FullName, entry.Name, ms.ToArray()));
+                var data = (entry.FullName, entry.Name, ms.ToArray());
+                if (entry.FullName.StartsWith("perf/", StringComparison.OrdinalIgnoreCase))
+                    perfData.Add(data);
+                else
+                    gcData.Add(data);
             }
 
-            // Save to local filesystem and serve via self-hosted endpoints
-            return SavePerfArtifactsLocally(perfData, jobId, baseUrl);
+            var sections = new[]
+            {
+                perfData.Count > 0 ? SavePerfArtifactsLocally(perfData, jobId, baseUrl) : null,
+                gcData.Count > 0 ? SaveGcArtifactsLocally(gcData, jobId, baseUrl) : null,
+            };
+            var markdown = string.Concat(sections.Where(section => section is not null));
+            return markdown.Length > 0 ? markdown : null;
         }
         catch (Exception ex)
         {
@@ -77,6 +82,20 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
             return null;
         }
     }
+
+    private static bool IsPerfArtifact(ZipArchiveEntry entry) =>
+        entry.FullName.StartsWith("perf/", StringComparison.OrdinalIgnoreCase)
+        && (entry.Name.EndsWith(".asm", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.EndsWith(".stats", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.Equals("perf_events.txt", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsGcArtifact(ZipArchiveEntry entry) =>
+        entry.FullName.StartsWith("gc/", StringComparison.OrdinalIgnoreCase)
+        && (entry.Name.EndsWith(".nettrace", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase));
 
     // ── Local filesystem storage ────────────────────────────────────────
 
@@ -201,6 +220,81 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
         sb.AppendLine("</details>");
         logger.LogInformation("Saved {Count}/{Total} perf artifacts locally for job {JobId}", savedCount, perfData.Count, jobId);
         return savedCount > 0 ? sb.ToString() : null;
+    }
+
+    private string? SaveGcArtifactsLocally(
+        List<(string FullName, string Name, byte[] Data)> gcData,
+        Guid jobId,
+        string baseUrl)
+    {
+        var artifactsDir = GetLocalArtifactsDir(jobId);
+        var links = new SortedDictionary<string, Dictionary<string, string>>(
+            StringComparer.OrdinalIgnoreCase);
+        var savedCount = 0;
+
+        foreach (var entry in gcData)
+        {
+            try
+            {
+                var localPath = Path.GetFullPath(Path.Combine(
+                    artifactsDir, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
+                if (!localPath.StartsWith(
+                        Path.GetFullPath(artifactsDir) + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogWarning(
+                        "Skipping GC artifact with suspicious path '{Entry}' for job {JobId}",
+                        entry.FullName, jobId);
+                    continue;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
+                File.WriteAllBytes(localPath, entry.Data);
+                savedCount++;
+
+                var label = Path.GetFileNameWithoutExtension(entry.Name);
+                var kind = entry.Name.EndsWith(".nettrace", StringComparison.OrdinalIgnoreCase)
+                    ? "trace"
+                    : "metrics";
+                var url = $"{baseUrl.TrimEnd('/')}/api/jobs/{jobId}/artifacts/{entry.FullName}";
+                if (!links.TryGetValue(label, out var labelLinks))
+                {
+                    labelLinks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    links[label] = labelLinks;
+                }
+                labelLinks[kind] = $"[download]({url})";
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex, "Failed to save GC artifact '{Entry}' locally for job {JobId}",
+                    entry.FullName, jobId);
+            }
+        }
+
+        if (savedCount == 0)
+            return null;
+
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine("<details>");
+        sb.AppendLine("<summary>GC profiling artifacts</summary>");
+        sb.AppendLine();
+        sb.AppendLine("| Runtime | dotnet-trace | Metrics JSON |");
+        sb.AppendLine("|---|---:|---:|");
+        foreach (var (label, labelLinks) in links)
+        {
+            labelLinks.TryGetValue("trace", out var traceLink);
+            labelLinks.TryGetValue("metrics", out var metricsLink);
+            sb.AppendLine($"| {label} | {traceLink ?? ""} | {metricsLink ?? ""} |");
+        }
+        sb.AppendLine();
+        sb.AppendLine("</details>");
+
+        logger.LogInformation(
+            "Saved {Count}/{Total} GC artifacts locally for job {JobId}",
+            savedCount, gcData.Count, jobId);
+        return sb.ToString();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

@@ -251,6 +251,11 @@ public sealed class CloudInitBuilder(IConfiguration config)
             parts.Add("--perf_enabled 1");
         }
 
+        if (job.UseGcProfiler)
+        {
+            parts.Add("--gc_profiler 1");
+        }
+
         if (!string.IsNullOrWhiteSpace(job.PerfStatEvents))
         {
             parts.Add($"--perf_stat_events \"{job.PerfStatEvents}\"");

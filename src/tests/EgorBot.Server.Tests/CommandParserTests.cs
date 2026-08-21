@@ -295,6 +295,37 @@ public class CommandParserTests
     }
 
     [Fact]
+    public void Orchard_GcProfiler_IsIndependentAndCanCombineWithPerf()
+    {
+        var gcOnly = CommandParser.Parse(
+            "@EgorBot orchard -arm -gcprofiler", contextPrNumber: 42);
+        var combined = CommandParser.Parse(
+            "@EgorBot orchard -amd -profiler -gcprofiler", contextPrNumber: 42);
+
+        Assert.NotNull(gcOnly);
+        Assert.Null(gcOnly!.ErrorMessage);
+        Assert.True(gcOnly.UseGcProfiler);
+        Assert.False(gcOnly.UseProfiler);
+
+        Assert.NotNull(combined);
+        Assert.Null(combined!.ErrorMessage);
+        Assert.True(combined.UseGcProfiler);
+        Assert.True(combined.UseProfiler);
+        Assert.Null(combined.BdnArguments);
+    }
+
+    [Fact]
+    public void GcProfiler_IsRejectedForBdn()
+    {
+        var cmd = CommandParser.Parse("@EgorBot -arm -gcprofiler --filter *Foo*");
+
+        Assert.NotNull(cmd);
+        Assert.NotNull(cmd!.ErrorMessage);
+        Assert.Contains("only", cmd.ErrorMessage);
+        Assert.Contains("orchard", cmd.ErrorMessage);
+    }
+
+    [Fact]
     public void Orchard_IgnoresASnippetInsteadOfValidatingIt()
     {
         // The snippet is meaningless here — and must not trigger BDN entrypoint validation.

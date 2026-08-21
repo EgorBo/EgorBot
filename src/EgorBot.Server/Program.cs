@@ -165,6 +165,14 @@ api.MapPost("/jobs", async (
         });
     }
 
+    if (request.UseGcProfiler && request.Kind != BenchmarkKind.Orchard)
+    {
+        return Results.BadRequest(new
+        {
+            error = "GC profiling is supported only by the 'orchard' benchmark."
+        });
+    }
+
     // These end up interpolated into the VM bootstrap command line
     // (CloudInitBuilder → --gh_commits_and_prs "..."), so anything that could break
     // out of the quoting must be rejected here rather than executed on the VM.
@@ -212,6 +220,7 @@ api.MapPost("/jobs", async (
                 Kind = request.Kind,
                 CommitsAndPrs = commitsAndPrs,
                 UseProfiler = orchardProfiler,
+                UseGcProfiler = request.UseGcProfiler,
                 PerfStatEvents = orchardProfiler ? perfStatEvents : null,
                 Attempts = request.Attempts,
                 RequestedBy = request.RequestedBy,
@@ -422,7 +431,7 @@ api.MapGet("/jobs/{id:guid}/logs/full", async (Guid id, AppDbContext db) =>
     return Results.Text(sb.ToString(), "text/plain");
 });
 
-// GET /api/jobs/{id}/artifacts/{**path} — serve locally-stored perf artifacts
+// GET /api/jobs/{id}/artifacts/{**path} — serve locally-stored profiling artifacts
 api.MapGet("/jobs/{id:guid}/artifacts/{**path}", async (Guid id, string path) =>
 {
     if (string.IsNullOrEmpty(path))
@@ -444,6 +453,8 @@ api.MapGet("/jobs/{id:guid}/artifacts/{**path}", async (Guid id, string path) =>
     {
         _ when path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) => "image/svg+xml",
         _ when path.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase) => "application/json",
+        _ when path.EndsWith(".json", StringComparison.OrdinalIgnoreCase) => "application/json",
+        _ when path.EndsWith(".nettrace", StringComparison.OrdinalIgnoreCase) => "application/octet-stream",
         _ => "text/plain; charset=utf-8",
     };
 
@@ -625,18 +636,18 @@ internalApi.MapPost("/jobs/{id:guid}/complete", async (Guid id, HttpContext ctx,
                 log.LogInformation("[Job {JobId}] Result markdown length={Len}", id, markdown?.Length ?? 0);
 
                 // Extract and save profiling artifacts locally (if profiling was enabled)
-                if (job?.UseProfiler == true)
+                if (job?.UseProfiler == true || job?.UseGcProfiler == true)
                 {
                     ms.Position = 0;
-                    var perfLinks = await logUploadService.UploadPerfArtifactsAsync(ms, id);
-                    if (perfLinks is not null)
+                    var profilingLinks = await logUploadService.UploadProfilingArtifactsAsync(ms, id);
+                    if (profilingLinks is not null)
                     {
-                        markdown += perfLinks;
-                        log.LogInformation("[Job {JobId}] Appended perf artifact links to markdown", id);
+                        markdown += profilingLinks;
+                        log.LogInformation("[Job {JobId}] Appended profiling artifact links to markdown", id);
                     }
                     else
                     {
-                        log.LogWarning("[Job {JobId}] Profiling was enabled but no perf artifacts found in zip", id);
+                        log.LogWarning("[Job {JobId}] Profiling was enabled but no profiling artifacts were found in zip", id);
                     }
                 }
             }
