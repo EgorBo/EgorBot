@@ -25,6 +25,14 @@ PERF_BIN: str = ""
 DEFAULT_STAT_EVENTS = ("task-clock,cycles,instructions,branches,branch-misses,"
                        "cache-misses,cache-references,context-switches,cpu-migrations,page-faults")
 
+PERF_SOURCE_REPOSITORIES = (
+    "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git",
+    "https://github.com/torvalds/linux.git",
+)
+PERF_CLONE_ATTEMPTS_PER_REPOSITORY = 2
+PERF_CLONE_TIMEOUT_SECONDS = 10 * 60
+PERF_CLONE_RETRY_DELAY_SECONDS = 10
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  setup_platform (optional — Linux needs HOME set)
@@ -92,6 +100,45 @@ def _system_perf_works() -> bool:
 #  Build perf from source
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _clone_perf_sources(linux_src: Path) -> bool:
+    for repository in PERF_SOURCE_REPOSITORIES:
+        for attempt in range(1, PERF_CLONE_ATTEMPTS_PER_REPOSITORY + 1):
+            if linux_src.exists():
+                shutil.rmtree(linux_src, ignore_errors=True)
+            if linux_src.exists():
+                common.post_log(
+                    f"WARNING: could not remove partial kernel checkout at {linux_src}")
+                return False
+
+            common.post_log(
+                f"Cloning kernel sources from {repository} "
+                f"(attempt {attempt}/{PERF_CLONE_ATTEMPTS_PER_REPOSITORY})...")
+            result = common.run(
+                [
+                    "git", "clone", "--depth", "1", "--filter=blob:none",
+                    repository, str(linux_src),
+                ],
+                shell=False,
+                check=False,
+                timeout_seconds=PERF_CLONE_TIMEOUT_SECONDS,
+            )
+            if result.returncode == 0 and (linux_src / "tools" / "perf").is_dir():
+                return True
+
+            common.post_log(
+                f"WARNING: kernel source clone failed from {repository} "
+                f"(exit {result.returncode})")
+            if attempt < PERF_CLONE_ATTEMPTS_PER_REPOSITORY:
+                time.sleep(PERF_CLONE_RETRY_DELAY_SECONDS)
+
+    if linux_src.exists():
+        shutil.rmtree(linux_src, ignore_errors=True)
+    common.post_log(
+        "WARNING: perf source checkout failed from all mirrors; "
+        "continuing without perf profiling")
+    return False
+
+
 def _build_perf_from_source():
     """Compile perf from the kernel source tree and set PERF_BIN."""
     global PERF_BIN
@@ -113,10 +160,8 @@ def _build_perf_from_source():
 
     # Clone a shallow copy of the kernel tree
     linux_src = common.WORK_DIR / "linux"
-    if not linux_src.is_dir():
-        common.run(
-            f'git clone --depth 1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git "{linux_src}"',
-        )
+    if not (linux_src / "tools" / "perf").is_dir() and not _clone_perf_sources(linux_src):
+        return
 
     perf_src = linux_src / "tools" / "perf"
     common.run("make clean || true", cwd=perf_src, check=False)
