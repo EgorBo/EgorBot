@@ -12,6 +12,7 @@ public static class DatabaseInitializer
     public static async Task InitializeAsync(
         AppDbContext db,
         ILogger logger,
+        int defaultCores = 8,
         CancellationToken cancellationToken = default)
     {
         await db.Database.EnsureCreatedAsync(cancellationToken);
@@ -20,6 +21,7 @@ public static class DatabaseInitializer
         [
             ("Jobs", "PerfStatEvents", "TEXT NULL"),
             ("Jobs", "UseGcProfiler", "INTEGER NOT NULL DEFAULT 0"),
+            ("Jobs", "RentedCores", "INTEGER NOT NULL DEFAULT 0"),
             // NOT NULL + default: the column is read back into a non-nullable enum,
             // so pre-existing rows must not be left as NULL.
             ("Jobs", "Kind", "TEXT NOT NULL DEFAULT 'Bdn'"),
@@ -28,6 +30,7 @@ public static class DatabaseInitializer
         var connection = db.Database.GetDbConnection();
         await connection.OpenAsync(cancellationToken);
 
+        var addedRentedCores = false;
         foreach (var (table, column, type) in addedColumns)
         {
             if (await ColumnExistsAsync(connection, table, column, cancellationToken))
@@ -37,6 +40,22 @@ public static class DatabaseInitializer
             var alterSql = "ALTER TABLE " + table + " ADD COLUMN " + column + " " + type + ";";
             await db.Database.ExecuteSqlRawAsync(alterSql, cancellationToken);
             logger.LogWarning("Added missing column {Table}.{Column} to the existing database", table, column);
+            if (table == "Jobs" && column == "RentedCores")
+                addedRentedCores = true;
+        }
+
+        if (addedRentedCores)
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                 UPDATE "Jobs"
+                 SET "RentedCores" = {defaultCores}
+                 WHERE "Status" IN ('Provisioning', 'Running');
+                 """,
+                cancellationToken);
+            logger.LogWarning(
+                "Backfilled {Cores} rented cores for active jobs from the previous schema",
+                defaultCores);
         }
 
         var hadAdmissions = await TableExistsAsync(connection, "JobAdmissions", cancellationToken);

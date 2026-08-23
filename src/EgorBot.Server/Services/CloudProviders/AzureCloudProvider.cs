@@ -483,27 +483,23 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             // InstanceId = resource group name (used for deprovisioning)
             return new ProvisionResult(resourceGroupName, publicIp);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception provisioningError)
         {
-            logger.LogError(ex, "[{JobId}] Azure provisioning failed: {Message}", request.JobId, ex.Message);
+            logger.LogError(
+                provisioningError,
+                "[{JobId}] Azure provisioning failed: {Message}",
+                request.JobId,
+                provisioningError.Message);
 
-            // Clean up partially-created resource group on failure
             try
             {
-                var rgName = $"egorbot-{request.JobId}";
-                var armClient = CreateArmClient();
-                var sub = await armClient.GetDefaultSubscriptionAsync(ct);
-                var rgResponse = await sub.GetResourceGroups().GetIfExistsAsync(rgName, ct);
-                if (rgResponse?.Value is not null)
-                {
-                    logger.LogInformation("[{JobId}] Cleaning up resource group '{RG}' after failure",
-                        request.JobId, rgName);
-                    await rgResponse.Value.DeleteAsync(WaitUntil.Started, cancellationToken: ct);
-                }
+                await DeprovisionAsync(
+                    $"egorbot-{request.JobId}", CancellationToken.None);
             }
-            catch (Exception cleanupEx)
+            catch (Exception cleanupError)
             {
-                logger.LogWarning(cleanupEx, "[{JobId}] Failed to clean up resource group", request.JobId);
+                throw new ProvisioningCleanupException(
+                    $"egorbot-{request.JobId}", provisioningError, cleanupError);
             }
 
             throw;
@@ -537,7 +533,16 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
         catch (Exception ex)
         {
             logger.LogError(ex, "Azure: failed to delete resource group '{RG}'", instanceId);
+            throw;
         }
+    }
+
+    public async Task<bool> TryDeprovisionByJobIdAsync(
+        string jobId,
+        CancellationToken ct = default)
+    {
+        await DeprovisionAsync($"egorbot-{jobId}", ct);
+        return true;
     }
 
     public async Task<IReadOnlyList<string>> ListActiveVmsAsync(CancellationToken ct = default)

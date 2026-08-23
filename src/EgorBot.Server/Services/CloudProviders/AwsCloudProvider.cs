@@ -85,6 +85,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
             logger.LogWarning("All AWS provisioning slots are busy — waiting...");
 
         await _semaphore.WaitAsync(ct);
+        string? launchedInstanceId = null;
         try
         {
             using var ec2 = CreateEc2Client();
@@ -111,6 +112,7 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
 
             var runRequest = new RunInstancesRequest
             {
+                ClientToken = request.JobId,
                 ImageId = imageId,
                 InstanceType = instanceType,
                 MinCount = 1,
@@ -133,12 +135,21 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
                             VolumeType = VolumeType.Gp3
                         }
                     }
+                ],
+                TagSpecifications =
+                [
+                    new TagSpecification
+                    {
+                        ResourceType = ResourceType.Instance,
+                        Tags = [new Tag("EgorBotJobId", request.JobId)]
+                    }
                 ]
             };
 
             var runResponse = await ec2.RunInstancesAsync(runRequest, ct);
             var instance = runResponse.Reservation.Instances[0];
             var instanceId = instance.InstanceId;
+            launchedInstanceId = instanceId;
 
             logger.LogInformation("[{JobId}] EC2 instance launched: {InstanceId}", request.JobId, instanceId);
 
@@ -181,6 +192,21 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
 
             return new ProvisionResult(instanceId, publicIp);
         }
+        catch (Exception provisioningError)
+        {
+            var resourceId = launchedInstanceId ?? $"job:{request.JobId}";
+            try
+            {
+                await DeprovisionAsync(resourceId, CancellationToken.None);
+            }
+            catch (Exception cleanupError)
+            {
+                throw new ProvisioningCleanupException(
+                    resourceId, provisioningError, cleanupError);
+            }
+
+            throw;
+        }
         finally
         {
             _semaphore.Release();
@@ -192,6 +218,19 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
         try
         {
             using var ec2 = CreateEc2Client();
+            if (instanceId.StartsWith("job:", StringComparison.Ordinal))
+            {
+                var jobId = instanceId["job:".Length..];
+                var discovered = await FindInstanceByJobIdAsync(ec2, jobId, ct);
+                if (discovered is null)
+                {
+                    logger.LogInformation("No EC2 instance found for job {JobId}", jobId);
+                    return;
+                }
+
+                instanceId = discovered;
+            }
+
             var response = await ec2.TerminateInstancesAsync(
                 new TerminateInstancesRequest { InstanceIds = [instanceId] }, ct);
 
@@ -200,11 +239,78 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
                 logger.LogInformation("EC2 instance {Id} → {State}",
                     change.InstanceId, change.CurrentState.Name);
             }
+
+            var timeout = TimeSpan.FromMinutes(config.GetValue("Aws:TerminationTimeoutMinutes", 10));
+            var pollInterval = TimeSpan.FromSeconds(config.GetValue("Aws:TerminationPollSeconds", 5));
+            var deadline = DateTime.UtcNow + timeout;
+
+            while (DateTime.UtcNow < deadline)
+            {
+                var describe = await ec2.DescribeInstancesAsync(
+                    new DescribeInstancesRequest { InstanceIds = [instanceId] }, ct);
+                var instance = describe.Reservations.SelectMany(r => r.Instances).FirstOrDefault();
+
+                if (instance is null || instance.State.Name == InstanceStateName.Terminated)
+                {
+                    logger.LogInformation("EC2 instance {Id} terminated", instanceId);
+                    return;
+                }
+
+                await Task.Delay(pollInterval, ct);
+            }
+
+            throw new TimeoutException(
+                $"EC2 instance {instanceId} did not reach the terminated state within {timeout.TotalMinutes:F0} minutes.");
+        }
+        catch (AmazonEC2Exception ex) when (ex.ErrorCode == "InvalidInstanceID.NotFound")
+        {
+            logger.LogInformation("EC2 instance {Id} no longer exists", instanceId);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to terminate EC2 instance {Id}", instanceId);
+            throw;
         }
+    }
+
+    public async Task<bool> TryDeprovisionByJobIdAsync(
+        string jobId,
+        CancellationToken ct = default)
+    {
+        await DeprovisionAsync($"job:{jobId}", ct);
+        return true;
+    }
+
+    private static async Task<string?> FindInstanceByJobIdAsync(
+        AmazonEC2Client ec2,
+        string jobId,
+        CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var response = await ec2.DescribeInstancesAsync(
+                new DescribeInstancesRequest
+                {
+                    Filters =
+                    [
+                        new Filter("tag:EgorBotJobId", [jobId]),
+                        new Filter(
+                            "instance-state-name",
+                            ["pending", "running", "stopping", "stopped"])
+                    ]
+                },
+                ct);
+            var instance = response.Reservations
+                .SelectMany(r => r.Instances)
+                .FirstOrDefault();
+            if (instance is not null)
+                return instance.InstanceId;
+
+            if (attempt < 4)
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        }
+
+        return null;
     }
 
     public async Task<IReadOnlyList<string>> ListActiveVmsAsync(CancellationToken ct = default)

@@ -78,10 +78,11 @@ public class CorePoolManagerTests
         Assert.Equal(1, Snapshot(pool).Waiters);
 
         await cts.CancelAsync();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
 
-        // The dead waiter must be gone immediately, not left blocking the queue
+        // Cancellation itself must remove the dead FIFO waiter; the orchestrator does
+        // not await this RentAsync task when an admin cancellation arrives.
         Assert.Equal(0, Snapshot(pool).Waiters);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
 
         pool.Return(Platform, 32);
 

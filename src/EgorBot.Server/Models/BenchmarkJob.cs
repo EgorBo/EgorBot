@@ -81,6 +81,12 @@ public class BenchmarkJob
     [MaxLength(256)]
     public string? CloudProviderInstanceId { get; set; }
 
+    /// <summary>
+    /// Pool cores held until cloud teardown is confirmed. Persisted so failed
+    /// cleanup cannot be forgotten when the service restarts.
+    /// </summary>
+    public int RentedCores { get; set; }
+
     [InverseProperty(nameof(JobLogEntry.Job))]
     public ICollection<JobLogEntry> LogEntries { get; set; } = [];
 }

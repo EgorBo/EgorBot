@@ -96,9 +96,9 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
         }
         catch (Exception ex)
         {
-            // Cancellation is best-effort; the job may have already finished
-            logger.LogWarning(ex, "Helix: failed to cancel job '{CorrelationId}' (may have already finished)",
+            logger.LogError(ex, "Helix: failed to cancel job '{CorrelationId}'",
                 instanceId);
+            throw;
         }
     }
 

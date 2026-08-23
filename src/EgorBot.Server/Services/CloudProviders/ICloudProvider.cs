@@ -13,8 +13,18 @@ public interface ICloudProvider
     /// <summary>Provision a VM (or local process) and return its instance identifier.</summary>
     Task<ProvisionResult> ProvisionAsync(ProvisionRequest request, CancellationToken ct = default);
 
-    /// <summary>Tear down the VM / kill the process.</summary>
+    /// <summary>
+    /// Tear down the VM / kill the process. Completes only after the resource no longer
+    /// consumes provisioning quota, and throws when teardown cannot be confirmed.
+    /// </summary>
     Task DeprovisionAsync(string instanceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reconcile a provisioning attempt whose provider instance ID was not persisted
+    /// before a service restart. Returns true only when absence or cleanup is confirmed.
+    /// </summary>
+    Task<bool> TryDeprovisionByJobIdAsync(string jobId, CancellationToken ct = default)
+        => Task.FromResult(false);
 
     /// <summary>
     /// List the names/identifiers of all currently active VMs in this provider.
@@ -35,3 +45,18 @@ public sealed record ProvisionRequest(
 public sealed record ProvisionResult(
     string InstanceId,
     string? IpAddress = null);
+
+/// <summary>
+/// Provisioning failed after a resource was created, and the provider could not
+/// confirm cleanup. The orchestrator must retry teardown and retain quota meanwhile.
+/// </summary>
+public sealed class ProvisioningCleanupException(
+    string instanceId,
+    Exception provisioningError,
+    Exception cleanupError)
+    : Exception(
+        $"Provisioning failed and cleanup of resource '{instanceId}' could not be confirmed.",
+        new AggregateException(provisioningError, cleanupError))
+{
+    public string InstanceId { get; } = instanceId;
+}

@@ -179,7 +179,21 @@ public sealed class CorePoolManager : IDisposable
         }
 
         // Wait outside the lock
-        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+        using var reg = ct.Register(() =>
+        {
+            // Remove the waiter as part of cancellation itself. The orchestrator does
+            // not await RentAsync when an admin cancels a job, so relying on its catch
+            // block would leave a dead FIFO waiter visible for a scheduler turn.
+            lock (_lock)
+            {
+                if (node.List is not null)
+                {
+                    pool.Waiters.Remove(node);
+                    DrainWaiters(pool);
+                }
+            }
+            tcs.TrySetCanceled(ct);
+        });
         try
         {
             await tcs.Task;
@@ -239,6 +253,27 @@ public sealed class CorePoolManager : IDisposable
 
             // Wake FIFO waiters while we have capacity
             DrainWaiters(pool);
+        }
+    }
+
+    /// <summary>
+    /// Restore persisted usage after a restart when cloud teardown could not be
+    /// confirmed. This may make available capacity negative when external usage
+    /// exceeds the currently configured quota.
+    /// </summary>
+    public void Restore(string platform, int cores)
+    {
+        if (cores <= 0)
+            return;
+
+        var target = TargetCatalog.GetTarget(platform);
+        lock (_lock)
+        {
+            var pool = GetOrCreatePool(target);
+            pool.UsedCores += cores;
+            _logger.LogWarning(
+                "CorePool: restored {Cores} retained cores for '{Platform}'. Used={Used}/{Total}",
+                cores, platform, pool.UsedCores, pool.TotalCores);
         }
     }
 

@@ -12,6 +12,7 @@ namespace EgorBot.Server.Services.Notifications;
 /// Background service that polls the Telegram Bot API for incoming messages from admins.
 /// Supported commands:
 ///   jobs   — list active (non-terminal) jobs
+///   cancel [job-guid] — cancel one job, or all active jobs when no GUID is supplied
 ///   set_max_jobs_per_user USER N — persist a rolling 24h limit override
 ///   set_max_jobs_per_request N — persist the global per-request limit
 ///   quit   — gracefully shut down the application
@@ -156,44 +157,18 @@ public sealed class TelegramCommandService(
     {
         // Strip leading '/' (Telegram sends /jobs, /quit, etc.) and any "@BotName" suffix
         var command = text.TrimStart('/').Trim().ToLowerInvariant();
-        var atIndex = command.IndexOf('@');
-        if (atIndex > 0 && !command.Contains(' '))
-            command = command[..atIndex];
 
         if (command.Length == 0)
             return;
 
-        const string setMaxJobsCommand = "set_max_jobs_per_user";
-        if (command.StartsWith(setMaxJobsCommand, StringComparison.Ordinal))
-        {
-            var argument = command[setMaxJobsCommand.Length..];
-            if (argument.StartsWith('@'))
-            {
-                var separator = argument.IndexOf(' ');
-                argument = separator >= 0 ? argument[separator..] : "";
-            }
+        var parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var commandName = parts[0];
+        var argument = parts.Length == 2 ? parts[1] : null;
+        var atIndex = commandName.IndexOf('@');
+        if (atIndex > 0)
+            commandName = commandName[..atIndex];
 
-            await HandleSetMaxJobsPerUserAsync(
-                string.IsNullOrWhiteSpace(argument) ? null : argument.Trim(), ct);
-            return;
-        }
-
-        const string setRequestLimitCommand = "set_max_jobs_per_request";
-        if (command.StartsWith(setRequestLimitCommand, StringComparison.Ordinal))
-        {
-            var argument = command[setRequestLimitCommand.Length..];
-            if (argument.StartsWith('@'))
-            {
-                var separator = argument.IndexOf(' ');
-                argument = separator >= 0 ? argument[separator..] : "";
-            }
-
-            await HandleSetMaxJobsPerRequestAsync(
-                string.IsNullOrWhiteSpace(argument) ? null : argument.Trim(), ct);
-            return;
-        }
-
-        switch (command)
+        switch (commandName)
         {
             case "jobs":
                 await HandleJobsCommandAsync(ct);
@@ -203,12 +178,23 @@ public sealed class TelegramCommandService(
                 await HandleAllVmsCommandAsync(ct);
                 break;
             case "cancelall":
-            case "cancel":
                 await HandleCancelAllAsync(ct);
+                break;
+            case "cancel":
+                if (argument is null)
+                    await HandleCancelAllAsync(ct);
+                else
+                    await HandleCancelJobAsync(argument);
                 break;
             case "quota":
             case "quotas":
                 await HandleQuotaCommandAsync(ct);
+                break;
+            case "set_max_jobs_per_user":
+                await HandleSetMaxJobsPerUserAsync(argument, ct);
+                break;
+            case "set_max_jobs_per_request":
+                await HandleSetMaxJobsPerRequestAsync(argument, ct);
                 break;
             case "quit":
             case "stop":
@@ -231,9 +217,10 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`quota` — show real cloud vCPU quotas (used/limit per family)");
                 sb.AppendLine("`set_max_jobs_per_user USER N` — override a user's rolling 24h job limit");
                 sb.AppendLine("`set_max_jobs_per_user USER default` — remove the override");
-                sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
                 sb.AppendLine("`set_max_jobs_per_request N` — set the global jobs-per-request limit");
                 sb.AppendLine("`set_max_jobs_per_request default` — restore the configured default");
+                sb.AppendLine("`cancel GUID` — cancel one active job and deprovision its VM");
+                sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
                 sb.AppendLine("`quit` — shut down the service");
                 sb.AppendLine("`help` — show this message");
                 if (_customCommands.Count > 0)
@@ -247,21 +234,20 @@ public sealed class TelegramCommandService(
                 break;
             }
             default:
-                if (command.StartsWith("cores"))
+                if (commandName == "cores")
                 {
                     await HandleCoresCommandAsync(command);
                     break;
                 }
-                if (command.StartsWith("pool"))
+                if (commandName == "pool")
                 {
                     await HandlePoolCommandAsync(command);
                     break;
                 }
                 // Check custom commands (registered in config)
-                var parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length > 0 && _customCommands.TryGetValue(parts[0], out var bashCmd))
+                if (_customCommands.TryGetValue(commandName, out var bashCmd))
                 {
-                    _ = HandleCustomCommandAsync(parts[0], bashCmd, ct);
+                    _ = HandleCustomCommandAsync(commandName, bashCmd, ct);
                     break;
                 }
                 await SendReplyAsync($"Unknown command: `{EscapeMarkdown(command)}`\nSend `help` for available commands.");
@@ -311,7 +297,7 @@ public sealed class TelegramCommandService(
                 _ => "❓"
             };
 
-            sb.AppendLine($"{statusEmoji} `{job.Id.ToString()[..8]}` {EscapeMarkdown(job.Platform)} ({ageStr})");
+            sb.AppendLine($"{statusEmoji} `{job.Id}` {EscapeMarkdown(job.Platform)} ({ageStr})");
             sb.AppendLine($"    Commits: `{job.CommitsAndPrs}`");
             if (!string.IsNullOrEmpty(job.RequestedBy))
                 sb.AppendLine($"    By: @{job.RequestedBy}");
@@ -370,6 +356,21 @@ public sealed class TelegramCommandService(
         await SendReplyAsync(count > 0
             ? $"✅ Cancelled {count} job(s) and deprovisioned their VMs."
             : "No active jobs to cancel.");
+    }
+
+    private async Task HandleCancelJobAsync(string argument)
+    {
+        if (!Guid.TryParse(argument, out var jobId))
+        {
+            await SendReplyAsync("Usage: `cancel <full-job-guid>`");
+            return;
+        }
+
+        await SendReplyAsync($"🔄 Cancelling job `{jobId}`...");
+        var cancelled = await orchestrator.CancelJobAsync(jobId);
+        await SendReplyAsync(cancelled
+            ? $"✅ Cancelled job `{jobId}`. Its cores will be returned after VM deprovisioning succeeds."
+            : $"No active job found with ID `{jobId}`.");
     }
 
     private async Task HandleCustomCommandAsync(string name, string bashCommand, CancellationToken ct)
@@ -505,7 +506,7 @@ public sealed class TelegramCommandService(
 
         if (parts.Length > 1 && parts[1] is "reset" or "clear")
         {
-            var leaked = corePool.ResetAll();
+            var leaked = await orchestrator.ResetCorePoolAsync();
             logger.LogWarning("Admin reset the core pool ({Cores} cores were marked as used)", leaked);
             await SendReplyAsync($"♻️ Core pool reset — released *{leaked}* core(s) that were marked as in use.");
             return;
@@ -601,6 +602,7 @@ public sealed class TelegramCommandService(
             await SendReplyAsync($"❌ {EscapeMarkdown(ex.Message)}");
         }
     }
+
     private async Task HandleSetMaxJobsPerRequestAsync(
         string? argument,
         CancellationToken ct)

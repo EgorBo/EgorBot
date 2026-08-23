@@ -37,6 +37,8 @@ public sealed class JobOrchestrator(
     /// <summary>Per-job cancellation sources, so admin cancellation can unblock jobs
     /// that are waiting for cores or for a VM (they are not waiting on the completion TCS).</summary>
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _jobCts = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _terminalGates = new();
+    private readonly SemaphoreSlim _rentLifecycleGate = new(1, 1);
 
     /// <summary>Jobs cancelled by an admin. Also covers jobs that are still sitting in
     /// the queue, so they are not provisioned after the cancel.</summary>
@@ -44,6 +46,13 @@ public sealed class JobOrchestrator(
 
     /// <summary>Number of jobs currently holding cores from the pool.</summary>
     private int _activeRents;
+    private int _pendingRents;
+
+    /// <summary>
+    /// Core rents deliberately kept after cloud teardown failed. Releasing these would
+    /// let the queue exceed the real cloud quota while the orphaned VM still exists.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, (string Platform, int Cores)> _retainedRents = new();
 
     private readonly int _maxConcurrentJobs = config.GetValue("EgorBot:MaxConcurrentJobs", 4);
     private readonly TimeSpan _jobTimeout = TimeSpan.FromMinutes(config.GetValue("EgorBot:JobTimeoutMinutes", 60));
@@ -82,6 +91,20 @@ public sealed class JobOrchestrator(
     }
 
     /// <summary>
+    /// Cancel one active job. Its processing loop owns final cleanup, including returning
+    /// any rented cores; queued jobs are marked so they cannot start after cancellation.
+    /// Returns false when the job does not exist or is already terminal.
+    /// </summary>
+    public async Task<bool> CancelJobAsync(Guid jobId)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var job = await db.Jobs.FindAsync(jobId);
+        return job is not null
+            && await CancelActiveJobAsync(db, job, "CancelJob");
+    }
+
+    /// <summary>
     /// Cancel all active jobs, mark them as Cancelled, and deprovision their VMs.
     /// Returns the number of jobs cancelled.
     /// </summary>
@@ -96,6 +119,7 @@ public sealed class JobOrchestrator(
                      || j.Status == JobStatus.Running)
             .ToListAsync();
 
+        var cancelledCount = 0;
         foreach (var job in activeJobs)
         {
             // One bad job (unknown platform, cloud API error, ...) must not abort
@@ -103,45 +127,8 @@ public sealed class JobOrchestrator(
             // holding cores while the admin thinks everything was cancelled.
             try
             {
-                logger.LogWarning("CancelAllJobs: cancelling job {JobId} (status={Status}, platform={Platform})",
-                    job.Id, job.Status, job.Platform);
-
-                job.Status = JobStatus.Cancelled;
-                job.ErrorMessage = "Cancelled by admin.";
-                job.CompletedAt = DateTime.UtcNow;
-
-                // Remember the cancellation: the job may still be queued (not started yet),
-                // in which case ProcessJobAsync must skip it instead of provisioning a VM.
-                _cancelled[job.Id] = 0;
-
-                // Signal the TCS so ProcessJobAsync unblocks and proceeds to cleanup
-                if (_completions.TryGetValue(job.Id, out var tcs))
-                    tcs.TrySetResult(new JobOutcome(Success: false, Error: "Cancelled by admin."));
-
-                // ...and cancel the job token, which unblocks jobs that are waiting for
-                // cores or are in the middle of provisioning (they don't await the TCS).
-                if (_jobCts.TryGetValue(job.Id, out var cts))
-                {
-                    try { await cts.CancelAsync(); }
-                    catch (Exception ex) { logger.LogWarning(ex, "CancelAllJobs: failed to cancel token for {JobId}", job.Id); }
-                }
-
-                // Deprovision VM/instance
-                if (job.CloudProviderInstanceId is not null)
-                {
-                    try
-                    {
-                        var provider = providerFactory.GetProvider(job.Platform);
-                        await provider.DeprovisionAsync(job.CloudProviderInstanceId, CancellationToken.None);
-                        logger.LogInformation("CancelAllJobs: deprovisioned {InstanceId} for job {JobId}",
-                            job.CloudProviderInstanceId, job.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "CancelAllJobs: failed to deprovision {InstanceId} for job {JobId}",
-                            job.CloudProviderInstanceId, job.Id);
-                    }
-                }
+                if (await CancelActiveJobAsync(db, job, "CancelAllJobs"))
+                    cancelledCount++;
             }
             catch (Exception ex)
             {
@@ -149,35 +136,175 @@ public sealed class JobOrchestrator(
             }
         }
 
-        try
-        {
-            if (activeJobs.Count > 0)
-                await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            // The jobs are cancelled in-memory either way; don't fail the command.
-            logger.LogError(ex, "CancelAllJobs: failed to persist cancelled job statuses");
-        }
-
         // If nothing holds cores anymore, whatever the pool still counts as "used" was
         // leaked by an earlier job. Reclaim it — this is the escape hatch for jobs stuck
         // on "Waiting for N cores from pool" while no VM exists. When jobs are still
         // winding down we leave the pool alone; they return their own cores.
-        var inFlight = Volatile.Read(ref _activeRents);
-        if (inFlight == 0)
+        await _rentLifecycleGate.WaitAsync();
+        try
         {
-            var leaked = corePool.ResetAll();
-            if (leaked > 0)
-                logger.LogWarning("CancelAllJobs: released {Cores} leaked core(s) from the pool", leaked);
+            var inFlight = Volatile.Read(ref _activeRents);
+            var pending = Volatile.Read(ref _pendingRents);
+            if (inFlight == 0 && pending == 0 && _retainedRents.IsEmpty)
+            {
+                var leaked = corePool.ResetAll();
+                if (leaked > 0)
+                    logger.LogWarning("CancelAllJobs: released {Cores} leaked core(s) from the pool", leaked);
+            }
+            else if (!_retainedRents.IsEmpty)
+            {
+                logger.LogWarning(
+                    "CancelAllJobs: {Count} rent(s) are retained because cloud teardown failed — skipping pool reset",
+                    _retainedRents.Count);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "CancelAllJobs: {Active} active and {Pending} pending rent(s) — skipping pool reset",
+                    inFlight,
+                    pending);
+            }
         }
-        else
+        finally
         {
-            logger.LogInformation("CancelAllJobs: {Count} job(s) still hold cores — skipping pool reset", inFlight);
+            _rentLifecycleGate.Release();
         }
 
-        return activeJobs.Count;
+        return cancelledCount;
     }
+
+    /// <summary>
+    /// Force-release all pool accounting, including rents retained after failed cloud
+    /// teardown. This is intentionally admin-only because the orphaned VM must be
+    /// removed separately before new provisioning is safe.
+    /// </summary>
+    public async Task<int> ResetCorePoolAsync()
+    {
+        await _rentLifecycleGate.WaitAsync();
+        try
+        {
+            if (Volatile.Read(ref _activeRents) > 0
+                || Volatile.Read(ref _pendingRents) > 0)
+            {
+                throw new InvalidOperationException(
+                    "Cannot reset the core pool while jobs are renting or holding cores. Cancel them first.");
+            }
+
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var retainedJobs = await db.Jobs
+                .Where(j => j.RentedCores > 0
+                         && j.Status != JobStatus.Pending
+                         && j.Status != JobStatus.Provisioning
+                         && j.Status != JobStatus.Running)
+                .ToListAsync();
+            foreach (var job in retainedJobs)
+            {
+                job.RentedCores = 0;
+                job.CloudProviderInstanceId = null;
+            }
+            if (retainedJobs.Count > 0)
+                await db.SaveChangesAsync();
+
+            _retainedRents.Clear();
+            return corePool.ResetAll();
+        }
+        finally
+        {
+            _rentLifecycleGate.Release();
+        }
+    }
+
+    private async Task<bool> CancelActiveJobAsync(
+        AppDbContext db,
+        BenchmarkJob job,
+        string operation)
+    {
+        var gate = GetTerminalGate(job.Id);
+        bool processOwnsCleanup;
+        CancellationTokenSource? cts;
+        await gate.WaitAsync();
+        try
+        {
+            await db.Entry(job).ReloadAsync();
+            if (!IsActive(job.Status))
+                return false;
+
+            logger.LogWarning(
+                "{Operation}: cancelling job {JobId} (status={Status}, platform={Platform})",
+                operation, job.Id, job.Status, job.Platform);
+
+            job.Status = JobStatus.Cancelled;
+            job.ErrorMessage = "Cancelled by admin.";
+            job.CompletedAt = DateTime.UtcNow;
+            _cancelled[job.Id] = 0;
+            processOwnsCleanup = _jobCts.TryGetValue(job.Id, out cts);
+            await db.SaveChangesAsync();
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        // Unblock jobs waiting for the agent to report completion.
+        if (_completions.TryGetValue(job.Id, out var completion))
+            completion.TrySetResult(new JobOutcome(Success: false, Error: "Cancelled by admin."));
+
+        // This also removes a core-pool waiter. If the job already holds cores,
+        // ProcessJobAsync returns them from its finally block after deprovisioning.
+        if (cts is not null)
+        {
+            try
+            {
+                await cts.CancelAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "{Operation}: failed to cancel token for {JobId}", operation, job.Id);
+            }
+        }
+
+        // Normally ProcessJobAsync owns deprovisioning. Handle an active database row
+        // left without a processing loop as a fallback, without racing a double teardown.
+        if (!processOwnsCleanup && job.CloudProviderInstanceId is not null)
+        {
+            try
+            {
+                var provider = providerFactory.GetProvider(job.Platform);
+                var instanceId = job.CloudProviderInstanceId;
+                await provider.DeprovisionAsync(instanceId, CancellationToken.None);
+                if (job.RentedCores > 0)
+                {
+                    _retainedRents.TryRemove(job.Id, out _);
+                    corePool.Return(job.Platform, job.RentedCores);
+                }
+                job.CloudProviderInstanceId = null;
+                job.RentedCores = 0;
+                await db.SaveChangesAsync();
+                logger.LogInformation("{Operation}: deprovisioned {InstanceId} for job {JobId}",
+                    operation, instanceId, job.Id);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "{Operation}: failed to deprovision {InstanceId} for job {JobId}",
+                    operation, job.CloudProviderInstanceId, job.Id);
+                if (job.RentedCores > 0
+                    && _retainedRents.TryAdd(
+                        job.Id, (job.Platform, job.RentedCores)))
+                {
+                    corePool.Restore(job.Platform, job.RentedCores);
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsActive(JobStatus status) =>
+        status is JobStatus.Pending or JobStatus.Provisioning or JobStatus.Running;
+
+    private SemaphoreSlim GetTerminalGate(Guid jobId) =>
+        _terminalGates.GetOrAdd(jobId, static _ => new SemaphoreSlim(1, 1));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -235,6 +362,7 @@ public sealed class JobOrchestrator(
         // returned verbatim: DefaultCores can change while the job runs (admin
         // `cores N` command) and returning a different amount leaks the difference.
         var rentedCores = 0;
+        var releaseRentedCores = true;
 
         var tcs = new TaskCompletionSource<JobOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         _completions[jobId] = tcs;
@@ -298,9 +426,38 @@ public sealed class JobOrchestrator(
                 jobId, coresToRent, job.Platform, poolState.Used, poolState.Total, poolState.Waiters);
             await AddLogAsync(db, jobId,
                 $"Waiting for {coresToRent} cores from pool ({poolState.Used}/{poolState.Total} in use, {poolState.Waiters} job(s) already queued)...");
-            await corePool.RentAsync(job.Platform, coresToRent, jobToken);
-            rentedCores = coresToRent;
-            Interlocked.Increment(ref _activeRents);
+            await _rentLifecycleGate.WaitAsync(jobToken);
+            try
+            {
+                Interlocked.Increment(ref _pendingRents);
+            }
+            finally
+            {
+                _rentLifecycleGate.Release();
+            }
+
+            try
+            {
+                await corePool.RentAsync(job.Platform, coresToRent, jobToken);
+            }
+            catch
+            {
+                Interlocked.Decrement(ref _pendingRents);
+                throw;
+            }
+
+            await _rentLifecycleGate.WaitAsync(CancellationToken.None);
+            try
+            {
+                Interlocked.Decrement(ref _pendingRents);
+                rentedCores = coresToRent;
+                job.RentedCores = rentedCores;
+                Interlocked.Increment(ref _activeRents);
+            }
+            finally
+            {
+                _rentLifecycleGate.Release();
+            }
             logger.LogInformation("[{JobId}] Acquired {Cores} cores", jobId, coresToRent);
             await AddLogAsync(db, jobId, $"Acquired {coresToRent} cores from pool.");
 
@@ -339,59 +496,68 @@ public sealed class JobOrchestrator(
             try
             {
                 var outcome = await tcs.Task.WaitAsync(timeoutCts.Token);
+                var proposedStatus = outcome.Success ? JobStatus.Completed : JobStatus.Failed;
+                var proposedError = outcome.Success
+                    ? null
+                    : outcome.Error ?? "Agent reported failure.";
+                await SetTerminalStateAsync(
+                    db, job, proposedStatus, proposedError, outcome.ResultMarkdown);
 
-                if (outcome.Success)
+                if (job.Status == JobStatus.Completed)
                 {
-                    job.Status = JobStatus.Completed;
-                    job.ResultMarkdown = outcome.ResultMarkdown;
-                    await AddLogAsync(db, jobId, "Job completed successfully.");
+                    await SafeAddLogAsync(db, jobId, "Job completed successfully.");
                     foreach (var n in notifiers)
                         await n.OnJobCompletedAsync(job);
                 }
-                else if (_cancelled.ContainsKey(jobId))
-                {
-                    job.Status = JobStatus.Cancelled;
-                    job.ErrorMessage = outcome.Error ?? "Cancelled by admin.";
-                    await AddLogAsync(db, jobId, $"Job cancelled: {job.ErrorMessage}");
-                    foreach (var n in notifiers)
-                        await n.OnJobFailedAsync(job, job.ErrorMessage);
-                }
                 else
                 {
-                    job.Status = JobStatus.Failed;
-                    job.ErrorMessage = outcome.Error ?? "Agent reported failure.";
-                    await AddLogAsync(db, jobId, $"Job failed: {job.ErrorMessage}");
+                    var prefix = job.Status == JobStatus.Cancelled ? "Job cancelled" : "Job failed";
+                    await SafeAddLogAsync(db, jobId, $"{prefix}: {job.ErrorMessage}");
                     foreach (var n in notifiers)
-                        await n.OnJobFailedAsync(job, job.ErrorMessage);
+                        await n.OnJobFailedAsync(job, job.ErrorMessage ?? prefix);
                 }
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested
                                                     && !jobToken.IsCancellationRequested)
             {
-                job.Status = JobStatus.TimedOut;
-                job.ErrorMessage = $"Job timed out after {effectiveTimeout.TotalMinutes} minutes.";
-                await AddLogAsync(db, jobId, job.ErrorMessage);
+                await SetTerminalStateAsync(
+                    db,
+                    job,
+                    JobStatus.TimedOut,
+                    $"Job timed out after {effectiveTimeout.TotalMinutes} minutes.");
+                await SafeAddLogAsync(db, jobId, job.ErrorMessage!);
                 foreach (var n in notifiers)
-                    await n.OnJobFailedAsync(job, job.ErrorMessage);
+                    await n.OnJobFailedAsync(job, job.ErrorMessage!);
             }
         }
         catch (OperationCanceledException) when (_cancelled.ContainsKey(jobId))
         {
             logger.LogWarning("[{JobId}] Job cancelled by admin", jobId);
-            job.Status = JobStatus.Cancelled;
-            job.ErrorMessage = "Cancelled by admin.";
+            await SetTerminalStateAsync(
+                db, job, JobStatus.Cancelled, "Cancelled by admin.");
             await SafeAddLogAsync(db, jobId, "Job cancelled by admin.");
             foreach (var n in notifiers)
-                await n.OnJobFailedAsync(job, job.ErrorMessage);
+                await n.OnJobFailedAsync(job, job.ErrorMessage!);
+        }
+        catch (ProvisioningCleanupException ex)
+        {
+            instanceId = ex.InstanceId;
+            job.CloudProviderInstanceId = instanceId;
+            logger.LogError(ex, "Provisioning cleanup failed for job {JobId}; teardown will be retried", jobId);
+
+            await SetTerminalStateAsync(
+                db, job, JobStatus.Failed, ex.Message);
+            await SafeAddLogAsync(db, jobId, job.ErrorMessage!);
+            foreach (var n in notifiers)
+                await n.OnJobFailedAsync(job, job.ErrorMessage!);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Error processing job {JobId}", jobId);
-            job.Status = JobStatus.Failed;
-            job.ErrorMessage = ex.Message;
+            await SetTerminalStateAsync(db, job, JobStatus.Failed, ex.Message);
             await SafeAddLogAsync(db, jobId, $"Internal error: {ex.Message}");
             foreach (var n in notifiers)
-                await n.OnJobFailedAsync(job, ex.Message);
+                await n.OnJobFailedAsync(job, job.ErrorMessage ?? ex.Message);
         }
         finally
         {
@@ -426,37 +592,125 @@ public sealed class JobOrchestrator(
                     logger.LogError(ex, "Failed to save final state of job {JobId}", jobId);
                 }
 
-                // Always deprovision
-                if (instanceId is not null && provider is not null)
+                // Do not release the cloud-quota lease until teardown succeeds. Otherwise
+                // a queued job can race the still-existing VM and fail quota validation.
+                if (instanceId is not null)
                 {
-                    try
+                    if (provider is null)
                     {
-                        await provider.DeprovisionAsync(instanceId, CancellationToken.None);
-                        await AddLogAsync(db, jobId, "Instance deprovisioned.");
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "Failed to deprovision instance {InstanceId} for job {JobId}",
+                        releaseRentedCores = false;
+                        logger.LogError(
+                            "Cannot deprovision instance {InstanceId} for job {JobId}: cloud provider is unavailable",
                             instanceId, jobId);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            await provider.DeprovisionAsync(instanceId, CancellationToken.None);
+                            job.CloudProviderInstanceId = null;
+                            job.RentedCores = 0;
+                            await SafeAddLogAsync(db, jobId, "Instance deprovisioned.");
+                            try
+                            {
+                                await db.SaveChangesAsync(CancellationToken.None);
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogError(
+                                    ex,
+                                    "Instance {InstanceId} was deprovisioned, but cleanup state for job {JobId} could not be saved",
+                                    instanceId,
+                                    jobId);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            releaseRentedCores = false;
+                            logger.LogError(ex, "Failed to deprovision instance {InstanceId} for job {JobId}; retaining {Cores} pool cores",
+                                instanceId, jobId, rentedCores);
+                            await SafeAddLogAsync(db, jobId,
+                                $"Instance deprovision failed; retaining {rentedCores} pool cores to avoid exceeding cloud quota.");
+                            try
+                            {
+                                job.RentedCores = rentedCores;
+                                await db.SaveChangesAsync(CancellationToken.None);
+                            }
+                            catch (Exception saveEx)
+                            {
+                                logger.LogError(
+                                    saveEx,
+                                    "Failed to persist retained core lease for job {JobId}",
+                                    jobId);
+                            }
+                        }
                     }
                 }
             }
             finally
             {
                 // Return exactly what was rented (DefaultCores may have changed meanwhile),
-                // and only if the rent actually succeeded.
+                // and only if the rent actually succeeded and cloud teardown completed.
                 if (rentedCores > 0)
                 {
-                    corePool.Return(job.Platform, rentedCores);
+                    if (releaseRentedCores)
+                    {
+                        corePool.Return(job.Platform, rentedCores);
+                        logger.LogInformation("[{JobId}] Returned {Cores} cores to pool", jobId, rentedCores);
+                    }
+                    else
+                    {
+                        _retainedRents[jobId] = (job.Platform, rentedCores);
+                        logger.LogWarning("[{JobId}] Retained {Cores} pool cores because instance teardown did not complete",
+                            jobId, rentedCores);
+                    }
+
                     Interlocked.Decrement(ref _activeRents);
-                    logger.LogInformation("[{JobId}] Returned {Cores} cores to pool", jobId, rentedCores);
                 }
 
                 _completions.TryRemove(jobId, out _);
                 _heartbeats.TryRemove(jobId, out _);
                 _jobCts.TryRemove(jobId, out _);
                 _cancelled.TryRemove(jobId, out _);
+                _terminalGates.TryRemove(jobId, out _);
             }
+        }
+    }
+
+    private async Task SetTerminalStateAsync(
+        AppDbContext db,
+        BenchmarkJob job,
+        JobStatus proposedStatus,
+        string? proposedError,
+        string? resultMarkdown = null)
+    {
+        var gate = GetTerminalGate(job.Id);
+        await gate.WaitAsync();
+        try
+        {
+            if (_cancelled.ContainsKey(job.Id))
+            {
+                job.Status = JobStatus.Cancelled;
+                job.ErrorMessage = "Cancelled by admin.";
+                job.ResultMarkdown = null;
+            }
+            else if (!IsActive(job.Status))
+            {
+                return;
+            }
+            else
+            {
+                job.Status = proposedStatus;
+                job.ErrorMessage = proposedError;
+                job.ResultMarkdown = resultMarkdown;
+            }
+
+            job.CompletedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
@@ -479,15 +733,24 @@ public sealed class JobOrchestrator(
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var staleJobs = await db.Jobs
-            .Where(j => j.Status == JobStatus.Provisioning || j.Status == JobStatus.Running)
+            .Where(j => j.Status == JobStatus.Provisioning
+                     || j.Status == JobStatus.Running
+                     || (j.CloudProviderInstanceId != null && j.RentedCores > 0))
             .ToListAsync(ct);
 
         foreach (var job in staleJobs)
         {
-            logger.LogWarning("Recovering stale job {JobId} (status={Status})", job.Id, job.Status);
-            job.Status = JobStatus.Failed;
-            job.ErrorMessage = "Service restarted — job was in-progress and has been marked as failed.";
-            job.CompletedAt = DateTime.UtcNow;
+            var wasActive = job.Status is JobStatus.Provisioning or JobStatus.Running;
+            var retainedCores = job.RentedCores;
+            logger.LogWarning(
+                "Recovering job {JobId} (status={Status}, instance={InstanceId}, retained={Cores})",
+                job.Id, job.Status, job.CloudProviderInstanceId, job.RentedCores);
+            if (wasActive)
+            {
+                job.Status = JobStatus.Failed;
+                job.ErrorMessage = "Service restarted — job was in-progress and has been marked as failed.";
+                job.CompletedAt = DateTime.UtcNow;
+            }
 
             // Attempt to deprovision if we have an instance ID
             if (job.CloudProviderInstanceId is not null)
@@ -496,16 +759,57 @@ public sealed class JobOrchestrator(
                 {
                     var provider = providerFactory.GetProvider(job.Platform);
                     await provider.DeprovisionAsync(job.CloudProviderInstanceId, ct);
+                    job.CloudProviderInstanceId = null;
+                    job.RentedCores = 0;
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Failed to deprovision stale instance for job {JobId}", job.Id);
+                    job.RentedCores = retainedCores;
+                    if (retainedCores > 0
+                        && _retainedRents.TryAdd(
+                            job.Id, (job.Platform, retainedCores)))
+                    {
+                        corePool.Restore(job.Platform, retainedCores);
+                    }
+                }
+            }
+            else if (retainedCores > 0)
+            {
+                try
+                {
+                    var provider = providerFactory.GetProvider(job.Platform);
+                    var reconciled = await provider.TryDeprovisionByJobIdAsync(
+                        job.Id.ToString(), ct);
+                    if (reconciled)
+                    {
+                        job.RentedCores = 0;
+                    }
+                    else
+                    {
+                        RetainRecoveredRent(job, retainedCores);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(
+                        ex,
+                        "Failed to reconcile provisioning resource for job {JobId}",
+                        job.Id);
+                    RetainRecoveredRent(job, retainedCores);
                 }
             }
         }
 
         if (staleJobs.Count > 0)
             await db.SaveChangesAsync(ct);
+    }
+
+    private void RetainRecoveredRent(BenchmarkJob job, int cores)
+    {
+        job.RentedCores = cores;
+        if (_retainedRents.TryAdd(job.Id, (job.Platform, cores)))
+            corePool.Restore(job.Platform, cores);
     }
 
     private static async Task AddLogAsync(AppDbContext db, Guid jobId, string message)

@@ -68,31 +68,79 @@ public sealed class DockerCloudProvider(IConfiguration config, ILogger<DockerClo
         logger.LogInformation("[{JobId}] Starting container: docker run -d --name {Name} ... {Image} bash /egorbot-bootstrap.sh",
             request.JobId, containerName, DockerImage);
 
-        var result = await RunDockerAsync(dockerArgs, ct);
-        if (!result.Success)
+        try
         {
-            throw new InvalidOperationException(
-                $"Failed to start Docker container for job {request.JobId}: {result.Output}");
+            var result = await RunDockerAsync(dockerArgs, ct);
+            if (!result.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to start Docker container for job {request.JobId}: {result.Output}");
+            }
+
+            var containerId = result.Output.Trim();
+            logger.LogInformation("[{JobId}] Container started: {ContainerId} ({ContainerName})",
+                request.JobId, containerId[..Math.Min(12, containerId.Length)], containerName);
+
+            return new ProvisionResult(
+                InstanceId: containerName,
+                IpAddress: "127.0.0.1");
         }
+        catch (Exception provisioningError)
+        {
+            try
+            {
+                await DeprovisionAsync(containerName, CancellationToken.None);
+            }
+            catch (Exception cleanupError)
+            {
+                throw new ProvisioningCleanupException(
+                    containerName, provisioningError, cleanupError);
+            }
 
-        var containerId = result.Output.Trim();
-        logger.LogInformation("[{JobId}] Container started: {ContainerId} ({ContainerName})",
-            request.JobId, containerId[..Math.Min(12, containerId.Length)], containerName);
-
-        return new ProvisionResult(
-            InstanceId: containerName,
-            IpAddress: "127.0.0.1");
+            throw;
+        }
     }
 
     public async Task DeprovisionAsync(string instanceId, CancellationToken ct = default)
     {
         logger.LogInformation("Stopping and removing container: {Container}", instanceId);
 
-        var result = await RunDockerAsync(["rm", "-f", instanceId], ct);
-        if (result.Success)
-            logger.LogInformation("Container {Container} removed", instanceId);
-        else
-            logger.LogWarning("Failed to remove container {Container}: {Output}", instanceId, result.Output);
+        string lastError = "";
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var result = await RunDockerAsync(["rm", "-f", instanceId], ct);
+            if (result.Success)
+            {
+                logger.LogInformation("Container {Container} removed", instanceId);
+                return;
+            }
+
+            if (!result.Output.Contains("No such container", StringComparison.OrdinalIgnoreCase))
+            {
+                lastError = result.Output;
+                if (attempt < 2)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), ct);
+                    continue;
+                }
+                break;
+            }
+
+            logger.LogInformation("Container {Container} does not exist", instanceId);
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Failed to remove container {instanceId} after 3 attempts: {lastError}");
+    }
+
+    public async Task<bool> TryDeprovisionByJobIdAsync(
+        string jobId,
+        CancellationToken ct = default)
+    {
+        var containerName = $"egorbot-{jobId[..Math.Min(12, jobId.Length)]}";
+        await DeprovisionAsync(containerName, ct);
+        return true;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -115,10 +163,23 @@ public sealed class DockerCloudProvider(IConfiguration config, ILogger<DockerClo
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start docker process");
 
-        var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
-        var stderr = await proc.StandardError.ReadToEndAsync(ct);
-
-        await proc.WaitForExitAsync(ct);
+        string stdout;
+        string stderr;
+        try
+        {
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = proc.StandardError.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct);
+            stdout = await stdoutTask;
+            stderr = await stderrTask;
+        }
+        catch (OperationCanceledException)
+        {
+            if (!proc.HasExited)
+                proc.Kill(entireProcessTree: true);
+            await proc.WaitForExitAsync(CancellationToken.None);
+            throw;
+        }
 
         var output = string.IsNullOrWhiteSpace(stderr) ? stdout : $"{stdout}\n{stderr}";
         return (proc.ExitCode == 0, output);

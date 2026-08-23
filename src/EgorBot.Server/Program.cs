@@ -56,7 +56,10 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var dbLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Database");
-    await DatabaseInitializer.InitializeAsync(db, dbLogger);
+    await DatabaseInitializer.InitializeAsync(
+        db,
+        dbLogger,
+        builder.Configuration.GetValue("EgorBot:DefaultCores", 8));
 }
 
 // ── Request logging middleware ───────────────────────────────────────────────
