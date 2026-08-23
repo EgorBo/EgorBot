@@ -207,7 +207,8 @@ public sealed class JobTrackerService(
         }
         else
         {
-            tracked.TrackingIssueNumber = await CreateRateLimitedTrackingIssueAsync(tracked);
+            tracked.TrackingIssueNumber = await CreateRateLimitedTrackingIssueAsync(
+                tracked, rateLimit);
         }
 
         var comment = FormatRateLimitComment(source, rateLimit);
@@ -222,14 +223,30 @@ public sealed class JobTrackerService(
         }
 
         logger.LogInformation(
-            "Rejected benchmark request from {User}: {Used}/{Limit} jobs in rolling window, requested {Requested}",
-            rateLimit.User, rateLimit.Used, rateLimit.Limit, rateLimit.Requested);
+            "Rejected benchmark request from {User}: code={Code}, used={Used}, "
+            + "limit={Limit}, requested={Requested}",
+            rateLimit.User, rateLimit.Code, rateLimit.Used,
+            rateLimit.Limit, rateLimit.Requested);
     }
 
     internal static string FormatRateLimitComment(
         MentionSource source,
         JobRateLimitResponse rateLimit)
     {
+        if (rateLimit.Code == JobRateLimitResponse.RequestLimitCode)
+        {
+            return $"""
+                ## Too many jobs requested
+
+                @{source.Author}, no jobs were started.
+
+                This request would create **{rateLimit.Requested}** jobs—one per target—but
+                the global limit is **{rateLimit.Limit} jobs per request**.
+
+                Reduce the number of targets or ask an administrator to raise the limit.
+                """;
+        }
+
         var retryText = rateLimit.RetryAt is { } retryAt
             ? $"Enough capacity is expected after **{retryAt.ToUniversalTime():yyyy-MM-dd HH:mm 'UTC'}**."
             : $"This request itself exceeds the {rateLimit.Limit}-job limit; reduce its targets or ask an administrator to raise the limit.";
@@ -304,7 +321,9 @@ public sealed class JobTrackerService(
         }
     }
 
-    private async Task<int?> CreateRateLimitedTrackingIssueAsync(TrackedJob tracked)
+    private async Task<int?> CreateRateLimitedTrackingIssueAsync(
+        TrackedJob tracked,
+        JobRateLimitResponse rateLimit)
     {
         try
         {
@@ -313,13 +332,17 @@ public sealed class JobTrackerService(
             var sourceType = tracked.Source.IsPullRequest ? "PR" : "issue";
             var sourceRef = $"{tracked.Source.Owner}/{tracked.Source.Repo}#{tracked.Source.Number}";
             var title = $"Benchmarks for {sourceRef} (for @{tracked.Source.Author})";
+            var reason = rateLimit.Code == JobRateLimitResponse.RequestLimitCode
+                ? $"the request asked for {rateLimit.Requested} jobs, above the "
+                  + $"{rateLimit.Limit}-job per-request limit"
+                : "the requester exceeded their rolling 24-hour job limit";
             var body = $"""
                 Benchmark request from [{sourceType} {sourceRef}]({tracked.Source.HtmlUrl}).
 
                 {KindLine(tracked.Command)}**Targets:** {string.Join(", ", tracked.Command.Targets)}
                 **Commits:** `{tracked.Command.CommitsAndPrs}`
 
-                No jobs were started because the request exceeded the user's rolling job limit.
+                No jobs were started because {reason}.
                 """;
 
             var issue = await ghClient.Issue.Create(

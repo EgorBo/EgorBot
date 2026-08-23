@@ -131,8 +131,10 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
                 {
                     var rateLimit = JsonSerializer.Deserialize<JobRateLimitResponse>(body);
                     logger.LogWarning(
-                        "Job limit reached for {User}: {Used}/{Limit}, requested {Requested}",
-                        rateLimit?.User, rateLimit?.Used, rateLimit?.Limit, rateLimit?.Requested);
+                        "Job request rejected by limit {Code} for {User}: "
+                        + "used={Used}, limit={Limit}, requested={Requested}",
+                        rateLimit?.Code, rateLimit?.User, rateLimit?.Used,
+                        rateLimit?.Limit, rateLimit?.Requested);
                     return new StartJobResult
                     {
                         RateLimit = rateLimit,

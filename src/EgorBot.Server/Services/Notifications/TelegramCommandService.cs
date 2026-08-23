@@ -13,6 +13,7 @@ namespace EgorBot.Server.Services.Notifications;
 /// Supported commands:
 ///   jobs   — list active (non-terminal) jobs
 ///   set_max_jobs_per_user USER N — persist a rolling 24h limit override
+///   set_max_jobs_per_request N — persist the global per-request limit
 ///   quit   — gracefully shut down the application
 ///   help   — show available commands
 /// Only messages from the configured AdminChatId are accepted.
@@ -177,6 +178,21 @@ public sealed class TelegramCommandService(
             return;
         }
 
+        const string setRequestLimitCommand = "set_max_jobs_per_request";
+        if (command.StartsWith(setRequestLimitCommand, StringComparison.Ordinal))
+        {
+            var argument = command[setRequestLimitCommand.Length..];
+            if (argument.StartsWith('@'))
+            {
+                var separator = argument.IndexOf(' ');
+                argument = separator >= 0 ? argument[separator..] : "";
+            }
+
+            await HandleSetMaxJobsPerRequestAsync(
+                string.IsNullOrWhiteSpace(argument) ? null : argument.Trim(), ct);
+            return;
+        }
+
         switch (command)
         {
             case "jobs":
@@ -216,6 +232,8 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`set_max_jobs_per_user USER N` — override a user's rolling 24h job limit");
                 sb.AppendLine("`set_max_jobs_per_user USER default` — remove the override");
                 sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
+                sb.AppendLine("`set_max_jobs_per_request N` — set the global jobs-per-request limit");
+                sb.AppendLine("`set_max_jobs_per_request default` — restore the configured default");
                 sb.AppendLine("`quit` — shut down the service");
                 sb.AppendLine("`help` — show this message");
                 if (_customCommands.Count > 0)
@@ -583,6 +601,40 @@ public sealed class TelegramCommandService(
             await SendReplyAsync($"❌ {EscapeMarkdown(ex.Message)}");
         }
     }
+    private async Task HandleSetMaxJobsPerRequestAsync(
+        string? argument,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(argument))
+        {
+            var current = await jobRateLimits.GetRequestLimitAsync(ct);
+            await SendReplyAsync(
+                $"⚙️ Jobs per request: *{current}* "
+                + $"(configured default: {jobRateLimits.DefaultRequestLimit})");
+            return;
+        }
+
+        if (argument is "default" or "reset")
+        {
+            await jobRateLimits.ResetRequestLimitAsync(ct);
+            await SendReplyAsync(
+                $"✅ Jobs per request restored to the configured default: "
+                + $"*{jobRateLimits.DefaultRequestLimit}*");
+            return;
+        }
+
+        if (!int.TryParse(argument, out var maxJobs) || maxJobs < 1)
+        {
+            await SendReplyAsync(
+                "❌ Usage: `set_max_jobs_per_request <positive-integer|default>`");
+            return;
+        }
+
+        await jobRateLimits.SetRequestLimitAsync(maxJobs, ct);
+        await SendReplyAsync(
+            $"✅ Global jobs-per-request limit changed to *{maxJobs}*.");
+    }
+
     private async Task SendReplyAsync(string text)
     {
         if (_botToken is null || _adminChatId is null) return;

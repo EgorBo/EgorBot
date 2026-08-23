@@ -41,6 +41,7 @@ public static class DatabaseInitializer
 
         var hadAdmissions = await TableExistsAsync(connection, "JobAdmissions", cancellationToken);
         var hadUserLimits = await TableExistsAsync(connection, "UserJobLimits", cancellationToken);
+        var hadRequestLimit = await TableExistsAsync(connection, "JobRequestLimits", cancellationToken);
 
         await db.Database.ExecuteSqlRawAsync(
             """
@@ -71,6 +72,17 @@ public static class DatabaseInitializer
             """,
             cancellationToken);
 
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "JobRequestLimits" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_JobRequestLimits" PRIMARY KEY,
+                "MaxJobs" INTEGER NOT NULL,
+                "UpdatedAt" TEXT NOT NULL,
+                CONSTRAINT "CK_JobRequestLimits_Singleton" CHECK ("Id" = 1)
+            );
+            """,
+            cancellationToken);
+
         // Existing accepted jobs must count immediately after deployment; otherwise
         // restarting the upgraded service would grant every user a fresh window.
         await db.Database.ExecuteSqlRawAsync(
@@ -91,6 +103,8 @@ public static class DatabaseInitializer
             logger.LogWarning("Created JobAdmissions and backfilled existing jobs for rolling rate limits");
         if (!hadUserLimits)
             logger.LogWarning("Created UserJobLimits for persistent per-user rate-limit overrides");
+        if (!hadRequestLimit)
+            logger.LogWarning("Created JobRequestLimits for the persistent per-request limit override");
     }
 
     private static async Task<bool> TableExistsAsync(

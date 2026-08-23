@@ -204,6 +204,41 @@ api.MapPost("/jobs", async (
         });
     }
 
+    string userKey;
+    try
+    {
+        userKey = JobRateLimitService.NormalizeUserKey(request.RequestedBy);
+    }
+    catch (ArgumentException ex)
+    {
+        log.LogWarning(ex, "Validation failed for requestedBy");
+        return Results.BadRequest(new { error = ex.Message });
+    }
+
+    // Keep this before BenchmarkJob construction/admission: an oversized request
+    // must leave no partial group in the database or orchestrator queue.
+    var requestLimit = await rateLimiter.CheckRequestLimitAsync(
+        normalizedPlatforms.Count, cancellationToken);
+    if (!requestLimit.Accepted)
+    {
+        log.LogWarning(
+            "Rejected request from {User}: {Requested} jobs exceeds per-request limit {Limit}",
+            userKey, requestLimit.Requested, requestLimit.Limit);
+        return Results.Json(
+            new JobRateLimitResponse
+            {
+                Code = JobRateLimitResponse.RequestLimitCode,
+                Error = $"This request would create {requestLimit.Requested} jobs, " +
+                        $"which exceeds the {requestLimit.Limit}-job per-request limit.",
+                User = userKey,
+                Limit = requestLimit.Limit,
+                Used = 0,
+                Requested = requestLimit.Requested,
+                WindowHours = 0,
+            },
+            statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
     foreach (var platform in normalizedPlatforms)
     {
         // The OrchardCore benchmark is a fixed workload: no snippet, no BDN arguments.
@@ -278,7 +313,7 @@ api.MapPost("/jobs", async (
     try
     {
         admission = await rateLimiter.TryAdmitAsync(
-            request.RequestedBy, pendingJobs, cancellationToken);
+            userKey, pendingJobs, cancellationToken);
     }
     catch (ArgumentException ex)
     {

@@ -13,6 +13,11 @@ public sealed record JobAdmissionResult(
     int Requested,
     DateTime? RetryAtUtc);
 
+public sealed record JobRequestLimitResult(
+    bool Accepted,
+    int Limit,
+    int Requested);
+
 /// <summary>
 /// Atomically reserves rolling-window job capacity and persists accepted jobs.
 /// </summary>
@@ -27,8 +32,102 @@ public sealed class JobRateLimitService(
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly int _globalLimit = ReadGlobalLimit(configuration);
+    private readonly int _defaultRequestLimit = ReadRequestLimit(configuration);
 
     public int GlobalLimit => _globalLimit;
+    public int DefaultRequestLimit => _defaultRequestLimit;
+
+    public async Task<JobRequestLimitResult> CheckRequestLimitAsync(
+        int requestedJobs,
+        CancellationToken cancellationToken = default)
+    {
+        if (requestedJobs < 1)
+            throw new ArgumentOutOfRangeException(
+                nameof(requestedJobs), "At least one job must be requested.");
+
+        var limit = await GetRequestLimitAsync(cancellationToken);
+        return new JobRequestLimitResult(
+            Accepted: requestedJobs <= limit,
+            Limit: limit,
+            Requested: requestedJobs);
+    }
+
+    public async Task<int> GetRequestLimitAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.JobRequestLimits
+            .Where(l => l.Id == JobRequestLimit.SingletonId)
+            .Select(l => (int?)l.MaxJobs)
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? _defaultRequestLimit;
+    }
+
+    public async Task SetRequestLimitAsync(
+        int maxJobs,
+        CancellationToken cancellationToken = default)
+    {
+        if (maxJobs < 1)
+            throw new ArgumentOutOfRangeException(
+                nameof(maxJobs), "The per-request job limit must be at least 1.");
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var existing = await db.JobRequestLimits.FindAsync(
+                [JobRequestLimit.SingletonId], cancellationToken);
+            if (existing is null)
+            {
+                db.JobRequestLimits.Add(new JobRequestLimit
+                {
+                    MaxJobs = maxJobs,
+                    UpdatedAt = timeProvider.GetUtcNow().UtcDateTime,
+                });
+            }
+            else
+            {
+                existing.MaxJobs = maxJobs;
+                existing.UpdatedAt = timeProvider.GetUtcNow().UtcDateTime;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        logger.LogInformation("Set maximum jobs per request to {Limit}", maxJobs);
+    }
+
+    public async Task<bool> ResetRequestLimitAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var existing = await db.JobRequestLimits.FindAsync(
+                [JobRequestLimit.SingletonId], cancellationToken);
+            if (existing is null)
+                return false;
+
+            db.JobRequestLimits.Remove(existing);
+            await db.SaveChangesAsync(cancellationToken);
+            logger.LogInformation(
+                "Reset maximum jobs per request to configured default {Limit}",
+                _defaultRequestLimit);
+            return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     public async Task<JobAdmissionResult> TryAdmitAsync(
         string? requestedBy,
@@ -210,6 +309,14 @@ public sealed class JobRateLimitService(
         var limit = configuration.GetValue("EgorBot:MaxJobsPerUser24Hours", 16);
         if (limit < 0)
             throw new InvalidOperationException("EgorBot:MaxJobsPerUser24Hours cannot be negative.");
+        return limit;
+    }
+
+    private static int ReadRequestLimit(IConfiguration configuration)
+    {
+        var limit = configuration.GetValue("EgorBot:MaxJobsPerRequest", 3);
+        if (limit < 1)
+            throw new InvalidOperationException("EgorBot:MaxJobsPerRequest must be at least 1.");
         return limit;
     }
 }

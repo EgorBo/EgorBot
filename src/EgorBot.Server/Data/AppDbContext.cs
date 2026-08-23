@@ -20,6 +20,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<JobLogEntry> JobLogs => Set<JobLogEntry>();
     public DbSet<JobAdmission> JobAdmissions => Set<JobAdmission>();
     public DbSet<UserJobLimit> UserJobLimits => Set<UserJobLimit>();
+    public DbSet<JobRequestLimit> JobRequestLimits => Set<JobRequestLimit>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

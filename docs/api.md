@@ -56,11 +56,27 @@ Start one or more benchmark jobs.
 | Status | Condition |
 |---|---|
 | `400` | No platforms specified, unknown target, local target in production, a target the requested `kind` cannot run on, or `"orchard"` without commits. |
-| `429` | The request would exceed the requester's rolling 24-hour job limit. One job is counted per target platform. |
+| `429` | The request would exceed either the global jobs-per-request limit or the requester's rolling 24-hour limit. One job is counted per target platform. |
 
-The global limit is configured with `EgorBot:MaxJobsPerUser24Hours` and defaults
-to 16. A `429` response includes the normalized user, current usage, effective
-limit, requested job count, and the earliest retry time when one is available:
+The per-request limit is configured with `EgorBot:MaxJobsPerRequest` and defaults
+to 3. The rolling limit is configured with `EgorBot:MaxJobsPerUser24Hours` and
+defaults to 16. A `429` response uses `job_request_limit_reached` for the former
+and `job_limit_reached` for the latter. It includes the effective limit and
+requested job count; rolling-limit responses also include current usage and the
+earliest retry time when one is available:
+
+```json
+{
+  "code": "job_request_limit_reached",
+  "error": "This request would create 4 jobs, which exceeds the 3-job per-request limit.",
+  "user": "jkotas",
+  "limit": 3,
+  "used": 0,
+  "requested": 4,
+  "windowHours": 0,
+  "retryAt": null
+}
+```
 
 ```json
 {
