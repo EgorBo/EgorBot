@@ -22,7 +22,7 @@ public sealed class StartJobRequest
     /// <summary>Optional C# benchmark code snippet.</summary>
     public string? BenchmarkCode { get; init; }
 
-    /// <summary>Enable perf profiler on the agent.</summary>
+    /// <summary>Enable the platform profiler on the agent.</summary>
     public bool UseProfiler { get; init; }
 
     /// <summary>Enable the OrchardCore dotnet-trace GC profiling pass.</summary>

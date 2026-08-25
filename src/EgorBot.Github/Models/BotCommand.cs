@@ -22,7 +22,7 @@ public sealed class BotCommand
     /// <summary>What to benchmark: BDN microbenchmarks (default) or a macro-benchmark like OrchardCore.</summary>
     public BenchmarkKind Kind { get; init; } = BenchmarkKind.Bdn;
 
-    /// <summary>Enable perf profiler.</summary>
+    /// <summary>Enable the platform profiler.</summary>
     public bool UseProfiler { get; init; }
 
     /// <summary>Enable the OrchardCore dotnet-trace GC profiling pass.</summary>

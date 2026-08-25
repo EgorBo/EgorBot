@@ -332,28 +332,6 @@ def postprocess_perf_data(perf: str, out_dir: Path, label: str, flamegraph_dir: 
                 pass
 
 
-def _sync_roslyn_into_core_root(core_root: Path, app_dir: Path):
-    """Make the benchmark app's Roslyn win over the one shipped in Core_Root.
-
-    The profiling stage runs BenchmarkDotNet *in-process* under corerun, so BDN's
-    config validation (CompilationValidator) needs Microsoft.CodeAnalysis of exactly
-    the version it was built against. corerun builds its TPA list from the Core_Root
-    directory, which takes priority over the app directory, and dotnet/runtime's
-    Core_Root ships an older Roslyn — the mismatch aborts the process with
-    'The requested assembly version conflicts with what is already bound' (SIGABRT),
-    which silently disabled profiling.
-
-    Roslyn is test infrastructure in Core_Root, not part of the runtime being
-    benchmarked, so overwriting it in this per-job copy is safe.
-    """
-    for src in sorted(app_dir.glob("Microsoft.CodeAnalysis*.dll")):
-        try:
-            shutil.copy2(str(src), str(core_root / src.name))
-            common.post_log(f"[PERF]   Using benchapp's {src.name} in Core_Root")
-        except Exception as ex:
-            common.post_log(f"[PERF]   WARNING: could not copy {src.name} into Core_Root: {ex}")
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Perf profiling (Linux only)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -467,7 +445,7 @@ def run_perf_profiling():
             ]
 
             if corerun_path:
-                _sync_roslyn_into_core_root(Path(corerun_path).parent, bench_dll.parent)
+                common.sync_roslyn_into_core_root(Path(corerun_path).parent, bench_dll.parent)
                 bench_cmd = [str(corerun_path), str(bench_dll)] + bdn_args
                 target_process = "corerun"
             else:

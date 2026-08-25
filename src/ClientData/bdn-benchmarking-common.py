@@ -52,6 +52,7 @@ zip_directory         = _helpers.zip_directory
 sed_replace           = _helpers.sed_replace
 ensure_dirs           = _helpers.ensure_dirs
 copy_glob             = _helpers.copy_glob
+sync_roslyn_into_core_root = _helpers.sync_roslyn_into_core_root
 detect_platform       = _helpers.detect_platform
 is_unix               = _helpers.is_unix
 make_exe              = _helpers.make_exe
@@ -158,7 +159,7 @@ class Config:
                         help="Local path to BDN arguments .rsp file (default: downloads a default one)")
         p.add_argument("--perf_enabled", type=int, choices=[0, 1],
                         default=0,
-                        help="1 = enable perf recording (default: 0)")
+                        help="1 = enable platform profiling (default: 0)")
         p.add_argument("--gc_profiler", type=int, choices=[0, 1],
                         default=0,
                         help="[orchard] 1 = collect GC metrics with dotnet-trace (default: 0)")
@@ -605,6 +606,14 @@ def build_core_roots():
         if TARGET_OS != "windows":
             _install_runtime_dependencies(runtime_dir)
 
+        if (
+            CFG.perf_enabled
+            and not CFG.is_orchard
+            and _platform_mod
+            and hasattr(_platform_mod, "prepare_runtime_for_profiling")
+        ):
+            _platform_mod.prepare_runtime_for_profiling(runtime_dir)
+
         # Make it more resilient to warnings in case if we build old commits
         dbp = runtime_dir / "Directory.Build.props"
         if dbp.exists():
@@ -625,6 +634,13 @@ def build_core_roots():
 
         if TARGET_OS == "windows":
             run(f"src\\tests\\build.cmd{tests_arch_flag} Release generatelayoutonly /p:BuildNativeTests=false", cwd=runtime_dir)
+        elif TARGET_OS == "osx" and CFG.perf_enabled and not CFG.is_orchard:
+            # Samply needs the native symbol sidecars adjacent to the runtime dylibs.
+            run(
+                f"./src/tests/build.sh -arch {TARGET_ARCH} -release "
+                "-generatelayoutonly -keepnativesymbols /p:BuildNativeTests=false",
+                cwd=runtime_dir,
+            )
         else:
             run(f"./src/tests/build.sh{tests_arch_flag} Release generatelayoutonly /p:BuildNativeTests=false", cwd=runtime_dir)
 
@@ -635,6 +651,17 @@ def build_core_roots():
         core_root_src = (runtime_dir / "artifacts" / "tests" / "coreclr"
                          / f"{TARGET_OS}.{TARGET_ARCH}.Release" / "Tests" / "Core_Root")
         shutil.copytree(str(core_root_src), str(core_root_dest))
+
+        if (
+            CFG.perf_enabled
+            and not CFG.is_orchard
+            and _platform_mod
+            and hasattr(_platform_mod, "validate_profiler_core_root")
+            and not _platform_mod.validate_profiler_core_root(core_root_dest)
+        ):
+            raise RuntimeError(
+                f"Core_Root for '{item}' is missing files required by the profiler"
+            )
 
         run(f"{make_script('dotnet')} build-server shutdown", cwd=runtime_dir)
         kill_process_by_name("dotnet")
@@ -807,14 +834,16 @@ def main(cfg: Optional[Config] = None):
         run_benchmarks(bench_args, attempt=attempt, total_attempts=cfg.attempts)
     post_log("[STAGE 6/6] Benchmarks completed ✓")
 
-    # Run perf profiling if enabled (Linux only -- delegated to platform module)
+    # Run the platform profiler if enabled (perf on Linux, Samply on macOS).
     if cfg.perf_enabled:
         if _platform_mod and hasattr(_platform_mod, "run_perf_profiling"):
-            post_log("[PERF] Starting perf profiling stage...")
+            post_log("[PROFILER] Starting platform profiling stage...")
             _platform_mod.run_perf_profiling()
         else:
-            post_log(f"[PERF] Profiling was requested but is not supported on {TARGET_OS} "
-                     f"-- no profiling artifacts will be produced.")
+            post_log(
+                f"[PROFILER] Profiling was requested but is not supported on "
+                f"{TARGET_OS} -- no profiling artifacts will be produced."
+            )
 
     # Finalize: package artifacts, upload results
     post_log("Finalizing -- uploading results...")

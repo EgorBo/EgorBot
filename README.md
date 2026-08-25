@@ -41,8 +41,12 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 | `orchard` | Run the [OrchardCore CMS](https://github.com/OrchardCMS/OrchardCore) throughput benchmark instead of BenchmarkDotNet (see below). |
 | `-commits SHA1,SHA2,...` | Commits to compare (comma or semicolon-separated). Supports `SHA~N` syntax and ranges. Example: `530201,530201~1` (compare 530201 vs previous commit) or `07e1dc...530201` (range of commits) |
 | `-pr <number>` | Target a specific PR (this argument is implied when running in a PR context). |
-| `-profiler` | Enable perf profiler (Linux only, quite fragile, use `[EventPipeProfiler(EventPipeProfile.CpuSampling)]` instead). |
+| `-profiler` | Run an extra profiling pass: Linux `perf` or macOS Samply. |
 | `-perf_events a,b,c` | Custom events for `perf stat` (implies `-profiler`, Linux only). Example: `-perf_events l1d_cache,l1d_cache_refill,l2d_cache_refill,bus_access,cycles,instructions`. The events a machine supports are listed in the `perf_events.txt` artifact attached to every profiled run. |
+
+For custom BDN snippets, macOS Samply profiling produces a self-contained SpeedScope flamegraph
+and sampled annotated assembly for every runtime. It uses the same published benchmark bits for
+each run and applies the temporary CoreCLR jitdump-discovery fix to every compared revision.
 
 **NOTE:** 32-bit arm and windows targets are currently not available (let me know if you need them).</br>
 **NOTE:** mono runtime is not currently supported</br>

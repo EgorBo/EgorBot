@@ -269,15 +269,18 @@ api.MapPost("/jobs", async (
             continue;
         }
 
-        // On Linux, UseProfiler triggers perf record via the platform agent module.
-        // On non-Linux, we use BDN's built-in EventPipeProfiler instead (--profiler EP).
+        // Linux uses perf and macOS uses Samply through the platform agent module.
+        // Windows falls back to BDN's built-in EventPipeProfiler (--profiler EP).
         // Asking for perf events only makes sense together with the profiler.
         var useProfiler = request.UseProfiler || perfStatEvents is not null;
         var bdnArgs = request.BdnArguments;
         if (useProfiler)
         {
             var osFamily = TargetCatalog.GetTarget(platform).OsFamily;
-            if (!osFamily.Equals("linux", StringComparison.OrdinalIgnoreCase))
+            var hasPlatformProfiler =
+                osFamily.Equals("linux", StringComparison.OrdinalIgnoreCase)
+                || osFamily.Equals("osx", StringComparison.OrdinalIgnoreCase);
+            if (!hasPlatformProfiler)
             {
                 useProfiler = false;
                 bdnArgs = string.IsNullOrWhiteSpace(bdnArgs)

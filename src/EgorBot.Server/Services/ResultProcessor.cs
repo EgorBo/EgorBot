@@ -64,7 +64,8 @@ public sealed partial class ResultProcessor(IConfiguration config, ILogger<Resul
     private string? ProcessSpeedscopeFiles(ZipArchive archive, Guid jobId, Dictionary<string, string> labels)
     {
         var speedscopeEntries = archive.Entries
-            .Where(e => e.Name.EndsWith(".speedscope.json", StringComparison.OrdinalIgnoreCase))
+            .Where(e => !e.FullName.StartsWith("perf/", StringComparison.OrdinalIgnoreCase)
+                        && e.Name.EndsWith(".speedscope.json", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (speedscopeEntries.Count == 0)

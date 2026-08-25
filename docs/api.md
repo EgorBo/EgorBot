@@ -33,7 +33,7 @@ Start one or more benchmark jobs.
 | `commitsAndPrs` | `string` | **Yes** | Semicolon-separated commits or PRs to compare. PRs prefixed with `PR_`. Can be empty (runs with default SDK). |
 | `bdnArguments` | `string?` | No | Extra BenchmarkDotNet CLI arguments (e.g. `--filter *Span*`). |
 | `benchmarkCode` | `string?` | No | C# benchmark source code. If omitted, uses `dotnet/performance` benchmarks. |
-| `useProfiler` | `bool` | No | Enable perf profiler recording. Default: `false`. |
+| `useProfiler` | `bool` | No | Enable perf recording on Linux or Samply recording on macOS. Default: `false`. |
 | `useGcProfiler` | `bool` | No | Enable a separate OrchardCore dotnet-trace GC profiling pass. May be combined with `useProfiler`. Default: `false`. |
 | `attempts` | `int` | No | Repeat count. For `"orchard"` it is the number of server processes per runtime. Default: `1`. |
 | `requestedBy` | `string?` | No | GitHub login used for the rolling per-user job limit. Missing values share the `(anonymous)` limit bucket. |

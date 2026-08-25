@@ -700,7 +700,7 @@ public sealed class JobTrackerService(
             `-aws_graviton5` `-aws_graviton4` `-aws_graviton3` `-aws_sapphirelake` `-aws_icelake` `-aws_genoa` `-aws_turin`
 
             **Options:**
-            `-profiler` — enable perf profiler
+            `-profiler` — enable perf on Linux or Samply on macOS
             `-gcprofiler` — collect OrchardCore GC metrics with dotnet-trace
             `-perf_events a,b,c` — custom `perf stat` events (implies `-profiler`),
             e.g. `-perf_events l1d_cache,l1d_cache_refill,l2d_cache_refill,cycles,instructions`.

@@ -34,7 +34,7 @@ public class BenchmarkJob
     /// <summary>Optional C# benchmark code snippet.</summary>
     public string? BenchmarkCode { get; set; }
 
-    /// <summary>Whether to enable profiling (perf record).</summary>
+    /// <summary>Whether to enable the platform profiler.</summary>
     public bool UseProfiler { get; set; }
 
     /// <summary>Whether to collect OrchardCore GC metrics with dotnet-trace.</summary>

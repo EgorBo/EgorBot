@@ -243,6 +243,18 @@ def ensure_dirs(*dirs: Path):
         d.mkdir(parents=True, exist_ok=True)
 
 
+def sync_roslyn_into_core_root(core_root: Path, app_dir: Path):
+    """Make the benchmark app's Roslyn win over the copy in Core_Root."""
+    for src in sorted(app_dir.glob("Microsoft.CodeAnalysis*.dll")):
+        try:
+            shutil.copy2(str(src), str(core_root / src.name))
+            post_log(f"[PROFILER] Using benchapp's {src.name} in Core_Root")
+        except OSError as ex:
+            post_log(
+                f"[PROFILER] WARNING: could not copy {src.name} into Core_Root: {ex}"
+            )
+
+
 def copy_glob(pattern: str, dest_dir: Path):
     """Copy every file matching *pattern* into *dest_dir*."""
     for src in globmod.glob(pattern):

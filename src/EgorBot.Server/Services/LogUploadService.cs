@@ -86,10 +86,13 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
     private static bool IsPerfArtifact(ZipArchiveEntry entry) =>
         entry.FullName.StartsWith("perf/", StringComparison.OrdinalIgnoreCase)
         && (entry.Name.EndsWith(".asm", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.EndsWith(".annotated-asm.txt", StringComparison.OrdinalIgnoreCase)
             || entry.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
             || entry.Name.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.EndsWith(".speedscope.json", StringComparison.OrdinalIgnoreCase)
             || entry.Name.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase)
             || entry.Name.EndsWith(".stats", StringComparison.OrdinalIgnoreCase)
+            || entry.Name.EndsWith(".samply-diagnostics.txt", StringComparison.OrdinalIgnoreCase)
             || entry.Name.Equals("perf_events.txt", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsGcArtifact(ZipArchiveEntry entry) =>
@@ -307,10 +310,21 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
     ///   {label}.asm
     ///   {label}.stats
     ///   speedscope_{label}_{jobid}.speedscope
+    ///   {label}.flamegraph.speedscope.json
+    ///   {label}.annotated-asm.txt
     /// Labels may contain underscores (e.g. "PR_124445"), so we strip known suffixes.
     /// </summary>
     private static string ExtractLabel(string fileName)
     {
+        if (fileName.EndsWith(".flamegraph.speedscope.json", StringComparison.OrdinalIgnoreCase))
+            return fileName[..^".flamegraph.speedscope.json".Length];
+
+        if (fileName.EndsWith(".annotated-asm.txt", StringComparison.OrdinalIgnoreCase))
+            return fileName[..^".annotated-asm.txt".Length];
+
+        if (fileName.EndsWith(".samply-diagnostics.txt", StringComparison.OrdinalIgnoreCase))
+            return fileName[..^".samply-diagnostics.txt".Length];
+
         // speedscope_{label}_{jobid}.speedscope — strip prefix and last _segment (jobid)
         if (fileName.StartsWith("speedscope_", StringComparison.OrdinalIgnoreCase))
         {
@@ -336,15 +350,19 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
     {
         if (fileName.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
             return ("flamegraph", $"[link]({url})");
-        if (fileName.EndsWith(".asm", StringComparison.OrdinalIgnoreCase))
+        if (fileName.EndsWith(".asm", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith(".annotated-asm.txt", StringComparison.OrdinalIgnoreCase))
             return ("asm", $"[link]({url})");
-        if (fileName.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase))
+        if (fileName.EndsWith(".speedscope", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith(".speedscope.json", StringComparison.OrdinalIgnoreCase))
         {
             // speedscope.app is HTTPS — it can only fetch HTTPS profile URLs (mixed content).
             if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 return ("speedscope", $"[link](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)})");
             return ("speedscope", $"[link]({url})");
         }
+        if (fileName.EndsWith(".samply-diagnostics.txt", StringComparison.OrdinalIgnoreCase))
+            return ("diagnostics", $"[link]({url})");
         if (fileName.EndsWith("_functions.txt", StringComparison.OrdinalIgnoreCase))
             return ("functions", $"[link]({url})");
         if (fileName.EndsWith(".stats", StringComparison.OrdinalIgnoreCase))
