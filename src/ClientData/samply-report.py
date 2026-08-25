@@ -395,7 +395,7 @@ def positive_sample_weight(samples: dict[str, Any], index: int) -> int:
 def build_speedscope_and_hot_functions(
     profile: dict[str, Any],
     records_by_thread: list[list[dict[str, Any]]],
-) -> tuple[dict[str, Any], list[dict[str, Any]], int, int]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], int, int, int]:
     threads = profile["threads"]
     interval = profile.get("meta", {}).get("interval", 1.0)
     interval_ms = float(interval) if isinstance(interval, (int, float)) and interval > 0 else 1.0
@@ -405,6 +405,7 @@ def build_speedscope_and_hot_functions(
     speedscope_profiles: list[dict[str, Any]] = []
     hot_functions: dict[tuple[int, int, str], dict[str, Any]] = {}
     total_samples = 0
+    filtered_off_cpu_samples = 0
     mixed_stack_count = 0
 
     def shared_frame_index(name: str) -> int:
@@ -422,10 +423,20 @@ def build_speedscope_and_hot_functions(
         records = records_by_thread[thread_index]
         output_samples: list[list[int]] = []
         output_weights: list[float] = []
-        thread_sample_weight = 0
+        thread_cpu_duration = 0.0
         stack_cache: dict[int, list[int]] = {}
 
         for sample_index in range(table_length(samples)):
+            weight = positive_sample_weight(samples, sample_index)
+            cpu_delta_us = column_value(samples, "threadCPUDelta", sample_index)
+            if isinstance(cpu_delta_us, (int, float)):
+                if cpu_delta_us <= 0:
+                    filtered_off_cpu_samples += weight
+                    continue
+                duration = float(cpu_delta_us) / 1000.0
+            else:
+                duration = interval_ms * weight
+
             stack_index = column_value(samples, "stack", sample_index)
             if not isinstance(stack_index, int):
                 continue
@@ -437,16 +448,14 @@ def build_speedscope_and_hot_functions(
             if not frame_indexes:
                 continue
 
-            weight = positive_sample_weight(samples, sample_index)
             names = [str(records[index]["display_name"]) for index in frame_indexes]
             speedscope_stack = [shared_frame_index(name) for name in names]
-            duration = interval_ms * weight
             if output_samples and output_samples[-1] == speedscope_stack:
                 output_weights[-1] += duration
             else:
                 output_samples.append(speedscope_stack)
                 output_weights.append(duration)
-            thread_sample_weight += weight
+            thread_cpu_duration += duration
             total_samples += weight
 
             stack_records = [records[index] for index in frame_indexes]
@@ -504,16 +513,16 @@ def build_speedscope_and_hot_functions(
                     "endValue": sum(output_weights),
                     "samples": output_samples,
                     "weights": output_weights,
-                    "_sampleWeight": thread_sample_weight,
+                    "_cpuDuration": thread_cpu_duration,
                 }
             )
 
     if not speedscope_profiles:
         raise ValueError("The Samply profile contains no non-empty sampled stacks")
 
-    speedscope_profiles.sort(key=lambda item: item["_sampleWeight"], reverse=True)
+    speedscope_profiles.sort(key=lambda item: item["_cpuDuration"], reverse=True)
     for item in speedscope_profiles:
-        del item["_sampleWeight"]
+        del item["_cpuDuration"]
 
     speedscope = {
         "$schema": "https://www.speedscope.app/file-format-schema.json",
@@ -528,7 +537,13 @@ def build_speedscope_and_hot_functions(
         key=lambda item: int(item["self_samples"]),
         reverse=True,
     )
-    return speedscope, hot, total_samples, mixed_stack_count
+    return (
+        speedscope,
+        hot,
+        total_samples,
+        filtered_off_cpu_samples,
+        mixed_stack_count,
+    )
 
 
 def write_speedscope(path: Path, speedscope: dict[str, Any]) -> None:
@@ -834,11 +849,16 @@ def main(argv: Iterable[str] | None = None) -> int:
         records_by_thread, lookups = collect_frame_records(profile)
         symbols = symbolize_addresses(server_url, profile, lookups)
         apply_symbolication(profile, records_by_thread, symbols)
-        speedscope, hot_functions, total_samples, mixed_stack_count = (
-            build_speedscope_and_hot_functions(profile, records_by_thread)
-        )
+        (
+            speedscope,
+            hot_functions,
+            total_samples,
+            filtered_off_cpu_samples,
+            mixed_stack_count,
+        ) = build_speedscope_and_hot_functions(profile, records_by_thread)
         log(
-            f"Sample inventory: {total_samples} weighted samples, "
+            f"Sample inventory: {total_samples} on-CPU weighted samples, "
+            f"{filtered_off_cpu_samples} off-CPU weighted samples filtered, "
             f"{mixed_stack_count} mixed managed/native samples, "
             f"{len(hot_functions)} self-hot disassemblable functions"
         )
