@@ -101,6 +101,13 @@ public sealed class JobTrackerService(
             await CreateTrackingIssueAsync(tracked);
         }
 
+        if (response.BudgetRetargeted)
+        {
+            await PostCommentOnTrackingIssueAsync(
+                tracked,
+                FormatLowBudgetComment(source));
+        }
+
         // 3. Register for monitoring
         _activeJobs[response.GroupId] = tracked;
         EnsurePollingStarted();
@@ -264,6 +271,12 @@ public sealed class JobTrackerService(
             """;
     }
 
+    private static string FormatLowBudgetComment(MentionSource source) => $"""
+        @{source.Author}, EgorBot has used all of this month's free cloud credits.
+        Until the credits reset, every benchmark request is automatically retargeted
+        to `-{TargetCatalog.FreeMacOsArm64TargetAlias}` (the free, bare-metal macOS Arm64 Helix machine).
+        """;
+
     /// <summary>Name the workload when it isn't the default BDN run.</summary>
     private static string KindLine(BotCommand command) =>
         command.Kind == BenchmarkKind.Orchard
@@ -288,7 +301,7 @@ public sealed class JobTrackerService(
             var body = $"""
                 Processing benchmark request from [{sourceType} {sourceRef}]({tracked.Source.HtmlUrl}).
 
-                {KindLine(tracked.Command)}**Targets:** {string.Join(", ", tracked.Command.Targets)}
+                {KindLine(tracked.Command)}**Targets:** {string.Join(", ", tracked.Jobs.Select(j => j.Platform))}
                 **Commits:** `{tracked.Command.CommitsAndPrs}`
 
                 {logsLinks}

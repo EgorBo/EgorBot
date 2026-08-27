@@ -15,6 +15,7 @@ namespace EgorBot.Server.Services.Notifications;
 ///   cancel [job-guid] — cancel one job, or all active jobs when no GUID is supplied
 ///   set_max_jobs_per_user USER N — persist a rolling 24h limit override
 ///   set_max_jobs_per_request N — persist the global per-request limit
+///   set_budget low|high|default — restrict new requests to the free target or honor requested targets
 ///   quit   — gracefully shut down the application
 ///   help   — show available commands
 /// Only messages from the configured AdminChatId are accepted.
@@ -196,6 +197,9 @@ public sealed class TelegramCommandService(
             case "set_max_jobs_per_request":
                 await HandleSetMaxJobsPerRequestAsync(argument, ct);
                 break;
+            case "set_budget":
+                await HandleSetBudgetAsync(argument);
+                break;
             case "quit":
             case "stop":
             case "shutdown":
@@ -219,6 +223,8 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`set_max_jobs_per_user USER default` — remove the override");
                 sb.AppendLine("`set_max_jobs_per_request N` — set the global jobs-per-request limit");
                 sb.AppendLine("`set_max_jobs_per_request default` — restore the configured default");
+                sb.AppendLine("`set_budget low` — retarget new requests to the free macOS Arm64 machine");
+                sb.AppendLine("`set_budget high|default` — honor requested targets");
                 sb.AppendLine("`cancel GUID` — cancel one active job and deprovision its VM");
                 sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
                 sb.AppendLine("`quit` — shut down the service");
@@ -635,6 +641,46 @@ public sealed class TelegramCommandService(
         await jobRateLimits.SetRequestLimitAsync(maxJobs, ct);
         await SendReplyAsync(
             $"✅ Global jobs-per-request limit changed to *{maxJobs}*.");
+    }
+
+    private async Task HandleSetBudgetAsync(string? argument)
+    {
+        if (string.IsNullOrWhiteSpace(argument))
+        {
+            await SendReplyAsync(
+                $"💰 Budget mode: *{runtimeSettings.Budget.ToString().ToLowerInvariant()}* "
+                + "(default: high)");
+            return;
+        }
+
+        var newMode = argument switch
+        {
+            "low" => BudgetMode.Low,
+            "high" or "default" => BudgetMode.High,
+            _ => (BudgetMode?)null,
+        };
+
+        if (newMode is null)
+        {
+            await SendReplyAsync("❌ Usage: `set_budget <low|high|default>`");
+            return;
+        }
+
+        var oldMode = runtimeSettings.Budget;
+        runtimeSettings.Budget = newMode.Value;
+        logger.LogInformation("Admin changed budget mode: {Old} → {New}", oldMode, newMode);
+
+        if (newMode == BudgetMode.Low)
+        {
+            await SendReplyAsync(
+                $"✅ Budget mode set to *low*. New requests will use only "
+                + $"`-{TargetCatalog.FreeMacOsArm64TargetAlias}`.");
+        }
+        else
+        {
+            await SendReplyAsync(
+                "✅ Budget mode set to *high*. New requests will honor their targets.");
+        }
     }
 
     private async Task SendReplyAsync(string text)

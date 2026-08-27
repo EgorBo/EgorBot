@@ -58,6 +58,9 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
 
         [JsonPropertyName("jobs")]
         public List<JobEntry> Jobs { get; set; } = [];
+
+        [JsonPropertyName("budgetRetargeted")]
+        public bool BudgetRetargeted { get; set; }
     }
 
     public sealed class StartJobResult

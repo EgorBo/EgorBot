@@ -109,26 +109,44 @@ var api = app.MapGroup("/api");
 api.MapPost("/jobs", async (
     StartJobRequest request,
     JobRateLimitService rateLimiter,
+    RuntimeSettings runtimeSettings,
     JobOrchestrator orchestrator,
     ILoggerFactory loggerFactory,
     CancellationToken cancellationToken) =>
 {
+    var lowBudget = runtimeSettings.Budget == BudgetMode.Low;
     var log = loggerFactory.CreateLogger("StartJob");
     log.LogInformation("POST /api/jobs called. Platforms=[{Platforms}], CommitsAndPrs={Commits}, HasCode={HasCode}",
         string.Join(",", request.Platforms ?? []),
         request.CommitsAndPrs,
         request.BenchmarkCode is not null);
 
-    // Validate
-    if (request.Platforms is not { Count: > 0 })
+    IReadOnlyList<string> effectivePlatforms;
+    if (lowBudget)
+    {
+        effectivePlatforms = [TargetCatalog.FreeMacOsArm64TargetAlias];
+    }
+    else if (request.Platforms is { Count: > 0 } requestedPlatforms)
+    {
+        effectivePlatforms = requestedPlatforms;
+    }
+    else
     {
         log.LogWarning("Validation failed: no platforms");
         return Results.BadRequest(new { error = "At least one platform/target is required." });
     }
 
+    if (lowBudget)
+    {
+        log.LogInformation(
+            "Low-budget mode is active; replacing requested platforms [{Platforms}] with -{Target}",
+            string.Join(",", request.Platforms ?? []),
+            TargetCatalog.FreeMacOsArm64TargetAlias);
+    }
+
     // Normalize & validate targets (resolve aliases, OS prefix)
     var normalizedPlatforms = new List<string>();
-    foreach (var raw in request.Platforms)
+    foreach (var raw in effectivePlatforms)
     {
         if (!TargetCatalog.TryResolve(raw, out _))
         {
@@ -359,7 +377,7 @@ api.MapPost("/jobs", async (
 
     var jobs = pendingJobs.Select(job => new { id = job.Id, platform = job.Platform });
     log.LogInformation("Returning {Count} jobs for group {GroupId}", pendingJobs.Count, groupId);
-    return Results.Ok(new { groupId, jobs });
+    return Results.Ok(new { groupId, jobs, budgetRetargeted = lowBudget });
 });
 
 // PATCH /api/jobs/group/{groupId}/tracking-issue — set tracking issue URL for all jobs in a group

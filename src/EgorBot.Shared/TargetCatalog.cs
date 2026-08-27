@@ -45,6 +45,7 @@ public sealed record TargetInfo(
 /// </summary>
 public static class TargetCatalog
 {
+    public const string FreeMacOsArm64TargetAlias = "macos_arm";
 
     private static readonly Dictionary<string, TargetInfo> Targets = new(StringComparer.OrdinalIgnoreCase)
     {
