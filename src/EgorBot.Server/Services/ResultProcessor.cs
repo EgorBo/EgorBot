@@ -107,7 +107,7 @@ public sealed partial class ResultProcessor(IConfiguration config, ILogger<Resul
 
                 // Generate speedscope.app link for HTTPS, direct download for HTTP
                 if (fileUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                    links.Add($"[{displayName}](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(fileUrl)})");
+                    links.Add($"[{displayName}](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(fileUrl)}&view=left-heavy)");
                 else
                     links.Add($"[{displayName}]({fileUrl})");
 

@@ -358,7 +358,7 @@ public sealed class LogUploadService(IConfiguration config, ILogger<LogUploadSer
         {
             // speedscope.app is HTTPS — it can only fetch HTTPS profile URLs (mixed content).
             if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                return ("speedscope", $"[link](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)})");
+                return ("speedscope", $"[link](https://www.speedscope.app/#profileURL={Uri.EscapeDataString(url)}&view=left-heavy)");
             return ("speedscope", $"[link]({url})");
         }
         if (fileName.EndsWith(".samply-diagnostics.txt", StringComparison.OrdinalIgnoreCase))
