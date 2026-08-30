@@ -943,7 +943,7 @@ def run_orchard_benchmarks():
         app_cpus, load_cpus = _split_cpus(cpus)
     else:
         app_cpus = load_cpus = cpus
-    connections = cfg.orchard_connections or max(8, 8 * len(app_cpus))
+    connections = cfg.orchard_connections or max(32, 4 * len(app_cpus))
     url = f"http://{SERVER_HOST}:{SERVER_PORT}{BENCH_URL_PATH}"
 
     common.post_log(f"[ORCHARD] CPUs available: {len(cpus)} ({_cpu_list(cpus)})")

@@ -189,7 +189,8 @@ class Config:
                         help="[orchard] Server restarts per runtime — captures process-to-process "
                              "noise (default: 2)")
         p.add_argument("--orchard_connections", type=int, default=0,
-                        help="[orchard] Load generator connections (default: 0 = 8 per app core)")
+                        help="[orchard] Load generator connections "
+                             "(default: 0 = 4 per app core, minimum 32)")
 
         args = p.parse_args(argv)
 
