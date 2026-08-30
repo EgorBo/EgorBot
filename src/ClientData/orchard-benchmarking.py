@@ -83,13 +83,11 @@ ORCHARD_ENV = {
     "OrchardCore__OrchardCore_AutoSetup__Tenants__0__AdminPassword": "Password1!",
     "OrchardCore__OrchardCore_AutoSetup__Tenants__0__DatabaseProvider": "Sqlite",
     "OrchardCore__OrchardCore_AutoSetup__Tenants__0__RecipeName": "Blog",
-    # DATAS costs ~15% on this workload and adds noise, HillClimbing delays the
-    # steady state, and thread-pool spin-waiting hides regressions in the runtime.
-    "DOTNET_GCDynamicAdaptationMode": "0",
+    # HillClimbing delays the steady state.
     "DOTNET_HillClimbing_Disable": "1",
-    "DOTNET_ThreadPool_UnfairSemaphoreSpinLimit": "0",
     # The app must never pick up an ASPNETCORE_URLS from the agent environment.
     "ASPNETCORE_URLS": "",
+    # corerun does not process the app's runtimeconfig.json.
     "DOTNET_gcServer": "1",
 }
 
@@ -1040,8 +1038,7 @@ def run_orchard_benchmarks():
         affinity_row,
         f"{connections} connections, {cfg.orchard_warmup}s warmup, "
         f"{cfg.orchard_processes} process(es) x {cfg.orchard_rounds} x {cfg.orchard_round_duration}s measured",
-        "`DOTNET_GCDynamicAdaptationMode=0` (DATAS off), `DOTNET_HillClimbing_Disable=1`, "
-        "`DOTNET_ThreadPool_UnfairSemaphoreSpinLimit=0`",
+        "`DOTNET_HillClimbing_Disable=1`, `DOTNET_gcServer=1`",
     ]
     report = _write_report(summaries, cfg_rows, used_core_roots)
     common.post_log(f"[ORCHARD] Report written to {report.name}")
