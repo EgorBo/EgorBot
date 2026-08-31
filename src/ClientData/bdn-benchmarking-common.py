@@ -610,6 +610,39 @@ def _expand_commit_ranges(items: List[str], runtime_dir: Path) -> List[str]:
     return result
 
 
+def _clear_invalid_cmake_linker_cache(runtime_dir: Path):
+    """Drop stale llvm-link cache entries without discarding compiled objects.
+
+    Older runtime revisions accidentally assigned CMAKE_LINKER to LLVM's bitcode
+    linker. Their NativeAOT build worked around that value, but newer revisions
+    expect CMake to provide ld/ld.lld. The normal configure pass will rederive
+    the missing cache entry for the current revision.
+    """
+    if TARGET_OS == "windows":
+        return
+
+    coreclr_obj = runtime_dir / "artifacts" / "obj" / "coreclr"
+    if not coreclr_obj.is_dir():
+        return
+
+    invalid_linker = re_mod.compile(r"^(?:llvm-)?link(?:-[0-9.]+)?$")
+    for cache in coreclr_obj.rglob("CMakeCache.txt"):
+        lines = cache.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        filtered = []
+        removed = None
+        for line in lines:
+            if line.startswith("CMAKE_LINKER:"):
+                linker = line.partition("=")[2].strip()
+                if invalid_linker.fullmatch(Path(linker).name):
+                    removed = linker
+                    continue
+            filtered.append(line)
+
+        if removed is not None:
+            cache.write_text("".join(filtered), encoding="utf-8")
+            post_log(f"Cleared stale CMake linker cache entry '{removed}' from {cache}")
+
+
 def build_core_roots():
     runtime_dir = WORK_DIR / "runtime"
     clone_runtime()
@@ -645,6 +678,8 @@ def build_core_roots():
                 # history (unshallow if needed) then checkout locally.
                 run("git fetch --unshallow origin || git fetch origin", cwd=runtime_dir, check=False)
                 run(f"git checkout {commit}", cwd=runtime_dir)
+
+        _clear_invalid_cmake_linker_cache(runtime_dir)
 
         # Install deps via runtime's own script (most deps come from here)
         if TARGET_OS != "windows":
