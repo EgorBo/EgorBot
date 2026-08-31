@@ -6,6 +6,7 @@ using EgorBot.Shared;
 using EgorBot.Server.Services.CloudInit;
 using EgorBot.Server.Services.CloudProviders;
 using EgorBot.Server.Services.Notifications;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,6 +35,11 @@ builder.Services.AddSingleton<CorePoolManager>();
 builder.Services.AddSingleton<ResultProcessor>();
 builder.Services.AddSingleton<LogUploadService>();
 builder.Services.AddCors();
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.MimeTypes = ["application/json"];
+});
 builder.Services.AddSingleton<INotificationService, ConsoleNotificationService>();
 builder.Services.AddSingleton<INotificationService, TelegramNotificationService>();
 builder.Services.AddHostedService<TelegramCommandService>();
@@ -95,6 +101,11 @@ app.Use(async (ctx, next) =>
 });
 
 // ── Static files for web UI ──────────────────────────────────────────────────
+app.UseWhen(
+    context => context.Request.Path.StartsWithSegments("/api/jobs")
+               && context.Request.Path.Value?.Contains(
+                   "/artifacts/", StringComparison.OrdinalIgnoreCase) == true,
+    branch => branch.UseResponseCompression());
 app.UseCors();  // enable CORS (configured below per-endpoint)
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -505,7 +516,7 @@ api.MapGet("/jobs/{id:guid}/logs/full", async (Guid id, AppDbContext db) =>
 });
 
 // GET /api/jobs/{id}/artifacts/{**path} — serve locally-stored profiling artifacts
-api.MapGet("/jobs/{id:guid}/artifacts/{**path}", async (Guid id, string path) =>
+api.MapGet("/jobs/{id:guid}/artifacts/{**path}", (Guid id, string path) =>
 {
     if (string.IsNullOrEmpty(path))
         return Results.BadRequest(new { error = "Artifact path required." });
@@ -531,8 +542,7 @@ api.MapGet("/jobs/{id:guid}/artifacts/{**path}", async (Guid id, string path) =>
         _ => "text/plain; charset=utf-8",
     };
 
-    var bytes = await File.ReadAllBytesAsync(fullPath);
-    return Results.File(bytes, contentType);
+    return Results.File(fullPath, contentType);
 }).RequireCors(policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
 
 // GET /api/jobs/{id}/logs — all log entries

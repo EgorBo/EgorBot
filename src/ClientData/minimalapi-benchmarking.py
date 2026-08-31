@@ -62,6 +62,9 @@ SAMPLY_WARMUP_SECS = 8
 SAMPLY_RECORD_SECS = 25
 SAMPLY_EXIT_AFTER_SECS = 40
 SAMPLY_TIMEOUT_SECS = 20 * 60
+SAMPLY_SAMPLE_BUDGET = 30000
+SAMPLY_RATE_MIN = 19
+SAMPLY_RATE_MAX = 499
 
 APP_ENV = {
     "ASPNETCORE_ENVIRONMENT": "Production",
@@ -743,6 +746,16 @@ def _run_samply_profiling(
     profile_root = common.WORK_DIR / "minimalapi_samply_profiles"
     tools_dir = common.WORK_DIR / "runtime" / "artifacts" / "tools"
     common.ensure_dirs(artifact_dir, profile_root, tools_dir)
+    sample_rate = _clamp(
+        SAMPLY_SAMPLE_BUDGET
+        // (max(1, len(app_cpus)) * SAMPLY_EXIT_AFTER_SECS),
+        SAMPLY_RATE_MIN,
+        SAMPLY_RATE_MAX,
+    )
+    common.post_log(
+        f"[MINIMALAPI] Samply sampling {len(app_cpus)} core(s) at "
+        f"{sample_rate} Hz for up to {SAMPLY_EXIT_AFTER_SECS}s"
+    )
 
     for label, core_root in entries[:MAX_PROFILED_RUNTIMES]:
         if core_root is None:
@@ -779,6 +792,7 @@ def _run_samply_profiling(
             "PROFILE_OUT": str(profile_dir),
             "TOP": str(SAMPLY_TOP_FUNCTIONS),
             "PYTHON_BIN": sys.executable,
+            "SAMPLY_RATE": str(sample_rate),
             "SAMPLY_TOOLS_DIR": str(tools_dir),
             "SAMPLY_PROFILE_NAME": f"{label} / ASP.NET minimal API",
         }
