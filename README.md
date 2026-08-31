@@ -215,7 +215,9 @@ disabled.
 Like OrchardCore, the app is published self-contained once and copied per runtime. Runtime files
 in each copy are replaced from the corresponding `Core_Root`, then bombardier collects throughput
 and latency intervals from fresh server processes. Hill climbing is disabled for stable warmup;
-tiered compilation remains enabled.
+tiered compilation remains enabled. On Linux, the available CPUs are split evenly between the app
+and bombardier. The load defaults to 8 connections per app core, with a minimum of 64 and maximum
+of 512.
 
 | | |
 |---|---|

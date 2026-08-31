@@ -86,11 +86,10 @@ def _available_cpus() -> list:
 
 
 def _split_cpus(cpus: list) -> tuple:
-    if len(cpus) >= 3:
-        return cpus[:-1], cpus[-1:]
-    if len(cpus) == 2:
-        return cpus[:1], cpus[1:]
-    return cpus, cpus
+    if len(cpus) < 2:
+        return cpus, cpus
+    midpoint = (len(cpus) + 1) // 2
+    return cpus[:midpoint], cpus[midpoint:]
 
 
 def _cpu_list(cpus: list) -> str:
@@ -929,7 +928,7 @@ def run_minimalapi_benchmarks():
     else:
         app_cpus = load_cpus = cpus
     connections = cfg.minimalapi_connections or max(
-        32, min(512, 4 * len(app_cpus))
+        64, min(512, 8 * len(app_cpus))
     )
 
     common.post_log(

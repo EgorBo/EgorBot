@@ -221,7 +221,7 @@ class Config:
                         help="[minimalapi] Server restarts per runtime (default: 2)")
         p.add_argument("--minimalapi_connections", type=int, default=0,
                         help="[minimalapi] Load generator connections "
-                             "(default: 0 = 4 per app core, minimum 32, maximum 512)")
+                             "(default: 0 = 8 per app core, minimum 64, maximum 512)")
 
         args = p.parse_args(argv)
 
