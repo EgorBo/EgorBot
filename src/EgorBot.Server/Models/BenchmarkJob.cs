@@ -22,7 +22,7 @@ public class BenchmarkJob
     [MaxLength(32)]
     public string Platform { get; set; } = "";
 
-    /// <summary>What the agent runs: BDN microbenchmarks (default) or a macro-benchmark like OrchardCore.</summary>
+    /// <summary>What the agent runs: BDN microbenchmarks (default) or a fixed macro-benchmark.</summary>
     public BenchmarkKind Kind { get; set; } = BenchmarkKind.Bdn;
 
     /// <summary>Semicolon-separated commits/PRs, e.g. "PR_12345;main".</summary>

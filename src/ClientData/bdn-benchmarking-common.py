@@ -92,6 +92,7 @@ def __getattr__(name):
 class Config:
     work_dir: str
     job_tag: str
+    target_arch: str
     benchmark_kind: str
     gh_commits_and_prs: List[str]
     bench_code_file: str
@@ -113,6 +114,11 @@ class Config:
     orchard_round_duration: int
     orchard_processes: int
     orchard_connections: int
+    minimalapi_warmup: int
+    minimalapi_rounds: int
+    minimalapi_round_duration: int
+    minimalapi_processes: int
+    minimalapi_connections: int
 
     @property
     def is_orchard(self) -> bool:
@@ -120,10 +126,20 @@ class Config:
         return self.benchmark_kind == "orchard"
 
     @property
+    def is_minimalapi(self) -> bool:
+        """Fixed ASP.NET Core minimal API macro-benchmark."""
+        return self.benchmark_kind == "minimalapi"
+
+    @property
+    def is_fixed_workload(self) -> bool:
+        """A fixed macro-benchmark that does not use BenchmarkDotNet."""
+        return self.is_orchard or self.is_minimalapi
+
+    @property
     def bench_use_dotnet_performance(self) -> bool:
         """Use dotnet/performance benchmark suite when bench_code_file is empty.
         We'll rely on --filter arg from BDN_ARGS.rsp."""
-        return self.bench_code_file == ""
+        return not self.is_fixed_workload and self.bench_code_file == ""
 
     @staticmethod
     def parse_args(argv: Optional[List[str]] = None) -> "Config":
@@ -137,9 +153,13 @@ class Config:
                         help="Working directory (default: script directory)")
         p.add_argument("--job_tag", default="test",
                         help="Name to distinguish artifacts (default: test)")
-        p.add_argument("--benchmark_kind", choices=["bdn", "orchard"], default="bdn",
+        p.add_argument("--target_arch", choices=["x64", "arm64", "arm32"], default="",
+                        help="Target architecture supplied by the service "
+                             "(default: detect from the current process)")
+        p.add_argument("--benchmark_kind", choices=["bdn", "orchard", "minimalapi"], default="bdn",
                         help="bdn = BenchmarkDotNet microbenchmarks, "
-                             "orchard = OrchardCore CMS throughput benchmark")
+                             "orchard = OrchardCore CMS throughput benchmark, "
+                             "minimalapi = fixed ASP.NET Core minimal API throughput benchmark")
         p.add_argument("--gh_commits_and_prs",
                         default="",
                         help='Semicolon-separated commits/PRs to compare. PRs prefixed with "PR_", '
@@ -191,12 +211,24 @@ class Config:
         p.add_argument("--orchard_connections", type=int, default=0,
                         help="[orchard] Load generator connections "
                              "(default: 0 = 4 per app core, minimum 32)")
+        p.add_argument("--minimalapi_warmup", type=int, default=30,
+                        help="[minimalapi] Warmup load duration in seconds (default: 30)")
+        p.add_argument("--minimalapi_rounds", type=int, default=3,
+                        help="[minimalapi] Measured intervals per server process (default: 3)")
+        p.add_argument("--minimalapi_round_duration", type=int, default=15,
+                        help="[minimalapi] Duration of one measured interval in seconds (default: 15)")
+        p.add_argument("--minimalapi_processes", type=int, default=2,
+                        help="[minimalapi] Server restarts per runtime (default: 2)")
+        p.add_argument("--minimalapi_connections", type=int, default=0,
+                        help="[minimalapi] Load generator connections "
+                             "(default: 0 = 4 per app core, minimum 32, maximum 512)")
 
         args = p.parse_args(argv)
 
         return Config(
             work_dir=args.work_dir,
             job_tag=args.job_tag,
+            target_arch=args.target_arch,
             benchmark_kind=args.benchmark_kind,
             gh_commits_and_prs=[s.strip() for s in args.gh_commits_and_prs.split(";") if s.strip()],
             bench_code_file=args.bench_code_file,
@@ -218,6 +250,11 @@ class Config:
             orchard_round_duration=max(1, args.orchard_round_duration),
             orchard_processes=max(1, args.orchard_processes),
             orchard_connections=max(0, args.orchard_connections),
+            minimalapi_warmup=max(1, args.minimalapi_warmup),
+            minimalapi_rounds=max(1, args.minimalapi_rounds),
+            minimalapi_round_duration=max(1, args.minimalapi_round_duration),
+            minimalapi_processes=max(1, args.minimalapi_processes),
+            minimalapi_connections=max(0, args.minimalapi_connections),
         )
 
 
@@ -245,7 +282,13 @@ def setup_environment(cfg: Config):
     WORK_DIR = _helpers.WORK_DIR = Path(cfg.work_dir).resolve()
     os.chdir(WORK_DIR)
 
-    TARGET_OS, TARGET_ARCH = detect_platform()
+    TARGET_OS, detected_arch = detect_platform()
+    TARGET_ARCH = cfg.target_arch or detected_arch
+    if cfg.target_arch and cfg.target_arch != detected_arch:
+        post_log(
+            f"Using service-selected architecture {cfg.target_arch} "
+            f"(Python process reported {detected_arch})"
+        )
     _helpers.TARGET_OS = TARGET_OS
     _helpers.TARGET_ARCH = TARGET_ARCH
 
@@ -759,6 +802,28 @@ def run_orchard(cfg: Config):
     send_results(success=True)
 
 
+def run_minimalapi(cfg: Config):
+    """Run the fixed ASP.NET Core minimal API benchmark."""
+    if cfg.gh_commits_and_prs:
+        post_log("[STAGE 4/5] Building core_roots for all commits/PRs...")
+        build_core_roots()
+        post_log("[STAGE 4/5] Core_roots built ✓")
+    else:
+        post_log("[STAGE 4/5] No commits/PRs specified -- using the installed SDK runtime")
+
+    post_log("[STAGE 5/5] Running the ASP.NET Core minimal API benchmark...")
+    minimalapi = load_sibling_module(
+        "minimalapi-benchmarking.py", "minimalapi_benchmarking"
+    )
+    if minimalapi is None:
+        raise RuntimeError("minimalapi-benchmarking.py is missing from the agent payload")
+    minimalapi.run_minimalapi_benchmarks()
+    post_log("[STAGE 5/5] ASP.NET Core minimal API benchmark completed ✓")
+
+    post_log("Finalizing -- uploading results...")
+    send_results(success=True)
+
+
 # =============================================================================
 #  Entry point
 # =============================================================================
@@ -782,9 +847,8 @@ def main(cfg: Optional[Config] = None):
     post_log(f"  Callback: {cfg.callback_url or '(none)'}, JobId: {cfg.job_id or '(none)'}")
 
     bench_args: List[str] = []
-    if cfg.is_orchard:
-        # The OrchardCore benchmark is a fixed workload — no BDN, no arguments.
-        post_log("  BDN args: (not used by the OrchardCore benchmark)")
+    if cfg.is_fixed_workload:
+        post_log(f"  BDN args: (not used by the {cfg.benchmark_kind} benchmark)")
     else:
         # Read BDN_ARGS.rsp (from user-provided path, or download a default)
         if cfg.bdn_args_file:
@@ -815,6 +879,9 @@ def main(cfg: Optional[Config] = None):
 
     if cfg.is_orchard:
         run_orchard(cfg)
+        return
+    if cfg.is_minimalapi:
+        run_minimalapi(cfg)
         return
 
     post_log("[STAGE 4/6] Building benchmarks...")

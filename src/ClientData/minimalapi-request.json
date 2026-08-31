@@ -1,0 +1,49 @@
+{
+  "requestId": "q-20260831-0042",
+  "submittedAt": "2026-08-31T00:09:31.125Z",
+  "customer": {
+    "name": "Contoso Outdoor",
+    "region": "EU",
+    "segment": "business",
+    "loyaltyScore": 0.82
+  },
+  "shipping": {
+    "postalCode": "10115-Berlin",
+    "distanceKm": 684.5,
+    "priority": true
+  },
+  "items": [
+    {
+      "sku": "tent-alpine-4",
+      "description": "Four-person alpine tent",
+      "quantity": 2,
+      "unitPrice": 249.95,
+      "weightKg": 4.8,
+      "availableSince": "2026-03-14T08:30:00Z"
+    },
+    {
+      "sku": "bag-down-20",
+      "description": "Down sleeping bag",
+      "quantity": 4,
+      "unitPrice": 139.5,
+      "weightKg": 1.35,
+      "availableSince": "2026-06-02T11:15:00Z"
+    },
+    {
+      "sku": "stove-trail-mini",
+      "description": "Compact trail stove",
+      "quantity": 2,
+      "unitPrice": 54.75,
+      "weightKg": 0.42,
+      "availableSince": "2025-11-19T16:45:00Z"
+    },
+    {
+      "sku": "filter-flow-2",
+      "description": "Two-stage water filter",
+      "quantity": 3,
+      "unitPrice": 38.4,
+      "weightKg": 0.31,
+      "availableSince": "2026-08-01T09:00:00Z"
+    }
+  ]
+}

@@ -10,7 +10,7 @@ public sealed class StartJobRequest
     /// <summary>Target platforms, e.g. ["linux_x64", "local_x64"].</summary>
     public required List<string> Platforms { get; init; }
 
-    /// <summary>What to run: BDN microbenchmarks (default) or a macro-benchmark like OrchardCore.</summary>
+    /// <summary>What to run: BDN microbenchmarks (default) or a fixed macro-benchmark.</summary>
     public BenchmarkKind Kind { get; init; } = BenchmarkKind.Bdn;
 
     /// <summary>Semicolon-separated commits/PRs, e.g. "PR_12345;main".</summary>

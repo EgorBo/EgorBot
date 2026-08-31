@@ -177,7 +177,7 @@ api.MapPost("/jobs", async (
 
     // Macro-benchmarks always compare runtime builds: without commits there is
     // nothing to compare, and the run would just measure the installed SDK.
-    if (request.Kind == BenchmarkKind.Orchard && string.IsNullOrWhiteSpace(commitsAndPrs))
+    if (request.Kind.IsFixedWorkload() && string.IsNullOrWhiteSpace(commitsAndPrs))
     {
         log.LogWarning("Validation failed: {Kind} requires commits/PRs", request.Kind);
         return Results.BadRequest(new
@@ -225,6 +225,23 @@ api.MapPost("/jobs", async (
         });
     }
 
+    var fixedWorkloadProfiler = request.UseProfiler || perfStatEvents is not null;
+    if (request.Kind == BenchmarkKind.MinimalApi && fixedWorkloadProfiler)
+    {
+        var windowsTargets = normalizedPlatforms
+            .Where(platform => TargetCatalog.GetTarget(platform).OsFamily.Equals(
+                "windows", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (windowsTargets.Count > 0)
+        {
+            return Results.BadRequest(new
+            {
+                error = "The 'minimalapi' profiler uses perf on Linux and Samply on macOS; " +
+                        $"it is not available on {string.Join(", ", windowsTargets.Select(t => $"'{t}'"))}."
+            });
+        }
+    }
+
     string userKey;
     try
     {
@@ -262,28 +279,25 @@ api.MapPost("/jobs", async (
 
     foreach (var platform in normalizedPlatforms)
     {
-        // The OrchardCore benchmark is a fixed workload: no snippet, no BDN arguments.
-        // Profiling runs as a separate pass on the VM (the JIT knobs perf needs would
-        // otherwise skew the measured RPS), so the BDN EventPipe fallback below
-        // never applies.
-        if (request.Kind == BenchmarkKind.Orchard)
+        // Fixed macro-benchmarks have no snippet or BDN arguments. Profiling is a
+        // separate pass so its JIT knobs cannot skew the throughput measurements.
+        if (request.Kind.IsFixedWorkload())
         {
-            var orchardProfiler = request.UseProfiler || perfStatEvents is not null;
-            var orchardJob = new BenchmarkJob
+            var macroJob = new BenchmarkJob
             {
                 GroupId = groupId,
                 Platform = platform,
                 Kind = request.Kind,
                 CommitsAndPrs = commitsAndPrs,
-                UseProfiler = orchardProfiler,
+                UseProfiler = fixedWorkloadProfiler,
                 UseGcProfiler = request.UseGcProfiler,
-                PerfStatEvents = orchardProfiler ? perfStatEvents : null,
+                PerfStatEvents = fixedWorkloadProfiler ? perfStatEvents : null,
                 Attempts = request.Attempts,
                 RequestedBy = request.RequestedBy,
                 SourceUrl = request.SourceUrl,
             };
 
-            pendingJobs.Add(orchardJob);
+            pendingJobs.Add(macroJob);
             continue;
         }
 

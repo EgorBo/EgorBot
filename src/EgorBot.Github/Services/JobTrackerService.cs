@@ -279,9 +279,12 @@ public sealed class JobTrackerService(
 
     /// <summary>Name the workload when it isn't the default BDN run.</summary>
     private static string KindLine(BotCommand command) =>
-        command.Kind == BenchmarkKind.Orchard
-            ? "**Benchmark:** OrchardCore CMS (requests/sec)\n"
-            : "";
+        command.Kind switch
+        {
+            BenchmarkKind.Orchard => "**Benchmark:** OrchardCore CMS (requests/sec)\n",
+            BenchmarkKind.MinimalApi => "**Benchmark:** ASP.NET Core minimal API (requests/sec)\n",
+            _ => "",
+        };
 
     private async Task CreateTrackingIssueAsync(TrackedJob tracked)
     {
@@ -729,6 +732,11 @@ public sealed class JobTrackerService(
             `-commits`, and takes no snippet or BDN arguments. `-profiler` adds a separate
             profiling pass on Linux (hot asm, flamegraphs, counters); `-gcprofiler` adds a
             separate cross-platform dotnet-trace GC pass. Both can be used together.
+
+            `minimalapi` — fixed ASP.NET Core JSON API throughput benchmark,
+            e.g. `@EgorBot minimalapi -amd`. Runs on Linux/Windows x64/arm64 and macOS
+            arm64, needs a PR or `-commits`, and takes no snippet or BDN arguments.
+            `-profiler` uses perf on Linux and Samply on macOS.
 
             Targets can be prefixed with OS: `-windows_arm`, `-linux_intel`
             Anything on the `@EgorBot` line that isn't a target or an option is passed to

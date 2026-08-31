@@ -39,6 +39,7 @@ Once EgorBot-specific options are no longer recognized, the remaining tokens are
 | Option | Description |
 |---|---|
 | `orchard` | Run the [OrchardCore CMS](https://github.com/OrchardCMS/OrchardCore) throughput benchmark instead of BenchmarkDotNet (see below). |
+| `minimalapi` | Run the fixed ASP.NET Core minimal API JSON throughput benchmark instead of BenchmarkDotNet (see below). |
 | `-commits SHA1,SHA2,...` | Commits to compare (comma or semicolon-separated). Supports `SHA~N` syntax and ranges. Example: `530201,530201~1` (compare 530201 vs previous commit) or `07e1dc...530201` (range of commits) |
 | `-pr <number>` | Target a specific PR (this argument is implied when running in a PR context). |
 | `-profiler` | Run an extra profiling pass: Linux `perf` or macOS Samply. |
@@ -194,6 +195,42 @@ Example:
 @EgorBot orchard -arm -profiler
 @EgorBot orchard -arm -gcprofiler
 @EgorBot orchard -amd -profiler -gcprofiler
+```
+
+## ASP.NET Core minimal API benchmark (`minimalapi`)
+
+This fixed macro-benchmark measures a realistic JSON POST endpoint without a database:
+
+```
+@EgorBot minimalapi -amd
+```
+
+The endpoint binds a customer ID from the route; float, `DateTimeOffset`, and string values
+from the query; a tenant from a header; and a nested JSON quote request containing strings,
+dates, floats, quantities, customer data, shipping data, and several line items. It calculates
+discounts, tax, shipping, and delivery dates, then serializes a JSON response. Both request and
+response use System.Text.Json source-generated metadata contracts, with reflection serialization
+disabled.
+
+Like OrchardCore, the app is published self-contained once and copied per runtime. Runtime files
+in each copy are replaced from the corresponding `Core_Root`, then bombardier collects throughput
+and latency intervals from fresh server processes. Hill climbing is disabled for stable warmup;
+tiered compilation remains enabled.
+
+| | |
+|---|---|
+| Targets | **Linux and Windows x64/arm64; macOS arm64.** macOS x64 and 32-bit targets are rejected |
+| Commits | required — run it from a PR, or pass `-pr <number>` / `-commits SHA1,SHA2` |
+| `-profiler` | Linux `perf` or macOS Samply, in a separate pass; not available on Windows |
+| `-perf_events a,b,c` | custom Linux `perf stat` events (implies `-profiler`) |
+| `-gcprofiler` | not supported |
+
+Examples:
+
+```
+@EgorBot minimalapi -amd -commits abc1234,abc1234~1
+@EgorBot minimalapi -windows_arm64 -commits abc1234,abc1234~1
+@EgorBot minimalapi -arm -profiler
 ```
 
 

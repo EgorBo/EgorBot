@@ -19,7 +19,7 @@ public sealed class BotCommand
     /// <summary>Optional C# benchmark snippet from a markdown code block.</summary>
     public string? BenchmarkCode { get; init; }
 
-    /// <summary>What to benchmark: BDN microbenchmarks (default) or a macro-benchmark like OrchardCore.</summary>
+    /// <summary>What to benchmark: BDN microbenchmarks (default) or a fixed macro-benchmark.</summary>
     public BenchmarkKind Kind { get; init; } = BenchmarkKind.Bdn;
 
     /// <summary>Enable the platform profiler.</summary>

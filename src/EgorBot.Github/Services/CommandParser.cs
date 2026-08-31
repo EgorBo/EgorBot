@@ -270,7 +270,7 @@ public static partial class CommandParser
                     break;
 
                 default:
-                    // Benchmark kind (e.g. "orchard") — a different workload, not a BDN run
+                    // Benchmark kind (e.g. "orchard" or "minimalapi") -- a fixed workload, not BDN
                     if (BenchmarkKinds.TryParseToken(normalized, out var parsedKind))
                     {
                         consumed[i] = true;
@@ -331,11 +331,12 @@ public static partial class CommandParser
             }
         }
 
-        if (kind == BenchmarkKind.Orchard)
+        if (kind.IsFixedWorkload())
         {
-            var orchardError = ValidateOrchard(targets, bdnTokens);
-            if (orchardError is not null)
-                return new BotCommand { ErrorMessage = orchardError };
+            var workloadError = ValidateFixedWorkload(
+                kind, targets, bdnTokens, useProfiler, useGcProfiler);
+            if (workloadError is not null)
+                return new BotCommand { ErrorMessage = workloadError };
 
             // A fixed macro-benchmark: no snippet, no BDN arguments.
             benchmarkCode = null;
@@ -368,26 +369,51 @@ public static partial class CommandParser
     }
 
     /// <summary>
-    /// Reject OrchardCore requests the agent could not honour, instead of silently
+    /// Reject fixed-workload requests the agent could not honour, instead of silently
     /// running something else (a different machine, or a BDN run with no snippet).
     /// </summary>
-    private static string? ValidateOrchard(List<string> targets, List<string> bdnTokens)
+    private static string? ValidateFixedWorkload(
+        BenchmarkKind kind,
+        List<string> targets,
+        List<string> bdnTokens,
+        bool useProfiler,
+        bool useGcProfiler)
     {
         var unsupported = targets
-            .Where(t => !BenchmarkKind.Orchard.SupportsTarget(t))
+            .Where(t => !kind.SupportsTarget(t))
             .ToList();
         if (unsupported.Count > 0)
         {
-            return $"the `orchard` benchmark runs on {BenchmarkKind.Orchard.SupportedTargetsDescription()}, "
+            return $"the `{kind.ToAgentArg()}` benchmark runs on {kind.SupportedTargetsDescription()}, "
                  + $"so {string.Join(", ", unsupported.Select(t => $"`{t}`"))} cannot be used.";
         }
 
         if (bdnTokens.Count > 0)
         {
-            return $"the `orchard` benchmark takes no BenchmarkDotNet arguments, but got "
+            return $"the `{kind.ToAgentArg()}` benchmark takes no BenchmarkDotNet arguments, but got "
                  + $"{string.Join(", ", bdnTokens.Select(t => $"`{t}`"))}. "
                  + "Supported options: targets (`-arm`, `-amd`, `-intel`, ...), `-pr`, `-commits`, "
-                 + "`-profiler`, `-gcprofiler`, `-perf_events a,b,c`.";
+                 + "`-profiler`, `-perf_events a,b,c`"
+                 + (kind == BenchmarkKind.Orchard ? ", `-gcprofiler`." : ".");
+        }
+
+        if (useGcProfiler && kind != BenchmarkKind.Orchard)
+        {
+            return "`-gcprofiler` is supported only by the `orchard` benchmark.";
+        }
+
+        if (kind == BenchmarkKind.MinimalApi && useProfiler)
+        {
+            var windowsTargets = targets
+                .Where(target => TargetCatalog.GetTarget(target).OsFamily.Equals(
+                    "windows", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (windowsTargets.Count > 0)
+            {
+                return "the `minimalapi` profiler uses perf on Linux and Samply on macOS; "
+                     + $"it is not available on {string.Join(", ", windowsTargets.Select(t => $"`{t}`"))}. "
+                     + "Run the Windows throughput benchmark without `-profiler`.";
+            }
         }
 
         return null;
@@ -401,9 +427,10 @@ public static partial class CommandParser
     /// </summary>
     public static string? ValidateRunnable(BotCommand command)
     {
-        if (command.Kind == BenchmarkKind.Orchard && string.IsNullOrWhiteSpace(command.CommitsAndPrs))
+        if (command.Kind.IsFixedWorkload() && string.IsNullOrWhiteSpace(command.CommitsAndPrs))
         {
-            return "the `orchard` benchmark compares runtime builds, so it needs a PR or commits. "
+            return $"the `{command.Kind.ToAgentArg()}` benchmark compares runtime builds, "
+                 + "so it needs a PR or commits. "
                  + "Run it from a PR comment, or pass `-pr <number>` / `-commits SHA1,SHA2`.";
         }
 

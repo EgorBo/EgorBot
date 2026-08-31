@@ -138,8 +138,9 @@ public sealed class CloudInitBuilder(IConfiguration config)
         sb.AppendLine("    Report-Error 'Python not found — downloading embeddable Python...'");
         sb.AppendLine("    try {");
         sb.AppendLine("        $pyVer = '3.12.8'");
-        sb.AppendLine("        $pyZip = Join-Path $workDir \"python-$pyVer-embed-amd64.zip\"");
-        sb.AppendLine("        Invoke-WebRequest -Uri \"https://www.python.org/ftp/python/$pyVer/python-$pyVer-embed-amd64.zip\" -OutFile $pyZip -UseBasicParsing");
+        sb.AppendLine("        $pyArch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'amd64' }");
+        sb.AppendLine("        $pyZip = Join-Path $workDir \"python-$pyVer-embed-$pyArch.zip\"");
+        sb.AppendLine("        Invoke-WebRequest -Uri \"https://www.python.org/ftp/python/$pyVer/python-$pyVer-embed-$pyArch.zip\" -OutFile $pyZip -UseBasicParsing");
         sb.AppendLine("        $pyDir = Join-Path $workDir 'python-embed'");
         sb.AppendLine("        Expand-Archive $pyZip -DestinationPath $pyDir -Force");
         sb.AppendLine("        $pthFile = Get-ChildItem $pyDir -Filter '*._pth' | Select-Object -First 1");
@@ -228,6 +229,7 @@ public sealed class CloudInitBuilder(IConfiguration config)
             $"--job_tag \"{job.Id}\"",
             $"--callback_url \"{callbackUrl}\"",
             $"--job_id \"{job.Id}\"",
+            $"--target_arch {TargetCatalog.GetTarget(job.Platform).Arch.ToString().ToLowerInvariant()}",
         };
 
         if (job.Kind != BenchmarkKind.Bdn)
@@ -263,11 +265,13 @@ public sealed class CloudInitBuilder(IConfiguration config)
 
         if (job.Attempts > 1)
         {
-            // The OrchardCore benchmark repeats by restarting the server process
-            // (each restart is a fresh JIT/GC layout), not by re-running BDN.
-            parts.Add(job.Kind == BenchmarkKind.Orchard
-                ? $"--orchard_processes {job.Attempts}"
-                : $"--attempts {job.Attempts}");
+            // Macro-benchmarks repeat with fresh server processes rather than BDN attempts.
+            parts.Add(job.Kind switch
+            {
+                BenchmarkKind.Orchard => $"--orchard_processes {job.Attempts}",
+                BenchmarkKind.MinimalApi => $"--minimalapi_processes {job.Attempts}",
+                _ => $"--attempts {job.Attempts}",
+            });
         }
 
         if (!string.IsNullOrWhiteSpace(job.BdnArguments))

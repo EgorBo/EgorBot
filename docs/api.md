@@ -29,13 +29,13 @@ Start one or more benchmark jobs.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `platforms` | `string[]` | **Yes** | Target platforms/aliases. At least one required. Examples: `"arm"`, `"aws_graviton4"`, `"windows_x64"`, `"osx"`. |
-| `kind` | `string` | No | `"bdn"` (default) — BenchmarkDotNet microbenchmarks, or `"orchard"` — OrchardCore CMS throughput. `"orchard"` requires a Linux/macOS x64/arm64 platform and a non-empty `commitsAndPrs`, and ignores `bdnArguments` and `benchmarkCode`. |
+| `kind` | `string` | No | `"bdn"` (default), `"orchard"` (OrchardCore CMS), or `"minimalApi"` (fixed ASP.NET Core JSON API). Fixed workloads require a non-empty `commitsAndPrs` and ignore `bdnArguments` and `benchmarkCode`. Orchard supports Linux/macOS x64/arm64. Minimal API supports Linux/Windows x64/arm64 and macOS arm64. |
 | `commitsAndPrs` | `string` | **Yes** | Semicolon-separated commits or PRs to compare. PRs prefixed with `PR_`. Can be empty (runs with default SDK). |
 | `bdnArguments` | `string?` | No | Extra BenchmarkDotNet CLI arguments (e.g. `--filter *Span*`). |
 | `benchmarkCode` | `string?` | No | C# benchmark source code. If omitted, uses `dotnet/performance` benchmarks. |
-| `useProfiler` | `bool` | No | Enable perf recording on Linux or Samply recording on macOS. Default: `false`. |
+| `useProfiler` | `bool` | No | Enable perf recording on Linux or Samply recording on macOS. The minimal API benchmark does not support profiling on Windows. Default: `false`. |
 | `useGcProfiler` | `bool` | No | Enable a separate OrchardCore dotnet-trace GC profiling pass. May be combined with `useProfiler`. Default: `false`. |
-| `attempts` | `int` | No | Repeat count. For `"orchard"` it is the number of server processes per runtime. Default: `1`. |
+| `attempts` | `int` | No | Repeat count. For fixed macro-benchmarks it is the number of fresh server processes per runtime. Default: `1`. |
 | `requestedBy` | `string?` | No | GitHub login used for the rolling per-user job limit. Missing values share the `(anonymous)` limit bucket. |
 | `sourceUrl` | `string?` | No | URL of the originating GitHub comment. |
 
@@ -55,7 +55,7 @@ Start one or more benchmark jobs.
 
 | Status | Condition |
 |---|---|
-| `400` | No platforms specified, unknown target, local target in production, a target the requested `kind` cannot run on, or `"orchard"` without commits. |
+| `400` | No platforms specified, unknown target, local target in production, a target the requested `kind` cannot run on, a fixed workload without commits, or unsupported profiler/GC-profiler combinations. |
 | `429` | The request would exceed either the global jobs-per-request limit or the requester's rolling 24-hour limit. One job is counted per target platform. |
 
 The per-request limit is configured with `EgorBot:MaxJobsPerRequest` and defaults
