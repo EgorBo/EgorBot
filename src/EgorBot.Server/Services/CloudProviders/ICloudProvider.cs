@@ -28,7 +28,8 @@ public interface ICloudProvider
 
     /// <summary>
     /// List the names/identifiers of all currently active VMs in this provider.
-    /// Returns an empty list for providers that don't manage VMs (e.g. Docker, Helix).
+    /// Returns an empty list for providers that don't manage VMs (e.g. Docker, Helix),
+    /// and throws when a provider query fails so callers never confuse an error with zero VMs.
     /// </summary>
     Task<IReadOnlyList<string>> ListActiveVmsAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<string>>([]);

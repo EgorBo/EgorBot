@@ -493,8 +493,10 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
 
             try
             {
+                using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(
+                    Math.Max(1, config.GetValue("EgorBot:CleanupTimeoutSeconds", 300))));
                 await DeprovisionAsync(
-                    $"egorbot-{request.JobId}", CancellationToken.None);
+                    $"egorbot-{request.JobId}", cleanupCts.Token);
             }
             catch (Exception cleanupError)
             {
@@ -512,14 +514,14 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
 
     public async Task DeprovisionAsync(string instanceId, CancellationToken ct = default)
     {
-        // instanceId is the resource group name
         try
         {
             logger.LogInformation("Azure: deleting resource group '{RG}'", instanceId);
 
             var armClient = CreateArmClient();
             var subscription = await armClient.GetDefaultSubscriptionAsync(ct);
-            var rgResponse = await subscription.GetResourceGroups().GetIfExistsAsync(instanceId, ct);
+            var resourceGroups = subscription.GetResourceGroups();
+            var rgResponse = await resourceGroups.GetIfExistsAsync(instanceId, ct);
 
             if (rgResponse?.Value is null)
             {
@@ -527,14 +529,88 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
                 return;
             }
 
-            await rgResponse.Value.DeleteAsync(WaitUntil.Completed, cancellationToken: ct);
-            logger.LogInformation("Azure: resource group '{RG}' deleted", instanceId);
+            var resourceGroup = rgResponse.Value;
+            var vmName = GetVmName(instanceId);
+            var vmResponse = await resourceGroup.GetVirtualMachines()
+                .GetIfExistsAsync(vmName, cancellationToken: ct);
+            var vmExists = vmResponse?.Value is not null;
+
+            if (!vmExists)
+            {
+                logger.LogInformation(
+                    "Azure: VM '{VM}' no longer exists; compute quota is released",
+                    vmName);
+                return;
+            }
+
+            try
+            {
+                await resourceGroup.DeleteAsync(
+                    WaitUntil.Started, cancellationToken: ct);
+                logger.LogInformation(
+                    "Azure: resource group '{RG}' deletion accepted",
+                    instanceId);
+            }
+            catch (RequestFailedException ex)
+                when (ex.Status == StatusCodes.Status409Conflict)
+            {
+                logger.LogInformation(
+                    "Azure: resource group '{RG}' is already deleting",
+                    instanceId);
+            }
+
+            var pollInterval = TimeSpan.FromSeconds(
+                Math.Max(1, config.GetValue("Azure:DeletionPollSeconds", 5)));
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                rgResponse = await resourceGroups.GetIfExistsAsync(instanceId, ct);
+                if (rgResponse?.Value is null)
+                {
+                    logger.LogInformation(
+                        "Azure: resource group '{RG}' deleted",
+                        instanceId);
+                    return;
+                }
+
+                vmResponse = await rgResponse.Value.GetVirtualMachines()
+                    .GetIfExistsAsync(vmName, cancellationToken: ct);
+                if (vmResponse?.Value is null)
+                {
+                    logger.LogInformation(
+                        "Azure: VM '{VM}' deleted; compute quota is released while resource group '{RG}' finishes deleting",
+                        vmName, instanceId);
+                    return;
+                }
+
+                await Task.Delay(pollInterval, ct);
+            }
+        }
+        catch (RequestFailedException ex) when (ex.Status == StatusCodes.Status404NotFound)
+        {
+            logger.LogInformation(
+                "Azure: resource group or VM for '{RG}' no longer exists",
+                instanceId);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Azure: failed to delete resource group '{RG}'", instanceId);
             throw;
         }
+    }
+
+    private static string GetVmName(string resourceGroupName)
+    {
+        const string prefix = "egorbot-";
+        if (!resourceGroupName.StartsWith(prefix, StringComparison.Ordinal)
+            || resourceGroupName.Length == prefix.Length)
+        {
+            throw new InvalidOperationException(
+                $"Unexpected EgorBot Azure resource group name: '{resourceGroupName}'.");
+        }
+
+        return $"runner-vm-{resourceGroupName[prefix.Length..]}";
     }
 
     public async Task<bool> TryDeprovisionByJobIdAsync(
@@ -547,27 +623,19 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
 
     public async Task<IReadOnlyList<string>> ListActiveVmsAsync(CancellationToken ct = default)
     {
-        try
-        {
-            var armClient = CreateArmClient();
-            var subscription = await armClient.GetDefaultSubscriptionAsync(ct);
-            var names = new List<string>();
+        var armClient = CreateArmClient();
+        var subscription = await armClient.GetDefaultSubscriptionAsync(ct);
+        var names = new List<string>();
 
-            await foreach (var rg in subscription.GetResourceGroups().GetAllAsync(cancellationToken: ct))
+        await foreach (var rg in subscription.GetResourceGroups().GetAllAsync(cancellationToken: ct))
+        {
+            ct.ThrowIfCancellationRequested();
+            await foreach (var vm in rg.GetVirtualMachines().GetAllAsync(cancellationToken: ct))
             {
-                ct.ThrowIfCancellationRequested();
-                await foreach (var vm in rg.GetVirtualMachines().GetAllAsync(cancellationToken: ct))
-                {
-                    names.Add($"{rg.Data.Name}/{vm.Data.Name}");
-                }
+                names.Add($"{rg.Data.Name}/{vm.Data.Name}");
             }
+        }
 
-            return names;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Azure: failed to list active VMs");
-            return [];
-        }
+        return names;
     }
 }

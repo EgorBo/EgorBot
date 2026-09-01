@@ -197,7 +197,9 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
             var resourceId = launchedInstanceId ?? $"job:{request.JobId}";
             try
             {
-                await DeprovisionAsync(resourceId, CancellationToken.None);
+                using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(
+                    Math.Max(1, config.GetValue("EgorBot:CleanupTimeoutSeconds", 300))));
+                await DeprovisionAsync(resourceId, cleanupCts.Token);
             }
             catch (Exception cleanupError)
             {
@@ -315,42 +317,34 @@ public sealed class AwsCloudProvider(IConfiguration config, ILogger<AwsCloudProv
 
     public async Task<IReadOnlyList<string>> ListActiveVmsAsync(CancellationToken ct = default)
     {
-        try
+        using var ec2 = CreateEc2Client();
+        var request = new DescribeInstancesRequest
         {
-            using var ec2 = CreateEc2Client();
-            var request = new DescribeInstancesRequest
-            {
-                Filters =
-                [
-                    new Filter("instance-state-name", ["pending", "running", "stopping"])
-                ]
-            };
+            Filters =
+            [
+                new Filter("instance-state-name", ["pending", "running", "stopping"])
+            ]
+        };
 
-            var names = new List<string>();
-            DescribeInstancesResponse response;
-            do
+        var names = new List<string>();
+        DescribeInstancesResponse response;
+        do
+        {
+            response = await ec2.DescribeInstancesAsync(request, ct);
+            foreach (var reservation in response.Reservations)
             {
-                response = await ec2.DescribeInstancesAsync(request, ct);
-                foreach (var reservation in response.Reservations)
+                foreach (var instance in reservation.Instances)
                 {
-                    foreach (var instance in reservation.Instances)
-                    {
-                        var nameTag = instance.Tags?.FirstOrDefault(t => t.Key == "Name")?.Value;
-                        var display = !string.IsNullOrEmpty(nameTag)
-                            ? $"{nameTag} ({instance.InstanceId})"
-                            : instance.InstanceId;
-                        names.Add(display);
-                    }
+                    var nameTag = instance.Tags?.FirstOrDefault(t => t.Key == "Name")?.Value;
+                    var display = !string.IsNullOrEmpty(nameTag)
+                        ? $"{nameTag} ({instance.InstanceId})"
+                        : instance.InstanceId;
+                    names.Add(display);
                 }
-                request.NextToken = response.NextToken;
-            } while (!string.IsNullOrEmpty(response.NextToken));
+            }
+            request.NextToken = response.NextToken;
+        } while (!string.IsNullOrEmpty(response.NextToken));
 
-            return names;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "AWS: failed to list active instances");
-            return [];
-        }
+        return names;
     }
 }

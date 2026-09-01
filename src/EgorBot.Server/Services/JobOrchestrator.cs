@@ -57,6 +57,10 @@ public sealed class JobOrchestrator(
     private readonly int _maxConcurrentJobs = config.GetValue("EgorBot:MaxConcurrentJobs", 4);
     private readonly TimeSpan _jobTimeout = TimeSpan.FromMinutes(config.GetValue("EgorBot:JobTimeoutMinutes", 60));
     private readonly TimeSpan _helixJobTimeout = TimeSpan.FromMinutes(config.GetValue("EgorBot:HelixJobTimeoutMinutes", 150));
+    private readonly TimeSpan _cleanupTimeout = TimeSpan.FromSeconds(
+        Math.Max(1, config.GetValue("EgorBot:CleanupTimeoutSeconds", 300)));
+    private readonly TimeSpan _cleanupRetryInterval = TimeSpan.FromSeconds(
+        Math.Max(1, config.GetValue("EgorBot:CleanupRetrySeconds", 60)));
 
     /// <summary>Enqueue a job ID for processing.</summary>
     public void Enqueue(Guid jobId)
@@ -272,15 +276,27 @@ public sealed class JobOrchestrator(
             {
                 var provider = providerFactory.GetProvider(job.Platform);
                 var instanceId = job.CloudProviderInstanceId;
-                await provider.DeprovisionAsync(instanceId, CancellationToken.None);
-                if (job.RentedCores > 0)
+                await DeprovisionWithTimeoutAsync(
+                    provider, instanceId, CancellationToken.None);
+
+                await _rentLifecycleGate.WaitAsync();
+                try
                 {
-                    _retainedRents.TryRemove(job.Id, out _);
-                    corePool.Return(job.Platform, job.RentedCores);
+                    // A force-reset may have completed while cloud deletion was in
+                    // progress. Reload under the gate so cleanup cannot return twice.
+                    await db.Entry(job).ReloadAsync();
+                    job.CloudProviderInstanceId = null;
+                    job.RentedCores = 0;
+                    await db.SaveChangesAsync();
+
+                    if (_retainedRents.TryRemove(job.Id, out var lease))
+                        corePool.Return(lease.Platform, lease.Cores);
                 }
-                job.CloudProviderInstanceId = null;
-                job.RentedCores = 0;
-                await db.SaveChangesAsync();
+                finally
+                {
+                    _rentLifecycleGate.Release();
+                }
+
                 logger.LogInformation("{Operation}: deprovisioned {InstanceId} for job {JobId}",
                     operation, instanceId, job.Id);
             }
@@ -288,11 +304,21 @@ public sealed class JobOrchestrator(
             {
                 logger.LogError(ex, "{Operation}: failed to deprovision {InstanceId} for job {JobId}",
                     operation, job.CloudProviderInstanceId, job.Id);
-                if (job.RentedCores > 0
-                    && _retainedRents.TryAdd(
-                        job.Id, (job.Platform, job.RentedCores)))
+
+                await _rentLifecycleGate.WaitAsync();
+                try
                 {
-                    corePool.Restore(job.Platform, job.RentedCores);
+                    await db.Entry(job).ReloadAsync();
+                    if (job.RentedCores > 0
+                        && _retainedRents.TryAdd(
+                            job.Id, (job.Platform, job.RentedCores)))
+                    {
+                        corePool.Restore(job.Platform, job.RentedCores);
+                    }
+                }
+                finally
+                {
+                    _rentLifecycleGate.Release();
                 }
             }
         }
@@ -314,32 +340,45 @@ public sealed class JobOrchestrator(
         // Startup recovery: clean up stale jobs
         await RecoverStaleJobsAsync(stoppingToken);
 
-        var semaphore = new SemaphoreSlim(_maxConcurrentJobs, _maxConcurrentJobs);
+        using var reconciliationCts =
+            CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var reconciliationTask =
+            ReconcileRetainedRentsLoopAsync(reconciliationCts.Token);
 
-        await foreach (var jobId in _jobQueue.Reader.ReadAllAsync(stoppingToken))
+        try
         {
-            logger.LogInformation("Dequeued job {JobId}, waiting for semaphore (available={Available}/{Max})",
-                jobId, semaphore.CurrentCount, _maxConcurrentJobs);
-            await semaphore.WaitAsync(stoppingToken);
-            logger.LogInformation("Semaphore acquired for job {JobId}", jobId);
+            var semaphore = new SemaphoreSlim(_maxConcurrentJobs, _maxConcurrentJobs);
 
-            // Fire-and-forget each job (semaphore controls concurrency)
-            _ = Task.Run(async () =>
+            await foreach (var jobId in _jobQueue.Reader.ReadAllAsync(stoppingToken))
             {
-                try
+                logger.LogInformation("Dequeued job {JobId}, waiting for semaphore (available={Available}/{Max})",
+                    jobId, semaphore.CurrentCount, _maxConcurrentJobs);
+                await semaphore.WaitAsync(stoppingToken);
+                logger.LogInformation("Semaphore acquired for job {JobId}", jobId);
+
+                // Fire-and-forget each job (semaphore controls concurrency)
+                _ = Task.Run(async () =>
                 {
-                    await ProcessJobAsync(jobId, stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Unhandled error processing job {JobId}", jobId);
-                }
-                finally
-                {
-                    semaphore.Release();
-                    logger.LogInformation("Semaphore released for job {JobId}", jobId);
-                }
-            }, stoppingToken);
+                    try
+                    {
+                        await ProcessJobAsync(jobId, stoppingToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Unhandled error processing job {JobId}", jobId);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        logger.LogInformation("Semaphore released for job {JobId}", jobId);
+                    }
+                }, stoppingToken);
+            }
+        }
+        finally
+        {
+            await reconciliationCts.CancelAsync();
+            await reconciliationTask;
         }
     }
 
@@ -561,12 +600,14 @@ public sealed class JobOrchestrator(
         }
         finally
         {
-            // Everything in here is best-effort: a failure while saving the status or
-            // deprovisioning must never skip the core return, otherwise the pool leaks
-            // and every later job hangs on "Waiting for N cores from pool".
+            // Cleanup is bounded, but cores are returned only after both cloud cleanup
+            // and the durable lease update have been confirmed.
             try
             {
                 job.CompletedAt = DateTime.UtcNow;
+                var cleanupAlreadyConfirmed = rentedCores > 0 && instanceId is null;
+                if (cleanupAlreadyConfirmed)
+                    job.RentedCores = 0;
 
                 // Generate self-hosted log URL BEFORE saving status,
                 // so LogsBlobUrl is set when the GitHub poller first sees the terminal status.
@@ -590,6 +631,11 @@ public sealed class JobOrchestrator(
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Failed to save final state of job {JobId}", jobId);
+                    if (cleanupAlreadyConfirmed)
+                    {
+                        releaseRentedCores = false;
+                        job.RentedCores = rentedCores;
+                    }
                 }
 
                 // Do not release the cloud-quota lease until teardown succeeds. Otherwise
@@ -607,21 +653,38 @@ public sealed class JobOrchestrator(
                     {
                         try
                         {
-                            await provider.DeprovisionAsync(instanceId, CancellationToken.None);
+                            await DeprovisionWithTimeoutAsync(
+                                provider, instanceId, CancellationToken.None);
                             job.CloudProviderInstanceId = null;
                             job.RentedCores = 0;
-                            await SafeAddLogAsync(db, jobId, "Instance deprovisioned.");
+
                             try
                             {
                                 await db.SaveChangesAsync(CancellationToken.None);
+                                await SafeAddLogAsync(db, jobId, "Instance deprovisioned.");
                             }
-                            catch (Exception ex)
+                            catch (Exception persistenceError)
                             {
+                                releaseRentedCores = false;
+                                job.CloudProviderInstanceId = instanceId;
+                                job.RentedCores = rentedCores;
                                 logger.LogError(
-                                    ex,
-                                    "Instance {InstanceId} was deprovisioned, but cleanup state for job {JobId} could not be saved",
+                                    persistenceError,
+                                    "Instance {InstanceId} was deprovisioned, but cleanup state for job {JobId} could not be saved; retaining {Cores} cores",
                                     instanceId,
-                                    jobId);
+                                    jobId,
+                                    rentedCores);
+                                try
+                                {
+                                    await db.SaveChangesAsync(CancellationToken.None);
+                                }
+                                catch (Exception saveEx)
+                                {
+                                    logger.LogError(
+                                        saveEx,
+                                        "Failed to persist retained core lease for job {JobId}",
+                                        jobId);
+                                }
                             }
                         }
                         catch (Exception ex)
@@ -677,6 +740,192 @@ public sealed class JobOrchestrator(
         }
     }
 
+    private async Task ReconcileRetainedRentsLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(_cleanupRetryInterval, ct);
+
+                try
+                {
+                    await ReconcileRetainedRentsAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Retained-rent reconciliation failed");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task ReconcileRetainedRentsAsync(CancellationToken ct)
+    {
+        foreach (var (jobId, retained) in _retainedRents.ToArray())
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var job = await db.Jobs.FindAsync([jobId], ct);
+                var provider = providerFactory.GetProvider(retained.Platform);
+
+                bool cleanupConfirmed;
+                if (job?.CloudProviderInstanceId is { Length: > 0 } instanceId)
+                {
+                    logger.LogWarning(
+                        "[{JobId}] Retrying retained cleanup of {InstanceId}",
+                        jobId, instanceId);
+                    await DeprovisionWithTimeoutAsync(provider, instanceId, ct);
+                    cleanupConfirmed = true;
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "[{JobId}] Retrying retained cleanup by job ID",
+                        jobId);
+                    cleanupConfirmed = await TryDeprovisionByJobIdWithTimeoutAsync(
+                        provider, jobId.ToString(), ct);
+                }
+
+                if (!cleanupConfirmed)
+                {
+                    logger.LogWarning(
+                        "[{JobId}] Provider could not confirm retained cleanup",
+                        jobId);
+                    continue;
+                }
+
+                // Persist first. If the process dies before the in-memory return, the
+                // rebuilt pool starts empty and the database no longer restores this rent.
+                if (job is not null)
+                {
+                    job.CloudProviderInstanceId = null;
+                    job.RentedCores = 0;
+                    await AddLogAsync(
+                        db,
+                        jobId,
+                        $"Retained instance cleanup confirmed; releasing {retained.Cores} pool cores.");
+                }
+
+                await _rentLifecycleGate.WaitAsync(ct);
+                try
+                {
+                    // An admin pool reset may have won while cloud cleanup was running.
+                    // Return only when this retry still owns the retained entry.
+                    if (_retainedRents.TryRemove(jobId, out var lease))
+                    {
+                        corePool.Return(lease.Platform, lease.Cores);
+                        logger.LogWarning(
+                            "[{JobId}] Retained cleanup succeeded; returned {Cores} cores",
+                            jobId, lease.Cores);
+                    }
+                }
+                finally
+                {
+                    _rentLifecycleGate.Release();
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "[{JobId}] Retained cleanup retry failed; keeping {Cores} cores reserved",
+                    jobId, retained.Cores);
+            }
+        }
+    }
+
+    private Task DeprovisionWithTimeoutAsync(
+        ICloudProvider provider,
+        string instanceId,
+        CancellationToken ct) =>
+        RunCleanupWithTimeoutAsync(
+            token => provider.DeprovisionAsync(instanceId, token),
+            $"{provider.Name} cleanup of '{instanceId}'",
+            ct);
+
+    private Task<bool> TryDeprovisionByJobIdWithTimeoutAsync(
+        ICloudProvider provider,
+        string jobId,
+        CancellationToken ct) =>
+        RunCleanupWithTimeoutAsync(
+            token => provider.TryDeprovisionByJobIdAsync(jobId, token),
+            $"{provider.Name} cleanup for job '{jobId}'",
+            ct);
+
+    private async Task RunCleanupWithTimeoutAsync(
+        Func<CancellationToken, Task> cleanup,
+        string operation,
+        CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(_cleanupTimeout);
+        var cleanupTask = cleanup(timeoutCts.Token);
+
+        try
+        {
+            await cleanupTask.WaitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException ex)
+            when (!ct.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            ObserveLateCleanup(cleanupTask, operation);
+            throw new TimeoutException(
+                $"{operation} did not finish within {_cleanupTimeout.TotalMinutes:F1} minutes.",
+                ex);
+        }
+    }
+
+    private async Task<T> RunCleanupWithTimeoutAsync<T>(
+        Func<CancellationToken, Task<T>> cleanup,
+        string operation,
+        CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(_cleanupTimeout);
+        var cleanupTask = cleanup(timeoutCts.Token);
+
+        try
+        {
+            return await cleanupTask.WaitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException ex)
+            when (!ct.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            ObserveLateCleanup(cleanupTask, operation);
+            throw new TimeoutException(
+                $"{operation} did not finish within {_cleanupTimeout.TotalMinutes:F1} minutes.",
+                ex);
+        }
+    }
+
+    private void ObserveLateCleanup(Task cleanupTask, string operation)
+    {
+        _ = cleanupTask.ContinueWith(
+            completed => logger.LogError(
+                completed.Exception,
+                "{Operation} faulted after its timeout",
+                operation),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+    }
+
     private async Task SetTerminalStateAsync(
         AppDbContext db,
         BenchmarkJob job,
@@ -729,80 +978,90 @@ public sealed class JobOrchestrator(
 
     private async Task RecoverStaleJobsAsync(CancellationToken ct)
     {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-        var staleJobs = await db.Jobs
-            .Where(j => j.Status == JobStatus.Provisioning
-                     || j.Status == JobStatus.Running
-                     || (j.CloudProviderInstanceId != null && j.RentedCores > 0))
-            .ToListAsync(ct);
-
-        foreach (var job in staleJobs)
+        await _rentLifecycleGate.WaitAsync(ct);
+        try
         {
-            var wasActive = job.Status is JobStatus.Provisioning or JobStatus.Running;
-            var retainedCores = job.RentedCores;
-            logger.LogWarning(
-                "Recovering job {JobId} (status={Status}, instance={InstanceId}, retained={Cores})",
-                job.Id, job.Status, job.CloudProviderInstanceId, job.RentedCores);
-            if (wasActive)
-            {
-                job.Status = JobStatus.Failed;
-                job.ErrorMessage = "Service restarted — job was in-progress and has been marked as failed.";
-                job.CompletedAt = DateTime.UtcNow;
-            }
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            // Attempt to deprovision if we have an instance ID
-            if (job.CloudProviderInstanceId is not null)
+            var staleJobs = await db.Jobs
+                .Where(j => j.Status == JobStatus.Provisioning
+                         || j.Status == JobStatus.Running
+                         || j.RentedCores > 0)
+                .ToListAsync(ct);
+
+            foreach (var job in staleJobs)
             {
-                try
+                var wasActive = job.Status is JobStatus.Provisioning or JobStatus.Running;
+                var retainedCores = job.RentedCores;
+                logger.LogWarning(
+                    "Recovering job {JobId} (status={Status}, instance={InstanceId}, retained={Cores})",
+                    job.Id, job.Status, job.CloudProviderInstanceId, job.RentedCores);
+                if (wasActive)
                 {
-                    var provider = providerFactory.GetProvider(job.Platform);
-                    await provider.DeprovisionAsync(job.CloudProviderInstanceId, ct);
-                    job.CloudProviderInstanceId = null;
-                    job.RentedCores = 0;
+                    job.Status = JobStatus.Failed;
+                    job.ErrorMessage = "Service restarted — job was in-progress and has been marked as failed.";
+                    job.CompletedAt = DateTime.UtcNow;
                 }
-                catch (Exception ex)
+
+                if (job.CloudProviderInstanceId is not null)
                 {
-                    logger.LogError(ex, "Failed to deprovision stale instance for job {JobId}", job.Id);
-                    job.RentedCores = retainedCores;
-                    if (retainedCores > 0
-                        && _retainedRents.TryAdd(
-                            job.Id, (job.Platform, retainedCores)))
+                    try
                     {
-                        corePool.Restore(job.Platform, retainedCores);
-                    }
-                }
-            }
-            else if (retainedCores > 0)
-            {
-                try
-                {
-                    var provider = providerFactory.GetProvider(job.Platform);
-                    var reconciled = await provider.TryDeprovisionByJobIdAsync(
-                        job.Id.ToString(), ct);
-                    if (reconciled)
-                    {
+                        var provider = providerFactory.GetProvider(job.Platform);
+                        await DeprovisionWithTimeoutAsync(
+                            provider, job.CloudProviderInstanceId, ct);
+                        job.CloudProviderInstanceId = null;
                         job.RentedCores = 0;
                     }
-                    else
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to deprovision stale instance for job {JobId}", job.Id);
                         RetainRecoveredRent(job, retainedCores);
                     }
                 }
-                catch (Exception ex)
+                else if (retainedCores > 0)
                 {
-                    logger.LogError(
-                        ex,
-                        "Failed to reconcile provisioning resource for job {JobId}",
-                        job.Id);
-                    RetainRecoveredRent(job, retainedCores);
+                    try
+                    {
+                        var provider = providerFactory.GetProvider(job.Platform);
+                        var reconciled = await TryDeprovisionByJobIdWithTimeoutAsync(
+                            provider, job.Id.ToString(), ct);
+                        if (reconciled)
+                        {
+                            job.RentedCores = 0;
+                        }
+                        else
+                        {
+                            RetainRecoveredRent(job, retainedCores);
+                        }
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(
+                            ex,
+                            "Failed to reconcile provisioning resource for job {JobId}",
+                            job.Id);
+                        RetainRecoveredRent(job, retainedCores);
+                    }
                 }
             }
-        }
 
-        if (staleJobs.Count > 0)
-            await db.SaveChangesAsync(ct);
+            if (staleJobs.Count > 0)
+                await db.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            _rentLifecycleGate.Release();
+        }
     }
 
     private void RetainRecoveredRent(BenchmarkJob job, int cores)

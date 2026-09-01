@@ -89,7 +89,9 @@ public sealed class DockerCloudProvider(IConfiguration config, ILogger<DockerClo
         {
             try
             {
-                await DeprovisionAsync(containerName, CancellationToken.None);
+                using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(
+                    Math.Max(1, config.GetValue("EgorBot:CleanupTimeoutSeconds", 300))));
+                await DeprovisionAsync(containerName, cleanupCts.Token);
             }
             catch (Exception cleanupError)
             {
