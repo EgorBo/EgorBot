@@ -524,13 +524,15 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             var resourceGroups = subscription.GetResourceGroups();
             var rgResponse = await resourceGroups.GetIfExistsAsync(instanceId, ct);
 
-            if (rgResponse?.Value is null)
+            // GetIfExists returns an empty NullableResponse on 404; reading Value throws.
+            if (!rgResponse.HasValue)
             {
                 logger.LogWarning("Azure: resource group '{RG}' not found — already deleted?", instanceId);
                 return;
             }
 
-            var resourceGroup = rgResponse.Value;
+            var resourceGroup = rgResponse.Value
+                ?? throw new InvalidOperationException($"Azure returned an empty resource group for '{instanceId}'.");
             try
             {
                 await resourceGroup.DeleteAsync(
@@ -556,7 +558,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
                 ct.ThrowIfCancellationRequested();
 
                 rgResponse = await resourceGroups.GetIfExistsAsync(instanceId, ct);
-                if (rgResponse?.Value is null)
+                if (!rgResponse.HasValue)
                 {
                     logger.LogInformation(
                         "Azure: resource group '{RG}' deleted",
