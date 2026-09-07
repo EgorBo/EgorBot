@@ -226,7 +226,7 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`set_budget low` — retarget new requests to the free macOS Arm64 machine");
                 sb.AppendLine("`set_budget high|default` — honor requested targets");
                 sb.AppendLine("`cancel GUID` — cancel one active job and deprovision its VM");
-                sb.AppendLine("`cancelall` — cancel all active jobs & deprovision VMs");
+                sb.AppendLine("`cancel` / `cancelall` — cancel all jobs, deprovision VMs, and clear confirmed pool leases");
                 sb.AppendLine("`quit` — shut down the service");
                 sb.AppendLine("`help` — show this message");
                 if (_customCommands.Count > 0)
@@ -292,7 +292,7 @@ public sealed class TelegramCommandService(
         {
             var age = DateTime.UtcNow - job.CreatedAt;
             var ageStr = age.TotalHours >= 1
-                ? $"{age.TotalHours:F0}h{age.Minutes}m"
+                ? $"{(int)age.TotalHours}h{age.Minutes}m"
                 : $"{age.TotalMinutes:F0}m";
 
             var statusEmoji = job.Status switch
@@ -303,7 +303,7 @@ public sealed class TelegramCommandService(
                 _ => "❓"
             };
 
-            sb.AppendLine($"{statusEmoji} `{job.Id}` {EscapeMarkdown(job.Platform)} ({ageStr})");
+            sb.AppendLine($"{statusEmoji} `{job.Id}` {EscapeMarkdown(job.Platform)} ({job.Status}, age {ageStr})");
             sb.AppendLine($"    Commits: `{job.CommitsAndPrs}`");
             if (!string.IsNullOrEmpty(job.RequestedBy))
                 sb.AppendLine($"    By: @{job.RequestedBy}");
@@ -357,11 +357,20 @@ public sealed class TelegramCommandService(
 
     private async Task HandleCancelAllAsync(CancellationToken ct)
     {
-        await SendReplyAsync("🔄 Cancelling all active jobs...");
-        var count = await orchestrator.CancelAllJobsAsync();
-        await SendReplyAsync(count > 0
-            ? $"✅ Cancelled {count} job(s) and deprovisioned their VMs."
-            : "No active jobs to cancel.");
+        await SendReplyAsync("🔄 Cancelling all jobs and waiting for VM cleanup...");
+        var result = await orchestrator.CancelAllJobsAsync(ct);
+        if (result.ActiveJobs == 0 && result.ReservedCores == 0 && result.PendingCleanup == 0)
+        {
+            await SendReplyAsync($"✅ Cancelled {result.CancelledJobs} job(s). VM cleanup confirmed; core pool cleared.");
+        }
+        else
+        {
+            await SendReplyAsync(
+                $"⚠️ Cancelled {result.CancelledJobs} job(s). " +
+                $"{result.ActiveJobs} active job(s), {result.PendingCleanup} job(s) holding cleanup reservations, " +
+                $"{result.ReservedCores} cores still reserved. " +
+                "Unconfirmed VM cleanup will retry automatically; those cores have NOT been released.");
+        }
     }
 
     private async Task HandleCancelJobAsync(string argument)

@@ -261,6 +261,26 @@ Examples:
 | **EgorBot.Github** | Polls GitHub for `@EgorBot` mentions in issue/PR comments, parses commands, and calls EgorBot.Server's API. Runs on port 5001. |
 | **EgorBot.Shared** | Shared library: target catalog (hardware definitions, aliases), models. |
 
+### Job lifecycle and recovery
+
+Jobs waiting for cores or an execution slot stay `Pending` and do not occupy an
+execution slot until their core reservation is available. `EgorBot:QueueTimeoutMinutes`
+limits this wait from submission (default 120); `EgorBot:ProvisioningTimeoutMinutes`
+bounds VM provisioning (default 30). The existing `JobTimeoutMinutes` and
+`HelixJobTimeoutMinutes` limits still apply separately to agent execution.
+
+Telegram `cancel` (or `cancelall`) cancels all active jobs and waits for bounded VM
+cleanup, including previous failed cleanups. `cancel GUID` targets one job.
+Cancelled jobs remain in the database for history. Cores are returned only after
+deprovisioning and its database update are confirmed. A cleanup timeout does **not**
+force-release cores: the reply reports outstanding reservations, and cleanup retries
+every `CleanupRetrySeconds` (default 60). Each cleanup attempt is bounded by
+`CleanupTimeoutSeconds` (default 300).
+
+If a provisioning call ignores cancellation, its cores stay reserved until it finishes
+and any late-created VM is cleaned up. On restart, never-provisioned pending jobs are requeued;
+interrupted jobs fail and their persisted reservations are reconciled in the background.
+
 ## API
 
 See [docs/api.md](docs/api.md) for the public REST API documentation.

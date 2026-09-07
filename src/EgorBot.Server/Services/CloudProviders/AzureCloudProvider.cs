@@ -516,6 +516,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     {
         try
         {
+            ValidateResourceGroupName(instanceId);
             logger.LogInformation("Azure: deleting resource group '{RG}'", instanceId);
 
             var armClient = CreateArmClient();
@@ -530,19 +531,6 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             }
 
             var resourceGroup = rgResponse.Value;
-            var vmName = GetVmName(instanceId);
-            var vmResponse = await resourceGroup.GetVirtualMachines()
-                .GetIfExistsAsync(vmName, cancellationToken: ct);
-            var vmExists = vmResponse?.Value is not null;
-
-            if (!vmExists)
-            {
-                logger.LogInformation(
-                    "Azure: VM '{VM}' no longer exists; compute quota is released",
-                    vmName);
-                return;
-            }
-
             try
             {
                 await resourceGroup.DeleteAsync(
@@ -561,6 +549,8 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
 
             var pollInterval = TimeSpan.FromSeconds(
                 Math.Max(1, config.GetValue("Azure:DeletionPollSeconds", 5)));
+            // An in-flight deployment can have no VM yet. Only removal of the whole
+            // resource group confirms that it cannot create one after we return cores.
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
@@ -571,16 +561,6 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
                     logger.LogInformation(
                         "Azure: resource group '{RG}' deleted",
                         instanceId);
-                    return;
-                }
-
-                vmResponse = await rgResponse.Value.GetVirtualMachines()
-                    .GetIfExistsAsync(vmName, cancellationToken: ct);
-                if (vmResponse?.Value is null)
-                {
-                    logger.LogInformation(
-                        "Azure: VM '{VM}' deleted; compute quota is released while resource group '{RG}' finishes deleting",
-                        vmName, instanceId);
                     return;
                 }
 
@@ -600,7 +580,7 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
         }
     }
 
-    private static string GetVmName(string resourceGroupName)
+    private static void ValidateResourceGroupName(string resourceGroupName)
     {
         const string prefix = "egorbot-";
         if (!resourceGroupName.StartsWith(prefix, StringComparison.Ordinal)
@@ -609,8 +589,6 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
             throw new InvalidOperationException(
                 $"Unexpected EgorBot Azure resource group name: '{resourceGroupName}'.");
         }
-
-        return $"runner-vm-{resourceGroupName[prefix.Length..]}";
     }
 
     public async Task<bool> TryDeprovisionByJobIdAsync(

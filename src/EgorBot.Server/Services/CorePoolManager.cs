@@ -107,6 +107,7 @@ public sealed class CorePoolManager : IDisposable
     /// </summary>
     public int SetCapacity(string platform, int totalCores, string reason)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(totalCores);
         var target = TargetCatalog.GetTarget(platform);
         lock (_lock)
         {
@@ -140,6 +141,7 @@ public sealed class CorePoolManager : IDisposable
     /// </summary>
     public async Task RentAsync(string platform, int cores, CancellationToken ct = default)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cores);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         var target = TargetCatalog.GetTarget(platform);
@@ -149,6 +151,8 @@ public sealed class CorePoolManager : IDisposable
 
         lock (_lock)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ct.ThrowIfCancellationRequested();
             pool = GetOrCreatePool(target);
 
             // A request bigger than the whole pool can never be satisfied — waiting for it
@@ -189,10 +193,10 @@ public sealed class CorePoolManager : IDisposable
                 if (node.List is not null)
                 {
                     pool.Waiters.Remove(node);
+                    tcs.TrySetCanceled(ct);
                     DrainWaiters(pool);
                 }
             }
-            tcs.TrySetCanceled(ct);
         });
         try
         {
@@ -294,6 +298,15 @@ public sealed class CorePoolManager : IDisposable
             {
                 // Waiter was cancelled (or already served) — discard it
                 pool.Waiters.Remove(node);
+                node = next;
+                continue;
+            }
+
+            if (requested > pool.TotalCores)
+            {
+                pool.Waiters.Remove(node);
+                tcs.TrySetException(new InvalidOperationException(
+                    $"Requested {requested} cores, but the pool capacity is now {pool.TotalCores}."));
                 node = next;
                 continue;
             }
