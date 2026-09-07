@@ -275,11 +275,14 @@ Cancelled jobs remain in the database for history. Cores are returned only after
 deprovisioning and its database update are confirmed. A cleanup timeout does **not**
 force-release cores: the reply reports outstanding reservations, and cleanup retries
 every `CleanupRetrySeconds` (default 60). Each cleanup attempt is bounded by
-`CleanupTimeoutSeconds` (default 300).
+`CleanupTimeoutSeconds` (default 300), with at most four retries running concurrently
+(also limited by `MaxConcurrentJobs`). Retry failures appear in the affected job's logs.
 
 If a provisioning call ignores cancellation, its cores stay reserved until it finishes
 and any late-created VM is cleaned up. On restart, never-provisioned pending jobs are requeued;
 interrupted jobs fail and their persisted reservations are reconciled in the background.
+Completed, failed, or cancelled historical jobs with zero rented cores are not recovered
+just because an older version left an instance ID in the database.
 
 ## API
 

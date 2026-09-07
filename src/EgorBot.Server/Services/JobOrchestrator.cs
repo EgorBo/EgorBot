@@ -823,8 +823,14 @@ public sealed class JobOrchestrator(
         await _reconciliationGate.WaitAsync(ct);
         try
         {
-            await Task.WhenAll(_retainedRents.ToArray()
-                .Select(entry => ReconcileRetainedRentAsync(entry.Key, entry.Value, ct)));
+            await Parallel.ForEachAsync(
+                _retainedRents.ToArray(),
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = Math.Min(_maxConcurrentJobs, 4),
+                    CancellationToken = ct,
+                },
+                async (entry, token) => await ReconcileRetainedRentAsync(entry.Key, entry.Value, token));
         }
         finally
         {
@@ -836,11 +842,11 @@ public sealed class JobOrchestrator(
         Guid jobId, (string Platform, int Cores) retained, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         try
         {
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var job = await db.Jobs.FindAsync([jobId], ct);
             var provider = providerFactory.GetProvider(retained.Platform);
 
@@ -894,6 +900,8 @@ public sealed class JobOrchestrator(
                 logger.LogWarning(
                     "[{JobId}] Provider could not confirm retained cleanup",
                     jobId);
+                await SafeAddLogAsync(db, jobId,
+                    $"Provider could not confirm cleanup; keeping {retained.Cores} cores reserved.");
                 return;
             }
 
@@ -936,6 +944,8 @@ public sealed class JobOrchestrator(
                 ex,
                 "[{JobId}] Retained cleanup retry failed; keeping {Cores} cores reserved",
                 jobId, retained.Cores);
+            await SafeAddLogAsync(db, jobId,
+                $"Cleanup retry failed; keeping {retained.Cores} cores reserved. {ex.Message.Split('\n')[0].Trim()}");
         }
     }
 
@@ -1093,8 +1103,7 @@ public sealed class JobOrchestrator(
                 .Where(j => j.Status == JobStatus.Pending
                          || j.Status == JobStatus.Provisioning
                          || j.Status == JobStatus.Running
-                         || j.RentedCores > 0
-                         || j.CloudProviderInstanceId != null)
+                         || j.RentedCores > 0)
                 .OrderBy(j => j.CreatedAt)
                 .ToListAsync(ct);
 
@@ -1123,6 +1132,8 @@ public sealed class JobOrchestrator(
 
                 // Restore accounting before accepting work, but let the bounded retry
                 // loop do cloud I/O so a dead provider cannot stall service startup.
+                // Terminal legacy rows can retain instance IDs after successful cleanup;
+                // only their persisted nonzero lease is evidence that cleanup is pending.
                 if (job.CloudProviderInstanceId is not null || retainedCores > 0)
                     RetainRecoveredRent(job, retainedCores);
             }
