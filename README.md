@@ -279,8 +279,13 @@ every `CleanupRetrySeconds` (default 60). Each cleanup attempt is bounded by
 (also limited by `MaxConcurrentJobs`). Retry failures appear in the affected job's logs.
 
 If a provisioning call ignores cancellation, its cores stay reserved until it finishes
-and any late-created VM is cleaned up. On restart, never-provisioned pending jobs are requeued;
-interrupted jobs fail and their persisted reservations are reconciled in the background.
+and any late-created VM is cleaned up. On restart, old pending and in-progress jobs are
+cancelled, never resumed. Never-provisioned reservations are discarded. Outstanding cloud
+resources are reconciled immediately, before new jobs start, with a bounded first cleanup
+pass; only subsequent retries wait for `CleanupRetrySeconds`.
+Telegram `pool` reports startup cleanup in progress until that pass finishes. It then shows
+available capacity, with active or unconfirmed reservations listed separately rather than
+displaying saved reservations as live VM usage. Unconfirmed cleanup still prevents quota reuse.
 Completed, failed, or cancelled historical jobs with zero rented cores are not recovered
 just because an older version left an instance ID in the database.
 

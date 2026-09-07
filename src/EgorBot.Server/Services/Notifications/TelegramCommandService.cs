@@ -216,7 +216,7 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`allvms` — list all VMs across cloud providers");
                 sb.AppendLine("`cores` — show current default core count");
                 sb.AppendLine("`cores N` — set default core count (e.g. `cores 16`)");
-                sb.AppendLine("`pool` — show core pool usage (used/total + waiters)");
+                sb.AppendLine("`pool` — show available cores, reservations, and waiters");
                 sb.AppendLine("`pool reset` — force-release leaked cores (use when jobs hang on \"Waiting for N cores\")");
                 sb.AppendLine("`quota` — show real cloud vCPU quotas (used/limit per family)");
                 sb.AppendLine("`set_max_jobs_per_user USER N` — override a user's rolling 24h job limit");
@@ -517,6 +517,13 @@ public sealed class TelegramCommandService(
 
     private async Task HandlePoolCommandAsync(string command)
     {
+        if (!orchestrator.StartupRecoveryComplete)
+        {
+            await SendReplyAsync("🧮 Startup cleanup is checking saved reservations against the cloud. " +
+                "Old jobs will not resume. Pool availability is not confirmed yet.");
+            return;
+        }
+
         var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
         if (parts.Length > 1 && parts[1] is "reset" or "clear")
@@ -538,7 +545,8 @@ public sealed class TelegramCommandService(
         sb.AppendLine("🧮 *Core pools:*");
         foreach (var (key, (used, total, waiters)) in snapshot.OrderBy(p => p.Key))
         {
-            sb.AppendLine($"`{EscapeMarkdown(key)}`: {used}/{total} used"
+            sb.AppendLine($"`{EscapeMarkdown(key)}`: {Math.Max(0, total - used)}/{total} available"
+                          + (used > 0 ? $", {used} reserved (active work or unconfirmed cleanup)" : "")
                           + (waiters > 0 ? $", {waiters} waiting" : ""));
         }
         sb.AppendLine();

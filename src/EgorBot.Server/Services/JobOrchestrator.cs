@@ -52,6 +52,10 @@ public sealed class JobOrchestrator(
     /// <summary>Number of jobs currently holding cores from the pool.</summary>
     private int _activeRents;
     private int _pendingRents;
+    private readonly DateTime _startupAt = DateTime.UtcNow;
+    private int _startupRecoveryComplete;
+
+    public bool StartupRecoveryComplete => Volatile.Read(ref _startupRecoveryComplete) != 0;
 
     /// <summary>
     /// Core rents deliberately kept after cloud teardown failed. Releasing these would
@@ -351,6 +355,19 @@ public sealed class JobOrchestrator(
 
         // Startup recovery: clean up stale jobs
         await RecoverStaleJobsAsync(stoppingToken);
+        using (var cleanupCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken))
+        {
+            cleanupCts.CancelAfter(_cleanupTimeout);
+            try
+            {
+                await ReconcileRetainedRentsAsync(cleanupCts.Token);
+            }
+            catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested && cleanupCts.IsCancellationRequested)
+            {
+                logger.LogWarning("Startup cleanup deadline reached; unconfirmed leases remain reserved for retry");
+            }
+        }
+        Volatile.Write(ref _startupRecoveryComplete, 1);
 
         using var reconciliationCts =
             CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -483,7 +500,8 @@ public sealed class JobOrchestrator(
             logger.LogInformation("[{JobId}] Requesting {Cores} cores from pool for {Platform} (used {Used}/{Total}, {Waiters} waiting)...",
                 jobId, coresToRent, job.Platform, poolState.Used, poolState.Total, poolState.Waiters);
             await AddLogAsync(db, jobId,
-                $"Waiting for {coresToRent} cores from pool ({poolState.Used}/{poolState.Total} in use, {poolState.Waiters} job(s) already queued)...");
+                $"Waiting for {coresToRent} cores from pool ({Math.Max(0, poolState.Total - poolState.Used)}/{poolState.Total} available, " +
+                $"{poolState.Used} reserved, {poolState.Waiters} job(s) already queued)...");
             await _rentLifecycleGate.WaitAsync(queueCts.Token);
             try
             {
@@ -1100,9 +1118,9 @@ public sealed class JobOrchestrator(
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
             var staleJobs = await db.Jobs
-                .Where(j => j.Status == JobStatus.Pending
+                .Where(j => ((j.Status == JobStatus.Pending
                          || j.Status == JobStatus.Provisioning
-                         || j.Status == JobStatus.Running
+                         || j.Status == JobStatus.Running) && j.CreatedAt < _startupAt)
                          || j.RentedCores > 0)
                 .OrderBy(j => j.CreatedAt)
                 .ToListAsync(ct);
@@ -1114,8 +1132,6 @@ public sealed class JobOrchestrator(
                     // Provisioning cannot start before the phase change is durable.
                     // Any Pending reservation was only waiting for an execution slot.
                     job.RentedCores = 0;
-                    Enqueue(job.Id);
-                    continue;
                 }
 
                 var wasActive = IsActive(job.Status);
@@ -1125,8 +1141,8 @@ public sealed class JobOrchestrator(
                     job.Id, job.Status, job.CloudProviderInstanceId, job.RentedCores);
                 if (wasActive)
                 {
-                    job.Status = JobStatus.Failed;
-                    job.ErrorMessage = "Service restarted — job was in-progress and has been marked as failed.";
+                    job.Status = JobStatus.Cancelled;
+                    job.ErrorMessage = "Cancelled on service startup; previous jobs are not resumed.";
                     job.CompletedAt = DateTime.UtcNow;
                 }
 

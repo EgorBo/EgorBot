@@ -21,6 +21,13 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     : ICloudProvider, ICoreQuotaProvider
 {
     private readonly SemaphoreSlim _semaphore = new(3, 3);
+    private readonly ArmClient? _armClient;
+
+    internal AzureCloudProvider(IConfiguration config, ILogger<AzureCloudProvider> logger, ArmClient armClient)
+        : this(config, logger)
+    {
+        _armClient = armClient;
+    }
 
     public string Name => "Azure";
 
@@ -44,8 +51,10 @@ public sealed class AzureCloudProvider(IConfiguration config, ILogger<AzureCloud
     /// Create an ArmClient using DefaultAzureCredential.
     /// Works with managed identity in production and with az login / VS creds locally.
     /// </summary>
-    private static ArmClient CreateArmClient()
+    private ArmClient CreateArmClient()
     {
+        if (_armClient is not null)
+            return _armClient;
         TokenCredential credential = new DefaultAzureCredential();
         return new ArmClient(credential);
     }
