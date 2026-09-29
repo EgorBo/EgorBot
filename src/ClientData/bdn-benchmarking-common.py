@@ -709,7 +709,9 @@ def build_core_roots():
         arch_flag = f" -a {TARGET_ARCH}" if TARGET_ARCH != "x64" else ""
         # src/tests/build.sh|cmd takes the arch name directly (no -a prefix)
         tests_arch_flag = f" {TARGET_ARCH}" if TARGET_ARCH != "x64" else ""
-        run(f"{make_script('build')} clr+libs -c Release{arch_flag} {CFG.runtime_build_args}", cwd=runtime_dir)
+        # Workaround for dotnet/runtime#134043 (Unix named mutex race in the Roslyn compiler server client)
+        shared_comp_flag = " /p:UseSharedCompilation=false" if TARGET_OS != "windows" else ""
+        run(f"{make_script('build')} clr+libs -c Release{arch_flag}{shared_comp_flag} {CFG.runtime_build_args}", cwd=runtime_dir)
 
         if TARGET_OS == "windows":
             run(f"src\\tests\\build.cmd{tests_arch_flag} Release generatelayoutonly /p:BuildNativeTests=false", cwd=runtime_dir)
