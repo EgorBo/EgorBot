@@ -122,6 +122,7 @@ Multiple targets can be specified in a single command.</br>
 - **In a PR comment with no `-commits`** → automatically compares `PR_<number>` vs `main`
 - **No code block** → runs benchmarks from [dotnet/performance](https://github.com/dotnet/performance)
 - **Unconsumed tokens** after options/targets are passed as BDN arguments (e.g. `--filter "*MyBench*"`)
+- **Custom BDN snippets** target `net11.0` by default. Extra .NET target frameworks are restored only when explicitly requested with `--runtimes` or `-r`, e.g. `--runtimes net10.0 net11.0`.
 
 ### Examples
 

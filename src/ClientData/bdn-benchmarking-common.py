@@ -466,12 +466,22 @@ def _build_custom_benchmarks(bench_args: List[str]):
         else:
             download("https://gist.github.com/EgorBo/c3378873ad204ebf522a07138f621128/raw", csproj)
 
-        # Always target net10 and net11 so BDN can run either via --runtimes
-        # (a lower-TFM benchapp can be referenced by any equal-or-newer runtime job).
+        # Restore extra frameworks only when requested; -f does not limit the restore graph.
+        runtime_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
+        runtime_parser.add_argument("-r", "--runtimes", nargs="+", action="extend", default=[])
+        runtime_args, _ = runtime_parser.parse_known_args(bench_args)
+        target_frameworks = [CFG.bench_tfm]
+        for runtime in runtime_args.runtimes:
+            tfm = runtime.lower()
+            if re_mod.fullmatch(r"net\d+\.\d+", tfm) and tfm not in target_frameworks:
+                target_frameworks.append(tfm)
+
+        frameworks = ";".join(target_frameworks)
+        post_log(f"Custom benchmark target frameworks: {frameworks}")
         csproj_text = csproj.read_text(encoding="utf-8")
         csproj_text = re_mod.sub(
             r'<TargetFrameworks?>[^<]+</TargetFrameworks?>',
-            '<TargetFrameworks>net10.0;net11.0</TargetFrameworks>',
+            f'<TargetFrameworks>{frameworks}</TargetFrameworks>',
             csproj_text,
         )
         csproj.write_text(csproj_text, encoding="utf-8")
