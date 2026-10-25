@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading.Channels;
 using EgorBot.Server.Data;
 using EgorBot.Server.Models;
@@ -64,8 +65,6 @@ public sealed class JobOrchestrator(
     private readonly ConcurrentDictionary<Guid, (string Platform, int Cores)> _retainedRents = new();
 
     private readonly int _maxConcurrentJobs = config.GetValue("EgorBot:MaxConcurrentJobs", 4);
-    private readonly TimeSpan _jobTimeout = TimeSpan.FromMinutes(config.GetValue("EgorBot:JobTimeoutMinutes", 60));
-    private readonly TimeSpan _helixJobTimeout = TimeSpan.FromMinutes(config.GetValue("EgorBot:HelixJobTimeoutMinutes", 150));
     private readonly TimeSpan _queueTimeout = TimeSpan.FromMinutes(
         Math.Max(0.01, config.GetValue("EgorBot:QueueTimeoutMinutes", 120.0)));
     private readonly TimeSpan _provisioningTimeout = TimeSpan.FromMinutes(
@@ -350,8 +349,9 @@ public sealed class JobOrchestrator(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogInformation("JobOrchestrator started. MaxConcurrent={Max}, Timeout={Timeout}",
-            _maxConcurrentJobs, _jobTimeout);
+        logger.LogInformation("JobOrchestrator started. MaxConcurrent={Max}, Timeout={Timeout}min, HelixTimeout={HelixTimeout}min",
+            _maxConcurrentJobs, runtimeSettings.GetJobTimeout("Azure").Timeout.TotalMinutes,
+            runtimeSettings.GetJobTimeout("Helix").Timeout.TotalMinutes);
 
         // Startup recovery: clean up stale jobs
         await RecoverStaleJobsAsync(stoppingToken);
@@ -576,15 +576,9 @@ public sealed class JobOrchestrator(
             await NotifyAsync(job, n => n.OnVmProvisionedAsync(job, provider.Name, result.IpAddress));
 
             // 4. Wait for agent to report completion (or timeout)
-            var effectiveTimeout = provider.Name == "Helix" ? _helixJobTimeout : _jobTimeout;
-            logger.LogInformation("[{JobId}] Waiting for agent completion (timeout={Timeout}min)...",
-                jobId, effectiveTimeout.TotalMinutes);
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(jobToken);
-            timeoutCts.CancelAfter(effectiveTimeout);
-
             try
             {
-                var outcome = await tcs.Task.WaitAsync(timeoutCts.Token);
+                var outcome = await WaitForJobCompletionAsync(jobId, provider.Name, tcs.Task, jobToken);
                 var proposedStatus = outcome.Success ? JobStatus.Completed : JobStatus.Failed;
                 var proposedError = outcome.Success
                     ? null
@@ -604,14 +598,13 @@ public sealed class JobOrchestrator(
                     await NotifyAsync(job, n => n.OnJobFailedAsync(job, job.ErrorMessage ?? prefix));
                 }
             }
-            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested
-                                                    && !jobToken.IsCancellationRequested)
+            catch (TimeoutException ex) when (!jobToken.IsCancellationRequested)
             {
                 await SetTerminalStateAsync(
                     db,
                     job,
                     JobStatus.TimedOut,
-                    $"Job timed out after {effectiveTimeout.TotalMinutes} minutes.");
+                    ex.Message);
                 await SafeAddLogAsync(db, jobId, job.ErrorMessage!);
                 await NotifyAsync(job, n => n.OnJobFailedAsync(job, job.ErrorMessage!));
             }
@@ -749,6 +742,44 @@ public sealed class JobOrchestrator(
                 {
                     _rentLifecycleGate.Release();
                 }
+            }
+        }
+    }
+
+    private async Task<JobOutcome> WaitForJobCompletionAsync(
+        Guid jobId,
+        string providerName,
+        Task<JobOutcome> completion,
+        CancellationToken ct)
+    {
+        var started = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (completion.IsCompleted)
+                return await completion;
+
+            var (timeout, changed) = runtimeSettings.GetJobTimeout(providerName);
+            logger.LogInformation("[{JobId}] Waiting for agent completion (timeout={Timeout}min)...",
+                jobId, timeout.TotalMinutes);
+
+            var remaining = timeout - Stopwatch.GetElapsedTime(started);
+            try
+            {
+                if (remaining <= TimeSpan.Zero)
+                    throw new TimeoutException();
+
+                var finished = await Task.WhenAny(completion, changed).WaitAsync(remaining, ct);
+                if (finished == completion)
+                    return await completion;
+            }
+            catch (TimeoutException) when (changed.IsCompleted)
+            {
+                continue;
+            }
+            catch (TimeoutException)
+            {
+                throw new TimeoutException($"Job timed out after {timeout.TotalMinutes} minutes.");
             }
         }
     }

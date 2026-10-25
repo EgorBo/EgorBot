@@ -13,7 +13,7 @@ namespace EgorBot.Server.Services.CloudProviders;
 /// InstanceId = Helix job correlation ID.
 /// No IP address is returned (Helix machines are not directly accessible).
 /// </summary>
-public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider serviceProvider, ILogger<HelixCloudProvider> logger) : ICloudProvider
+public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider serviceProvider, RuntimeSettings runtimeSettings, ILogger<HelixCloudProvider> logger) : ICloudProvider
 {
     private const string DefaultCreator = "EgorBot";
     private const string DefaultSource = "EgorBot/bench";
@@ -58,7 +58,7 @@ public sealed class HelixCloudProvider(IConfiguration config, IServiceProvider s
             .DefineWorkItem($"egorbot-{request.JobId}")
             .WithCommand(command)
             .WithSingleFilePayload(scriptFileName, payload)
-            .WithTimeout(TimeSpan.FromHours(2.5))
+            .WithTimeout(runtimeSettings.GetJobTimeout(Name).Timeout)
             .AttachToJob()
             .SendAsync(cancellationToken: ct);
 

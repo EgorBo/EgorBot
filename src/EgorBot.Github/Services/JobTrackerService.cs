@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.RegularExpressions;
 using EgorBot.Github.Models;
 using EgorBot.Shared;
@@ -23,6 +24,8 @@ public sealed class JobTrackerService(
     IConfiguration config,
     ILogger<JobTrackerService> logger) : IDisposable
 {
+    private const int MaxGitHubCommentBytes = 65_536;
+
     private readonly ConcurrentDictionary<Guid, TrackedJob> _activeJobs = new();
     private readonly Lock _timerLock = new();
     private Timer? _pollTimer;
@@ -516,6 +519,26 @@ public sealed class JobTrackerService(
                     @{tracked.Source.Author}
 
                     {content}
+
+                    [Job]({botClient.GetLogsUrl(job.Id)}){(job.LogsBlobUrl is not null ? $" | [Full logs]({job.LogsBlobUrl})" : "")}
+                    """;
+            }
+
+            if (Encoding.UTF8.GetByteCount(body) > MaxGitHubCommentBytes)
+            {
+                var gist = new NewGist
+                {
+                    Description = $"EgorBot benchmark results for {job.Platform} (job {job.Id})",
+                    Public = false,
+                };
+                gist.Files.Add($"results-{job.Id}.md", body);
+                var uploaded = await ghClient.Gist.Create(gist);
+                logger.LogInformation("Uploaded oversized result for job {JobId} to gist {GistUrl}", job.Id, uploaded.HtmlUrl);
+
+                body = $"""
+                    ## `{job.Platform}` — {(success ? "Results" : "Failed")}
+
+                    The benchmark report is too long for a GitHub comment. [View the full report in this gist]({uploaded.HtmlUrl}).
 
                     [Job]({botClient.GetLogsUrl(job.Id)}){(job.LogsBlobUrl is not null ? $" | [Full logs]({job.LogsBlobUrl})" : "")}
                     """;

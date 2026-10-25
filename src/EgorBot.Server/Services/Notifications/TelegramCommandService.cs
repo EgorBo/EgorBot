@@ -16,6 +16,7 @@ namespace EgorBot.Server.Services.Notifications;
 ///   set_max_jobs_per_user USER N — persist a rolling 24h limit override
 ///   set_max_jobs_per_request N — persist the global per-request limit
 ///   set_budget low|high|default — restrict new requests to the free target or honor requested targets
+///   set_job_timeout N|default — override execution timeouts in minutes, including running jobs
 ///   quit   — gracefully shut down the application
 ///   help   — show available commands
 /// Only messages from the configured AdminChatId are accepted.
@@ -200,6 +201,9 @@ public sealed class TelegramCommandService(
             case "set_budget":
                 await HandleSetBudgetAsync(argument);
                 break;
+            case "set_job_timeout":
+                await HandleSetJobTimeoutAsync(argument);
+                break;
             case "quit":
             case "stop":
             case "shutdown":
@@ -225,6 +229,8 @@ public sealed class TelegramCommandService(
                 sb.AppendLine("`set_max_jobs_per_request default` — restore the configured default");
                 sb.AppendLine("`set_budget low` — retarget new requests to the free macOS Arm64 machine");
                 sb.AppendLine("`set_budget high|default` — honor requested targets");
+                sb.AppendLine("`set_job_timeout N` — set execution timeout in minutes for new and running jobs");
+                sb.AppendLine("`set_job_timeout default` — restore configured timeouts (override resets on restart)");
                 sb.AppendLine("`cancel GUID` — cancel one active job and deprovision its VM");
                 sb.AppendLine("`cancel` / `cancelall` — cancel all jobs, deprovision VMs, and clear confirmed pool leases");
                 sb.AppendLine("`quit` — shut down the service");
@@ -658,6 +664,38 @@ public sealed class TelegramCommandService(
         await jobRateLimits.SetRequestLimitAsync(maxJobs, ct);
         await SendReplyAsync(
             $"✅ Global jobs-per-request limit changed to *{maxJobs}*.");
+    }
+
+    private async Task HandleSetJobTimeoutAsync(string? argument)
+    {
+        if (!string.IsNullOrWhiteSpace(argument))
+        {
+            int? minutes;
+            if (argument is "default" or "reset")
+            {
+                minutes = null;
+            }
+            else if (int.TryParse(argument, out var value) && value is >= 1 and <= RuntimeSettings.MaxJobTimeoutMinutes)
+            {
+                minutes = value;
+            }
+            else
+            {
+                await SendReplyAsync(
+                    $"❌ Usage: `set_job_timeout <minutes|default>` (1–{RuntimeSettings.MaxJobTimeoutMinutes} minutes)");
+                return;
+            }
+
+            runtimeSettings.JobTimeoutMinutesOverride = minutes;
+            logger.LogInformation("Admin changed job timeout override to {Minutes} minutes (null = configured defaults)", minutes);
+        }
+
+        await SendReplyAsync(
+            $"⚙️ Job execution timeout: *{runtimeSettings.GetJobTimeout("Azure").Timeout.TotalMinutes} minutes*; "
+            + $"Helix: *{runtimeSettings.GetJobTimeout("Helix").Timeout.TotalMinutes} minutes*.\n"
+            + $"Configured defaults: {runtimeSettings.DefaultJobTimeoutMinutes} / {runtimeSettings.DefaultHelixJobTimeoutMinutes} minutes.\n"
+            + "Applies to new and running jobs; elapsed time is not reset. Override resets on restart.\n"
+            + "Existing Helix work items keep the hard timeout assigned at submission.");
     }
 
     private async Task HandleSetBudgetAsync(string? argument)

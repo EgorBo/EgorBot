@@ -269,6 +269,16 @@ execution slot until their core reservation is available. `EgorBot:QueueTimeoutM
 limits this wait from submission (default 120); `EgorBot:ProvisioningTimeoutMinutes`
 bounds VM provisioning (default 30). The existing `JobTimeoutMinutes` and
 `HelixJobTimeoutMinutes` limits still apply separately to agent execution.
+The checked-in execution timeout is 120 minutes (60 if unconfigured), or 150 minutes
+for Helix. Telegram `set_job_timeout N` overrides both in minutes for new and running
+jobs without resetting elapsed execution time. `set_job_timeout` shows the current
+limits; `set_job_timeout default` restores configured defaults. The override resets
+on service restart. Queueing and provisioning limits are unchanged. Helix work items
+use the effective timeout when submitted; their existing hard timeout cannot be extended.
+
+Benchmark reports exceeding GitHub's comment size limit are uploaded to an unlisted
+Markdown gist, with an explanatory link posted on the tracking issue instead.
+The GitHub token must have permission to create gists (`gist` scope for classic PATs).
 
 Telegram `cancel` (or `cancelall`) cancels all active jobs and waits for bounded VM
 cleanup, including previous failed cleanups. `cancel GUID` targets one job.
