@@ -222,8 +222,10 @@ def _publish(repo: Path) -> Path:
         return publish_dir
 
     common.post_log(f"[ORCHARD] Publishing OrchardCore.Cms.Web for {tfm}/{rid} (self-contained)...")
+    # Daily servicing SDKs can request runtime patches that are not published yet.
     common.run(
         f'dotnet publish -c Release --sc -r {rid} '
+        '-p:TargetLatestRuntimePatch=false '
         f'-p:AspNetCoreTargetFrameworks=net{ver} -p:CommonTargetFrameworks=net{ver} '
         f'-f {tfm} "{csproj}"',
         cwd=repo,
