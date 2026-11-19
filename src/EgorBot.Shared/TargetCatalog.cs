@@ -61,6 +61,7 @@ public static class TargetCatalog
         
         // linux-arm64
         ["ubuntu24_azure_cobalt100"]   = new("ubuntu24_azure_cobalt100",      VmArch.Arm64, "Standard_D{0}pds_v6",         "eastus",     VmCpuVendor.Arm,   true,  20),
+        ["ubuntu24_azure_cobalt200"]   = new("ubuntu24_azure_cobalt200",      VmArch.Arm64, "Standard_D{0}ps_v7",          "eastus",     VmCpuVendor.Arm,   false, 20),
         ["ubuntu24_azure_ampere"]      = new("ubuntu24_azure_ampere",         VmArch.Arm64, "Standard_D{0}pds_v5",         "eastus",     VmCpuVendor.Arm,   false, 20),
         
         // windows-x64
@@ -341,6 +342,12 @@ public static class TargetCatalog
         if (idx < parts.Length && KnownClouds.Contains(parts[idx]))
         {
             cloud = parts[idx];
+            idx++;
+        }
+
+        if (os == null && idx < parts.Length && IsOsToken(parts[idx]))
+        {
+            os = NormalizeOs(parts[idx]);
             idx++;
         }
 

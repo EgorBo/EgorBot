@@ -57,6 +57,8 @@ each run and applies the temporary CoreCLR jitdump-discovery fix to every compar
 
 Targets specify where to run. Format: `{os}_{cloud}_{cpu}`. If `os` is omitted, defaults to `ubuntu24`. If `cloud` is omitted, defaults to `azure` (or `helix` for macOS). If no target is specified at all it defaults to `macos15_helix_arm64` (baremetal Apple Silicon via Helix).
 
+OS and cloud prefixes work in either order, e.g. `-azure_linux_cobalt200`.
+
 You don't have to spell out the full name — EgorBot resolves shorthands:
 
 | Shorthand | Resolves to | Notes |
@@ -84,6 +86,7 @@ Full target list:
 | `ubuntu24_azure_emeraldrapids` | x64 | Azure | Intel Emerald Rapids |
 | `ubuntu24_azure_cascadelake` | x64 | Azure | Intel Cascade Lake |
 | `ubuntu24_azure_cobalt100` | arm64 | Azure | Arm Cobalt 100 |
+| `ubuntu24_azure_cobalt200` | arm64 | Azure | Arm Cobalt 200 |
 | `ubuntu24_azure_ampere` | arm64 | Azure | Arm Ampere |
 | `windows_azure_emeraldrapids` | x64 | Azure | Intel Emerald Rapids |
 | `windows_azure_cascadelake` | x64 | Azure | Intel Cascade Lake |
@@ -140,6 +143,13 @@ Compare a specific commit against its previous commit on Cobalt 100:
 ```
 @EgorBot -azure_arm -commits abc1234,abc1234~1
 ```
+
+Compare Cobalt 100 and Cobalt 200:
+```
+@EgorBot -azure_linux_cobalt100 -azure_linux_cobalt200
+```
+
+Cobalt 100 remains the default Azure Arm64 target. Cobalt 200 uses `Standard_D{0}ps_v7` in East US, with a 20-core fallback quota.
 
 Compare a range of commits on Apple Silicon via Helix for a specific dotnet/performance benchmark:
 ```

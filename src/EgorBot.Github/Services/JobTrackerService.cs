@@ -735,7 +735,7 @@ public sealed class JobTrackerService(
 
             **Targets** (default: `macos15_helix_arm64`):
             `-arm` `-intel` `-amd` `-x64`
-            `-azure_genoa` `-azure_cobalt100` `-azure_cascadelake` `-azure_milano` `-azure_ampere` `-azure_turin` `-azure_emeraldrapids`
+            `-azure_genoa` `-azure_cobalt100` `-azure_cobalt200` `-azure_cascadelake` `-azure_milano` `-azure_ampere` `-azure_turin` `-azure_emeraldrapids`
             `-aws_graviton5` `-aws_graviton4` `-aws_graviton3` `-aws_sapphirelake` `-aws_icelake` `-aws_genoa` `-aws_turin`
 
             **Options:**
