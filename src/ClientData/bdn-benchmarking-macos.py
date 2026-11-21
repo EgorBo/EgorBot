@@ -3,7 +3,7 @@
 macOS-specific helpers for the EgorBot agent.
 
 Exports:
-    setup_platform()                — ensure Homebrew is on PATH
+    setup_platform()                — ensure Homebrew is on PATH and select Xcode 26
     install_platform_deps()         — brew install ninja
     prepare_runtime_for_profiling() — apply the temporary Samply jitdump fix
     validate_profiler_core_root()   — require runtime native symbol sidecars
@@ -38,13 +38,25 @@ extern "C" int JitDumpOpen(const char* path, int flags, ...) __asm("_open");
 
 
 def setup_platform():
-    """Ensure Homebrew is on PATH for macOS (Helix machines may not have it)."""
+    """Ensure Homebrew is on PATH and select Xcode 26 for macOS builds."""
     for brew_dir in ("/opt/homebrew/bin", "/usr/local/bin"):
         if (
             os.path.isfile(os.path.join(brew_dir, "brew"))
             and brew_dir not in os.environ.get("PATH", "")
         ):
             os.environ["PATH"] = brew_dir + os.pathsep + os.environ.get("PATH", "")
+
+    xcode_apps = sorted(
+        Path("/Applications").glob("Xcode_26*.app"),
+        key=lambda path: tuple(int(part) for part in re.findall(r"\d+", path.name)),
+    )
+    if not xcode_apps:
+        raise RuntimeError("Xcode 26 is required to build dotnet/runtime on macOS.")
+
+    developer_dir = xcode_apps[-1] / "Contents" / "Developer"
+    os.environ["DEVELOPER_DIR"] = str(developer_dir)
+    common.post_log(f"Selecting Xcode at {developer_dir}")
+    common.run(["xcodebuild", "-version"], shell=False)
 
 
 def install_platform_deps():
