@@ -8,7 +8,7 @@ namespace EgorBot.Github.Services;
 /// Parses @EgorBot commands from GitHub comment/issue/PR body text.
 ///
 /// Format:
-///   @EgorBot [targets] [-commits SHA,main,SHA~2] [-profiler] [-gcprofiler] [BDN args]
+///   @EgorBot [targets] [-commits SHA,main,SHA~2] [-profiler] [-gcprofiler] [-dotnet-counters] [BDN args]
 ///   ```[cs|csharp|c#]
 ///   benchmark code
 ///   ```
@@ -122,6 +122,7 @@ public static partial class CommandParser
         var commits = new List<string>();
         bool useProfiler = false;
         bool useGcProfiler = false;
+        bool useDotnetCounters = false;
         bool isHelp = false;
         int attempts = 1;
         string? perfStatEvents = null;
@@ -148,6 +149,11 @@ public static partial class CommandParser
 
                 case "gcprofiler" or "gcprofile" or "gc_profiler":
                     useGcProfiler = true;
+                    consumed[i] = true;
+                    break;
+
+                case "dotnet-counters":
+                    useDotnetCounters = true;
                     consumed[i] = true;
                     break;
 
@@ -331,6 +337,14 @@ public static partial class CommandParser
             }
         }
 
+        if (useDotnetCounters && kind != BenchmarkKind.Orchard)
+        {
+            return new BotCommand
+            {
+                ErrorMessage = "`-dotnet-counters` is supported only by the `orchard` benchmark.",
+            };
+        }
+
         if (kind.IsFixedWorkload())
         {
             var workloadError = ValidateFixedWorkload(
@@ -362,6 +376,7 @@ public static partial class CommandParser
             Kind = kind,
             UseProfiler = useProfiler,
             UseGcProfiler = useGcProfiler,
+            UseDotnetCounters = useDotnetCounters,
             PerfStatEvents = perfStatEvents,
             Attempts = attempts,
             IsHelp = isHelp,
@@ -394,7 +409,7 @@ public static partial class CommandParser
                  + $"{string.Join(", ", bdnTokens.Select(t => $"`{t}`"))}. "
                  + "Supported options: targets (`-arm`, `-amd`, `-intel`, ...), `-pr`, `-commits`, "
                  + "`-profiler`, `-perf_events a,b,c`"
-                 + (kind == BenchmarkKind.Orchard ? ", `-gcprofiler`." : ".");
+                 + (kind == BenchmarkKind.Orchard ? ", `-gcprofiler`, `-dotnet-counters`." : ".");
         }
 
         if (useGcProfiler && kind != BenchmarkKind.Orchard)

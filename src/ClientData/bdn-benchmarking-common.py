@@ -102,6 +102,7 @@ class Config:
     bdn_args_file: str
     perf_enabled: bool
     gc_profiler: bool
+    dotnet_counters: bool
     perf_record_args: str
     perf_record_freq: str
     perf_stat_events: str
@@ -183,6 +184,9 @@ class Config:
         p.add_argument("--gc_profiler", type=int, choices=[0, 1],
                         default=0,
                         help="[orchard] 1 = collect GC metrics with dotnet-trace (default: 0)")
+        p.add_argument("--dotnet_counters", type=int, choices=[0, 1],
+                        default=0,
+                        help="[orchard] 1 = compare System.Runtime counters (default: 0)")
         p.add_argument("--perf_record_args", default="",
                         help="Extra args for perf record")
         p.add_argument("--perf_record_freq", default="4999",
@@ -238,6 +242,7 @@ class Config:
             bdn_args_file=args.bdn_args_file,
             perf_enabled=bool(args.perf_enabled),
             gc_profiler=bool(args.gc_profiler),
+            dotnet_counters=bool(args.dotnet_counters),
             perf_record_args=args.perf_record_args,
             perf_record_freq=args.perf_record_freq,
             perf_stat_events=args.perf_stat_events,

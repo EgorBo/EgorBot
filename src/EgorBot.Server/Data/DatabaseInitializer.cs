@@ -21,6 +21,7 @@ public static class DatabaseInitializer
         [
             ("Jobs", "PerfStatEvents", "TEXT NULL"),
             ("Jobs", "UseGcProfiler", "INTEGER NOT NULL DEFAULT 0"),
+            ("Jobs", "UseDotnetCounters", "INTEGER NOT NULL DEFAULT 0"),
             ("Jobs", "RentedCores", "INTEGER NOT NULL DEFAULT 0"),
             // NOT NULL + default: the column is read back into a non-nullable enum,
             // so pre-existing rows must not be left as NULL.

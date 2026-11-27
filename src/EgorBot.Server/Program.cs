@@ -205,6 +205,14 @@ api.MapPost("/jobs", async (
         });
     }
 
+    if (request.UseDotnetCounters && request.Kind != BenchmarkKind.Orchard)
+    {
+        return Results.BadRequest(new
+        {
+            error = "Runtime counters are supported only by the 'orchard' benchmark."
+        });
+    }
+
     // These end up interpolated into the VM bootstrap command line
     // (CloudInitBuilder → --gh_commits_and_prs "..."), so anything that could break
     // out of the quoting must be rejected here rather than executed on the VM.
@@ -302,6 +310,7 @@ api.MapPost("/jobs", async (
                 CommitsAndPrs = commitsAndPrs,
                 UseProfiler = fixedWorkloadProfiler,
                 UseGcProfiler = request.UseGcProfiler,
+                UseDotnetCounters = request.UseDotnetCounters,
                 PerfStatEvents = fixedWorkloadProfiler ? perfStatEvents : null,
                 Attempts = request.Attempts,
                 RequestedBy = request.RequestedBy,

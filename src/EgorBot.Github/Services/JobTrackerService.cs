@@ -184,6 +184,7 @@ public sealed class JobTrackerService(
                 Kind = command.Kind,
                 UseProfiler = command.UseProfiler,
                 UseGcProfiler = command.UseGcProfiler,
+                UseDotnetCounters = command.UseDotnetCounters,
                 PerfStatEvents = command.PerfStatEvents,
                 Attempts = command.Attempts,
                 IsHelp = command.IsHelp,
@@ -741,6 +742,7 @@ public sealed class JobTrackerService(
             **Options:**
             `-profiler` — enable perf on Linux or Samply on macOS
             `-gcprofiler` — collect OrchardCore GC metrics with dotnet-trace
+            `-dotnet-counters` — compare OrchardCore `System.Runtime` counters
             `-perf_events a,b,c` — custom `perf stat` events (implies `-profiler`),
             e.g. `-perf_events l1d_cache,l1d_cache_refill,l2d_cache_refill,cycles,instructions`.
             The events a machine supports are listed in the `perf_events.txt` artifact.
@@ -754,7 +756,8 @@ public sealed class JobTrackerService(
             e.g. `@EgorBot orchard -arm`. Linux/macOS x64/arm64 only, needs a PR or
             `-commits`, and takes no snippet or BDN arguments. `-profiler` adds a separate
             profiling pass on Linux (hot asm, flamegraphs, counters); `-gcprofiler` adds a
-            separate cross-platform dotnet-trace GC pass. Both can be used together.
+            separate cross-platform dotnet-trace GC pass. `-dotnet-counters` compares
+            runtime counters in its own pass and can be combined with either profiler.
 
             `minimalapi` — fixed ASP.NET Core JSON API throughput benchmark,
             e.g. `@EgorBot minimalapi -amd`. Runs on Linux/Windows x64/arm64 and macOS

@@ -71,6 +71,9 @@ PERF_STAT_SECS = 6
 MAX_PROFILED_RUNTIMES = 4
 DOTNET_TRACE_VERSION = "9.0.661903"
 GC_TRACE_SECS = 30
+DOTNET_COUNTERS_VERSION = "9.0.553101"
+COUNTERS_REQUESTS = 100_000
+COUNTERS_SAMPLE_SECS = 3
 
 # Environment for the benchmarked app. AutoSetup provisions the tenant on the
 # first request so the run needs no manual setup step.
@@ -422,10 +425,12 @@ def _wait_until_ready(proc, url: str, timeout: int = 600) -> bool:
 #  Load generation
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _load_cmd(bombardier: Path, load_cpus: list, connections: int, duration: int, url: str) -> list:
+def _load_cmd(bombardier: Path, load_cpus: list, connections: int, url: str,
+              *, duration: int = 0, requests: int = 0) -> list:
+    limit = ["-n", str(requests)] if requests else ["-d", f"{duration}s"]
     return _taskset_prefix(load_cpus) + [
         str(bombardier),
-        "-d", f"{duration}s",
+        *limit,
         "-c", str(connections),
         "-t", "2s",
         "-l",
@@ -439,11 +444,12 @@ def _load_cmd(bombardier: Path, load_cpus: list, connections: int, duration: int
     ]
 
 
-def _run_load(bombardier: Path, load_cpus: list, connections: int,
-              duration: int, url: str, out_file):
+def _run_load(bombardier: Path, load_cpus: list, connections: int, url: str, out_file,
+              *, duration: int = 0, requests: int = 0):
     """Run bombardier once and return the parsed `result` object (or None)."""
-    cmd = _load_cmd(bombardier, load_cpus, connections, duration, url)
-    proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    cmd = _load_cmd(bombardier, load_cpus, connections, url, duration=duration, requests=requests)
+    proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                          timeout=600 if requests else None)
     output = proc.stdout.strip()
 
     if out_file is not None:
@@ -466,7 +472,7 @@ def _run_load(bombardier: Path, load_cpus: list, connections: int,
 def _start_load(bombardier: Path, load_cpus: list, connections: int, duration: int, url: str):
     """Start bombardier in the background — the profiler needs the app under load
     while it samples it."""
-    return subprocess.Popen(_load_cmd(bombardier, load_cpus, connections, duration, url),
+    return subprocess.Popen(_load_cmd(bombardier, load_cpus, connections, url, duration=duration),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -801,6 +807,99 @@ def _trace_duration(seconds: int) -> str:
     return f"{days:02d}:{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def _latest_runtime_counters(path: Path) -> dict:
+    counters = {}
+    for event in json.loads(path.read_text(encoding="utf-8"))["Events"]:
+        if event["provider"] == "System.Runtime":
+            counters[event["name"], event.get("tags", "")] = event["value"]
+    return counters
+
+
+def _write_counters_report(labels: list, snapshots: dict, errors: list):
+    lines = ["### OrchardCore runtime counters", ""]
+    counters = sorted({counter for snapshot in snapshots.values() for counter in snapshot})
+    if counters:
+        lines += [
+            f"Latest `System.Runtime` values after {COUNTERS_REQUESTS:,} requests per runtime "
+            "in a separate server process. Cumulative values include startup.",
+            "",
+            "| Counter | " + " | ".join(
+                f"`{label}`" + (" (baseline)" if i == 0 else "") for i, label in enumerate(labels)) + " |",
+            "|---|" + "---:|" * len(labels),
+        ]
+        for name, tags in counters:
+            title = f"`{name}`" + (f" (`{tags}`)" if tags else "")
+            values = [snapshots.get(label, {}).get((name, tags)) for label in labels]
+            lines.append(f"| {title} | " + " | ".join(
+                f"{value:,}" if value is not None else "n/a" for value in values) + " |")
+    else:
+        lines.append("No runtime counters were collected.")
+    if errors:
+        lines += ["", "**Counter collection errors:**", "", *(f"- {error}" for error in errors)]
+    lines.append("")
+
+    report = common.ARTIFACTS_DIR / "OrchardCore-Counters-report-github.md"
+    report.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _run_dotnet_counters(bombardier: Path, entries: list, run_dirs: dict, app_cpus: list,
+                         load_cpus: list, connections: int, url: str, logs_dir: Path):
+    tools_dir = common.WORK_DIR / "counter_tools"
+    common.ensure_dirs(tools_dir)
+    dotnet_counters = tools_dir / common.make_exe("dotnet-counters")
+    tool_env = {"DOTNET_ROLL_FORWARD": "Major"}
+    if not dotnet_counters.exists():
+        result = common.run(
+            ["dotnet", "tool", "install", "dotnet-counters", "--tool-path", str(tools_dir),
+             "--version", DOTNET_COUNTERS_VERSION],
+            cwd=tools_dir, shell=False, check=False, env=tool_env, timeout_seconds=120)
+        if result.returncode != 0 or not dotnet_counters.exists():
+            raise RuntimeError(f"dotnet-counters installation failed (exit {result.returncode})")
+
+    labels = [label for label, _ in entries]
+    snapshots = {}
+    errors = []
+    for label in labels:
+        common.post_log(f"[ORCHARD-COUNTERS] === {label} ===")
+        _free_port(SERVER_PORT)
+        safe_label = _safe(label)
+        log_path = logs_dir / f"{safe_label}_counters_server.log"
+        counters_path = logs_dir / f"{safe_label}_counters.json"
+        proc = None
+        try:
+            proc = _start_server(run_dirs[label], app_cpus, log_path)
+            if not _wait_until_ready(proc, url):
+                raise RuntimeError("the app failed to start")
+
+            load = _run_load(bombardier, load_cpus, connections, url,
+                             logs_dir / f"{safe_label}_counters_load.json",
+                             requests=COUNTERS_REQUESTS)
+            if load is None or _errors(load):
+                raise RuntimeError("the fixed request workload failed")
+
+            result = common.run(
+                [str(dotnet_counters), "collect", "--process-id", str(proc.pid),
+                 "--counters", "System.Runtime", "--format", "json",
+                 "--duration", _trace_duration(COUNTERS_SAMPLE_SECS), "--output", str(counters_path)],
+                shell=False, check=False, env=tool_env, timeout_seconds=30)
+            if result.returncode != 0 or not counters_path.exists():
+                raise RuntimeError(f"dotnet-counters failed (exit {result.returncode})")
+            if proc.poll() is not None:
+                raise RuntimeError("the app exited during counter collection")
+            snapshot = _latest_runtime_counters(counters_path)
+            if not snapshot:
+                raise RuntimeError("dotnet-counters produced no System.Runtime samples")
+            snapshots[label] = snapshot
+        except Exception as ex:
+            message = f"{label}: {ex}"
+            common.post_log(f"[ORCHARD-COUNTERS] {message}")
+            errors.append(message)
+        finally:
+            _stop_server(proc, log_path)
+
+    _write_counters_report(labels, snapshots, errors)
+
+
 def _run_gc_profiling(bombardier: Path, entries: list, run_dirs: dict, app_cpus: list,
                       load_cpus: list, connections: int, url: str, logs_dir: Path):
     tools = _ensure_gc_tools()
@@ -995,13 +1094,14 @@ def run_orchard_benchmarks():
                     continue
 
                 common.post_log(f"[ORCHARD] [{label}] Warming up for {cfg.orchard_warmup}s...")
-                _run_load(bombardier, load_cpus, connections, cfg.orchard_warmup, url,
-                          logs_dir / f"{_safe(label)}_p{process_idx}_warmup.json")
+                _run_load(bombardier, load_cpus, connections, url,
+                          logs_dir / f"{_safe(label)}_p{process_idx}_warmup.json",
+                          duration=cfg.orchard_warmup)
 
                 for round_idx in range(1, cfg.orchard_rounds + 1):
-                    result = _run_load(bombardier, load_cpus, connections,
-                                       cfg.orchard_round_duration, url,
-                                       logs_dir / f"{_safe(label)}_p{process_idx}_r{round_idx}.json")
+                    result = _run_load(bombardier, load_cpus, connections, url,
+                                       logs_dir / f"{_safe(label)}_p{process_idx}_r{round_idx}.json",
+                                       duration=cfg.orchard_round_duration)
                     if result is None:
                         continue
                     sample = {
@@ -1066,3 +1166,12 @@ def run_orchard_benchmarks():
             common.post_log(f"[ORCHARD-GC] Profiling failed ({message}) — "
                             f"the throughput results are unaffected")
             _write_gc_report([], [message])
+
+    if cfg.dotnet_counters:
+        try:
+            _run_dotnet_counters(bombardier, entries, run_dirs, app_cpus,
+                                 load_cpus, connections, url, logs_dir)
+        except Exception as ex:
+            message = f"{type(ex).__name__}: {ex}"
+            common.post_log(f"[ORCHARD-COUNTERS] Collection failed ({message})")
+            _write_counters_report([], {}, [message])

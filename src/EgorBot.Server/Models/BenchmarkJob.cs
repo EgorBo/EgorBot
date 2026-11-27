@@ -40,6 +40,8 @@ public class BenchmarkJob
     /// <summary>Whether to collect OrchardCore GC metrics with dotnet-trace.</summary>
     public bool UseGcProfiler { get; set; }
 
+    public bool UseDotnetCounters { get; set; }
+
     /// <summary>
     /// Optional comma-separated event list for `perf stat -e` (e.g. "l1d_cache,l1d_cache_refill").
     /// Empty = the agent's portable default set.

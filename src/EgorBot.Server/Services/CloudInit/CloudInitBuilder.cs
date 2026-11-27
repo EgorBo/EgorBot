@@ -258,6 +258,11 @@ public sealed class CloudInitBuilder(IConfiguration config)
             parts.Add("--gc_profiler 1");
         }
 
+        if (job.UseDotnetCounters)
+        {
+            parts.Add("--dotnet_counters 1");
+        }
+
         if (!string.IsNullOrWhiteSpace(job.PerfStatEvents))
         {
             parts.Add($"--perf_stat_events \"{job.PerfStatEvents}\"");

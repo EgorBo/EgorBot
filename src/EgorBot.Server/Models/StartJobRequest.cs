@@ -28,6 +28,8 @@ public sealed class StartJobRequest
     /// <summary>Enable the OrchardCore dotnet-trace GC profiling pass.</summary>
     public bool UseGcProfiler { get; init; }
 
+    public bool UseDotnetCounters { get; init; }
+
     /// <summary>
     /// Optional comma-separated event list for `perf stat -e`, e.g.
     /// "l1d_cache,l1d_cache_refill,cycles,instructions". Implies <see cref="UseProfiler"/>.

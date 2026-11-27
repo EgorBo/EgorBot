@@ -38,6 +38,9 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
         [JsonPropertyName("useGcProfiler")]
         public bool UseGcProfiler { get; init; }
 
+        [JsonPropertyName("useDotnetCounters")]
+        public bool UseDotnetCounters { get; init; }
+
         [JsonPropertyName("perfStatEvents")]
         public string? PerfStatEvents { get; init; }
 
@@ -114,6 +117,7 @@ public sealed class EgorBotClient(HttpClient http, IConfiguration configuration,
             BenchmarkCode = command.BenchmarkCode,
             UseProfiler = command.UseProfiler,
             UseGcProfiler = command.UseGcProfiler,
+            UseDotnetCounters = command.UseDotnetCounters,
             PerfStatEvents = command.PerfStatEvents,
             Attempts = command.Attempts,
             RequestedBy = requestedBy,

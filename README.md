@@ -184,6 +184,7 @@ No code snippet and no BDN arguments are needed (both are rejected). What happen
 | Commits | required — run it from a PR, or pass `-pr <number>` / `-commits SHA1,SHA2` |
 | `-profiler` | supported on Linux — see below; skipped on macOS |
 | `-gcprofiler` | supported on Linux and macOS — separate dotnet-trace GC pass |
+| `-dotnet-counters` | supported on Linux and macOS — compare all `System.Runtime` counters |
 | `-perf_events a,b,c` | supported on Linux — custom events for `perf stat` (implies `-profiler`) |
 
 With `-profiler`, an extra pass runs after the measurements: each runtime is started again
@@ -199,6 +200,11 @@ Outlier-prone maximum-pause and peak-heap metrics are omitted from the compariso
 Raw `.nettrace` and metrics JSON files are linked from the tracking issue.
 `-gcprofiler` and `-profiler` can be enabled together.
 
+With `-dotnet-counters`, a separate server process per runtime serves 100,000 requests,
+then samples `System.Runtime` with `dotnet-counters`. The report shows the latest value
+of each counter side by side, including JIT compilations since process start. This
+option can be combined with either profiler without affecting throughput measurements.
+
 Example:
 
 ```
@@ -206,6 +212,7 @@ Example:
 @EgorBot orchard -arm -profiler
 @EgorBot orchard -arm -gcprofiler
 @EgorBot orchard -amd -profiler -gcprofiler
+@EgorBot orchard -arm -dotnet-counters
 ```
 
 ## ASP.NET Core minimal API benchmark (`minimalapi`)
