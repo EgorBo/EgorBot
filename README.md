@@ -174,8 +174,8 @@ No code snippet and no BDN arguments are needed (both are rejected). What happen
 3. On Linux, the app is pinned with `taskset` to all cores but one and
    [bombardier](https://github.com/codesenberg/bombardier) runs on the remaining core. macOS has no
    equivalent hard CPU affinity, so both processes use all scheduler-visible CPUs.
-4. After a warmup, several measured intervals are collected across two server processes. The report
-   contains mean RPS, standard deviation, the coefficient of variation (**noise level**),
+4. Each of the two server processes warms up under load for 120 seconds before measured intervals.
+   The report contains mean RPS, standard deviation, the coefficient of variation (**noise level**),
    min/max and latency percentiles.
 
 | | |

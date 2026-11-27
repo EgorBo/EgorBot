@@ -224,7 +224,6 @@ def ensure_perf():
 def perf_profiling_env() -> dict:
     """DOTNET_* knobs the JIT needs for symbolized, unwindable perf data."""
     return {
-        "DOTNET_JitEnableOptionalRelocs": "0",
         "DOTNET_JitStdOutFile": "",
         "DOTNET_PerfMapShowOptimizationTiers": "1",
         "DOTNET_PerfMapStubGranularity": "3",

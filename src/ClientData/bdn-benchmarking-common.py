@@ -203,8 +203,8 @@ class Config:
                         help="1 = skip dependency and .NET SDK installation (default: 0)")
         p.add_argument("--attempts", type=int, default=1,
                         help="Number of times to run all benchmarks (default: 1)")
-        p.add_argument("--orchard_warmup", type=int, default=90,
-                        help="[orchard] Warmup load duration in seconds (default: 90)")
+        p.add_argument("--orchard_warmup", type=int, default=120,
+                        help="[orchard] Warmup load duration in seconds (default: 120)")
         p.add_argument("--orchard_rounds", type=int, default=3,
                         help="[orchard] Measured intervals per server process (default: 3)")
         p.add_argument("--orchard_round_duration", type=int, default=15,
@@ -309,7 +309,7 @@ def setup_environment(cfg: Config):
     ensure_dirs(ARTIFACTS_DIR, DIR_BENCHAPP, CORE_ROOTS_DIR)
 
     # Some global env vars for .NET
-    os.environ["DOTNET_JitEnableOptionalRelocs"] = "0"  # Improve consistency of measurements
+    os.environ["DOTNET_JitEnableOptionalRelocs"] = "1" if cfg.is_orchard else "0"
     os.environ["DOTNET_EnableWriteXorExecute"]   = "0"  # Not sure this affects consistency, improves perf record
     os.environ["PERFLAB_TARGET_FRAMEWORKS"]      = cfg.bench_tfm
 
